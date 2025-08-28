@@ -24,7 +24,7 @@ setup(
     description="Cloud-based AI control system for Pepper robots",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/YOUR_USERNAME/PepperEvolution",
+    url="https://github.com/mfbergmann/PepperEvolution",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     classifiers=[
@@ -63,8 +63,8 @@ setup(
     zip_safe=False,
     keywords="pepper robot ai naoqi cloud robotics",
     project_urls={
-        "Bug Reports": "https://github.com/YOUR_USERNAME/PepperEvolution/issues",
-        "Source": "https://github.com/YOUR_USERNAME/PepperEvolution",
-        "Documentation": "https://github.com/YOUR_USERNAME/PepperEvolution/docs",
+        "Bug Reports": "https://github.com/mfbergmann/PepperEvolution/issues",
+        "Source": "https://github.com/mfbergmann/PepperEvolution",
+        "Documentation": "https://github.com/mfbergmann/PepperEvolution/docs",
     },
 )

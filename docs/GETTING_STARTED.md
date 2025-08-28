@@ -19,7 +19,7 @@ This guide will help you set up and run PepperEvolution on your Pepper robot.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/PepperEvolution.git
+git clone https://github.com/mfbergmann/PepperEvolution.git
 cd PepperEvolution
 ```
 
