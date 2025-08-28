@@ -12,7 +12,9 @@ PepperEvolution transforms your Pepper robot into an AI-powered companion by con
 - **Modular Architecture**: Easy to extend and customize for different use cases
 - **Open Source**: Contributes to the Pepper community since the robot is discontinued
 
-## Features
+
+
+## Upcoming Features
 
 ### 🤖 Robot Control
 - Movement control (walking, turning, gestures)
@@ -136,20 +138,6 @@ PepperEvolution/
 └── requirements.txt    # Python dependencies
 ```
 
-## Examples
-
-### 1. Interactive Assistant
-Pepper acts as an AI assistant, responding to voice commands and questions.
-
-### 2. Environmental Monitor
-Pepper analyzes its surroundings using camera and sensor data, reporting findings.
-
-### 3. Educational Companion
-Pepper teaches concepts through interactive dialogue and demonstrations.
-
-### 4. Healthcare Assistant
-Pepper monitors and assists with basic healthcare tasks and reminders.
-
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
@@ -158,11 +146,8 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
-
-- SoftBank Robotics for the Pepper robot platform
-- OpenAI for providing the AI models
-- The open-source Pepper community for inspiration and resources
+## Credits
+PepperEvolution is a performance research experiment running out of [TRiPL Lab](https://tripl.ca/).
 
 ## Support
 
