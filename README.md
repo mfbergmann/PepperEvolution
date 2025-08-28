@@ -48,7 +48,7 @@ PepperEvolution transforms your Pepper robot into an AI-powered companion by con
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/PepperEvolution.git
+   git clone https://github.com/mfbergmann/PepperEvolution.git
    cd PepperEvolution
    ```
 
