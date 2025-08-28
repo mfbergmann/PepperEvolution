@@ -10,7 +10,7 @@ Use this section to tell people about which versions of your project are current
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within PepperEvolution, please send an email to michael.bergmann@tripl.ca. All security vulnerabilities will be promptly addressed.
+If you discover a security vulnerability within PepperEvolution, please send an email to mfb@torontomu.ca. All security vulnerabilities will be promptly addressed.
 
 ### What to include in your report:
 

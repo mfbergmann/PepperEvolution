@@ -20,7 +20,7 @@ setup(
     name="pepper-evolution",
     version="0.1.0",
     author="PepperEvolution Team",
-    author_email="michael.bergmann@tripl.ca",
+    author_email="mfb@torontomu.ca",
     description="Cloud-based AI control system for Pepper robots",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
