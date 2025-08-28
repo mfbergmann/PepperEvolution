@@ -6,6 +6,7 @@ import pytest
 import asyncio
 from unittest.mock import Mock, patch
 
+# Import after the mock is set up in conftest.py
 from src.pepper.connection import ConnectionConfig, PepperConnection
 
 
