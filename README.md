@@ -1,3 +1,4 @@
+
 # PepperEvolution 🤖☁️
 
 A cloud-based AI control system for Pepper robots that offloads the robot's "brain" to the cloud, enabling advanced AI capabilities through bidirectional communication.
@@ -166,8 +167,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/yourusername/PepperEvolution/issues)
-- 💬 [Discussions](https://github.com/yourusername/PepperEvolution/discussions)
+- 🐛 [Issue Tracker](https://github.com/YOUR_USERNAME/PepperEvolution/issues)
+- 💬 [Discussions](https://github.com/YOUR_USERNAME/PepperEvolution/discussions)
 
 ---
 
