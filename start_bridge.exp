@@ -1,0 +1,58 @@
+#!/usr/bin/expect -f
+# Start Pepper Bridge Service
+
+set timeout 10
+set host "10.0.100.100"
+set user "nao"
+set password "nao"
+
+# Check if bridge is already running
+spawn ssh -o StrictHostKeyChecking=no $user@$host "ps aux | grep pepper_bridge.py | grep -v grep"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "pepper_bridge.py" {
+        puts "Bridge is already running"
+        exit 0
+    }
+    "$ " {
+        # Not running, continue
+    }
+    eof {
+    }
+}
+
+# Start bridge in background
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "$ " {
+    }
+}
+
+send "cd /home/nao\r"
+expect "$ "
+send "nohup python pepper_bridge.py > /tmp/pepper_bridge.log 2>&1 &\r"
+expect "$ "
+send "sleep 2\r"
+expect "$ "
+send "ps aux | grep pepper_bridge.py | grep -v grep\r"
+expect "$ "
+send "tail -10 /tmp/pepper_bridge.log\r"
+expect "$ "
+send "exit\r"
+expect eof
+

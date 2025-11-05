@@ -112,10 +112,13 @@ class PepperEvolution:
             # Start robot event loop
             robot_task = asyncio.create_task(self.robot.start_event_loop())
             
-            # Start AI conversation (optional)
-            if os.getenv("AUTO_CONVERSATION", "false").lower() == "true":
+            # Start AI conversation (continuous speech listening)
+            # Enable by default - set ENABLE_SPEECH_CONVERSATION=false to disable
+            if os.getenv("ENABLE_SPEECH_CONVERSATION", "true").lower() != "false":
+                self.logger.info("Starting continuous speech conversation mode...")
                 conversation_task = asyncio.create_task(self.ai_manager.start_conversation())
             else:
+                self.logger.info("Speech conversation mode disabled (set ENABLE_SPEECH_CONVERSATION=true to enable)")
                 conversation_task = None
             
             # Wait for all tasks

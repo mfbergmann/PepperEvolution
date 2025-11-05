@@ -10,9 +10,9 @@ This guide will help you set up and run PepperEvolution on your Pepper robot.
 - Network connection between Pepper and your computer
 
 ### Software Requirements
-- Python 3.8 or higher
-- NAOqi 2.5 Python SDK
+- Python 3.8 or higher on your development machine
 - OpenAI API key (or other supported AI provider)
+- **Note**: You do NOT need the NAOqi SDK on your development machine - the bridge service handles this
 
 ## Installation
 
@@ -27,27 +27,35 @@ cd PepperEvolution
 
 ```bash
 # Create virtual environment
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Install NAOqi SDK
+### 3. Deploy Bridge Service to Pepper
 
-You'll need to install the NAOqi 2.5 Python SDK. This is typically provided by SoftBank Robotics.
+The bridge service runs on Pepper and provides an HTTP API for robot control. This eliminates SDK compatibility issues.
 
-**For Pepper 1.6:**
 ```bash
-# Download and install NAOqi 2.5 SDK
-# Follow the official SoftBank Robotics documentation
+# Deploy the bridge service
+./deploy_bridge.sh
+
+# Start the bridge service
+./start_bridge.exp
 ```
 
-**For Pepper 1.7:**
+Or manually:
 ```bash
-# Download and install NAOqi 2.5 SDK
-# Follow the official SoftBank Robotics documentation
+ssh nao@10.0.100.100
+cd /home/nao
+nohup python pepper_bridge.py > /tmp/pepper_bridge.log 2>&1 &
+```
+
+Verify it's running:
+```bash
+curl http://10.0.100.100:8888/health
 ```
 
 ### 4. Configure Environment
@@ -64,14 +72,18 @@ Update the following variables in your `.env` file:
 
 ```env
 # Pepper Robot Configuration
-PEPPER_IP=192.168.1.100  # Your Pepper's IP address
+PEPPER_IP=10.0.100.100  # Your Pepper's IP address
 PEPPER_PORT=9559
 PEPPER_USERNAME=nao
 PEPPER_PASSWORD=nao
 
+# Bridge Service (recommended)
+USE_PEPPER_BRIDGE=true
+PEPPER_BRIDGE_URL=http://10.0.100.100:8888
+
 # AI Model Configuration
 OPENAI_API_KEY=your_openai_api_key_here
-AI_MODEL=gpt-4  # or gpt-5 when available
+AI_MODEL=gpt-4  # or gpt-3.5-turbo
 ```
 
 ## Quick Start
@@ -232,14 +244,17 @@ Error: Failed to connect to Pepper robot
 ```
 - Check Pepper's IP address
 - Ensure Pepper is powered on and connected to network
-- Verify NAOqi services are running on Pepper
+- Verify bridge service is running on Pepper (port 8888)
+- Check network connectivity: `ping 10.0.100.100`
 
-**2. NAOqi Import Error**
+**2. Bridge Service Not Running**
 ```
-ModuleNotFoundError: No module named 'qi'
+ConnectionError: Bridge is not healthy or robot is not connected
 ```
-- Install NAOqi 2.5 Python SDK
-- Add NAOqi to your Python path
+- Verify bridge service is running: `curl http://10.0.100.100:8888/health`
+- Check bridge logs: `ssh nao@10.0.100.100 "tail -20 /tmp/pepper_bridge.log"`
+- Restart bridge service if needed
+- Ensure `USE_PEPPER_BRIDGE=true` in your `.env` file
 
 **3. API Key Error**
 ```

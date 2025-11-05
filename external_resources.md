@@ -1,0 +1,12 @@
+https://github.com/softbankrobotics-research/qibullet.git
+https://github.com/maverickjoy/pepper-robot-programming.git
+https://github.com/aldebaran/robot-jumpstarter.git
+https://github.com/incognite-lab/Pepper-Controller.git
+https://github.com/microsoft/HoloLensNavigationForRobots.git
+https://github.com/ros-naoqi/pepper_robot.git
+https://github.com/igor-lirussi/Dialogue-Pepper-Robot.git
+https://github.com/frietz58/WoZ4U.git
+https://github.com/softbankrobotics-labs/pepper-telepresence-toolkit.git
+https://github.com/softbankrobotics-labs/pepper-proactive-mobility.git
+https://github.com/Fabrimat/Pepper-Remote.git
+https://github.com/nevalsar/pepper-teleop.git

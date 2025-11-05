@@ -99,33 +99,37 @@ class AIManager:
             return {"error": str(e)}
     
     async def start_conversation(self):
-        """Start an interactive conversation with the robot"""
+        """Start an interactive conversation with the robot - listens continuously for speech"""
         try:
-            self.logger.info("Starting conversation mode...")
+            self.logger.info("Starting continuous speech conversation mode...")
+            self.logger.info("Pepper is now listening for your voice. Speak naturally!")
             
             # Initial greeting
-            greeting = await self.process_user_input("Hello, I'm ready to interact!")
+            greeting = "Hello! I'm listening and ready to chat. Just speak to me!"
             await self.robot.speak(greeting)
             
             # Main conversation loop
             while True:
+                self.logger.info("Listening for speech... (30 second timeout)")
+                
                 # Listen for user input
                 user_input = await self.robot.listen(timeout=30.0)
                 
                 if user_input:
+                    self.logger.success(f"Heard: {user_input}")
+                    
                     # Process input and get response
                     response = await self.process_user_input(user_input)
                     
-                    # Speak response
-                    await self.robot.speak(response)
+                    # Response is automatically spoken by _execute_robot_actions
+                    # But we can log it here
+                    self.logger.info(f"Responding: {response[:100]}...")
                 else:
-                    # No input received, analyze environment
-                    analysis = await self.analyze_environment()
-                    if analysis.get("analysis"):
-                        await self.robot.speak("I notice some activity in my environment. " + analysis["analysis"])
+                    # No input received - check periodically but don't spam
+                    self.logger.debug("No speech detected, continuing to listen...")
                 
-                # Brief pause
-                await asyncio.sleep(1.0)
+                # Brief pause before next listen
+                await asyncio.sleep(0.5)
                 
         except KeyboardInterrupt:
             self.logger.info("Conversation ended by user")
@@ -135,11 +139,15 @@ class AIManager:
     async def _generate_response(self, context: ConversationContext) -> str:
         """Generate AI response based on context"""
         try:
-            # Build prompt with context
+            # Build prompt with context (current user input)
             prompt = self._build_contextual_prompt(context)
             
-            # Generate response
-            response = await self.provider.generate_response(prompt, context.robot_state)
+            # Generate response with conversation history
+            response = await self.provider.generate_response(
+                prompt, 
+                context.robot_state,
+                conversation_history=context.conversation_history
+            )
             
             return response
             
@@ -153,39 +161,80 @@ class AIManager:
             # Parse response for action commands
             actions = self._parse_actions(response)
             
+            # Execute actions in sequence
             for action in actions:
                 await self._execute_action(action)
+                # Small delay between actions
+                await asyncio.sleep(0.2)
+            
+            # Always speak the response (remove action tags first)
+            clean_response = self._remove_action_tags(response)
+            if clean_response and clean_response.strip():
+                self.logger.info(f"Speaking response: {clean_response[:100]}...")
+                success = await self.robot.speak(clean_response)
+                if not success:
+                    self.logger.error("Failed to speak response")
+            else:
+                self.logger.warning("Response text is empty after cleaning action tags")
                 
         except Exception as e:
             self.logger.error(f"Failed to execute robot actions: {e}")
     
+    def _remove_action_tags(self, text: str) -> str:
+        """Remove action tags from response text"""
+        import re
+        # Remove all action tags
+        text = re.sub(r'\[MOVE:[^\]]+\]', '', text)
+        text = re.sub(r'\[SPEAK:[^\]]+\]', '', text)
+        text = re.sub(r'\[GESTURE:[^\]]+\]', '', text)
+        text = re.sub(r'\[LED:[^\]]+\]', '', text)
+        text = re.sub(r'\[STOP\]', '', text)
+        # Clean up extra whitespace
+        text = ' '.join(text.split())
+        return text
+    
     def _build_contextual_prompt(self, context: ConversationContext) -> str:
         """Build prompt with conversation context"""
-        prompt = f"User input: {context.user_input}\n\n"
-        
-        # Add sensor data context
-        if context.sensor_data:
-            prompt += "Current environment:\n"
-            for key, value in context.sensor_data.items():
-                if key != "camera":  # Skip image data
-                    prompt += f"- {key}: {value}\n"
-            prompt += "\n"
+        prompt = f"""You are Pepper, a friendly humanoid robot assistant. A user just said: "{context.user_input}"
+
+Current robot status:
+"""
         
         # Add robot state context
         if context.robot_state:
-            prompt += "Robot state:\n"
-            for key, value in context.robot_state.items():
-                prompt += f"- {key}: {value}\n"
-            prompt += "\n"
+            prompt += f"- Battery: {context.robot_state.get('battery_level', 0):.0f}%\n"
+            prompt += f"- Connected: {context.robot_state.get('is_connected', False)}\n"
+            prompt += f"- Posture: {context.robot_state.get('current_pose', 'unknown')}\n"
+        
+        # Add sensor data context
+        if context.sensor_data:
+            prompt += "\nEnvironment:\n"
+            if context.sensor_data.get("battery_level"):
+                prompt += f"- Battery: {context.sensor_data.get('battery_level', 0):.0f}%\n"
+            if context.sensor_data.get("temperature"):
+                prompt += f"- Temperature: {context.sensor_data.get('temperature', 0):.1f}°C\n"
+            if context.sensor_data.get("touch_sensors"):
+                prompt += f"- Touch sensors: {context.sensor_data.get('touch_sensors')}\n"
         
         # Add conversation history
         if context.conversation_history:
-            prompt += "Recent conversation:\n"
+            prompt += "\nRecent conversation:\n"
             for msg in context.conversation_history[-3:]:  # Last 3 messages
-                prompt += f"{msg['role']}: {msg['content']}\n"
-            prompt += "\n"
+                role = "User" if msg['role'] == 'user' else "Pepper"
+                prompt += f"{role}: {msg['content']}\n"
         
-        prompt += "Please respond naturally as Pepper the robot. If you want me to perform an action, include it in your response using action tags like [MOVE:forward:0.5] or [SPEAK:Hello!] or [GESTURE:wave]."
+        prompt += """
+Respond naturally as Pepper. To control the robot, use these action tags:
+- [MOVE:forward:0.5] - Move forward 0.5 meters
+- [MOVE:turn:90] - Turn 90 degrees
+- [SPEAK:Hello!] - Speak text (will be spoken automatically after your response)
+- [GESTURE:wave] - Wave hand
+- [GESTURE:nod] - Nod head
+- [LED:eyes:blue] - Set eye LEDs to color (red, green, blue, yellow, etc.)
+- [STOP] - Stop all movement
+
+IMPORTANT: Your response text will automatically be spoken by Pepper. If you include action tags, they will be executed. Keep responses concise and natural.
+"""
         
         return prompt
     
@@ -236,6 +285,13 @@ class AIManager:
                 "color": color
             })
         
+        # Stop action
+        if re.search(r'\[STOP\]', response):
+            actions.append({
+                "type": "stop",
+                "action": "stop_all"
+            })
+        
         return actions
     
     async def _execute_action(self, action: Dict[str, Any]):
@@ -254,15 +310,18 @@ class AIManager:
                 
             elif action_type == "gesture":
                 if action["gesture"] == "wave":
-                    await self.robot.wave_hand()
+                    await self.robot.actuators.wave_hand()
                 elif action["gesture"] == "nod":
-                    await self.robot.nod_head()
+                    await self.robot.actuators.nod_head()
                     
             elif action_type == "led":
                 if action["location"] == "eyes":
                     await self.robot.actuators.set_eye_color(action["color"])
                 elif action["location"] == "chest":
                     await self.robot.actuators.set_chest_led(action["color"])
+            
+            elif action_type == "stop":
+                await self.robot.actuators.stop_all()
                     
         except Exception as e:
             self.logger.error(f"Failed to execute action {action}: {e}")

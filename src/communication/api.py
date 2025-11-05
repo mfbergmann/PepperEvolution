@@ -121,6 +121,28 @@ class APIServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
         
+        @self.app.post("/listen")
+        async def listen_for_speech(timeout: float = 10.0):
+            """Listen for speech and process it"""
+            try:
+                user_input = await self.robot.listen(timeout=timeout)
+                if user_input:
+                    response = await self.ai_manager.process_user_input(user_input)
+                    return {
+                        "success": True,
+                        "heard": user_input,
+                        "response": response,
+                        "timestamp": asyncio.get_event_loop().time()
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": "No speech detected",
+                        "timestamp": asyncio.get_event_loop().time()
+                    }
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+        
         @self.app.post("/command")
         async def execute_command(request: CommandRequest):
             """Execute robot command"""

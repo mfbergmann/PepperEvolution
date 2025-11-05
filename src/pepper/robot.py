@@ -49,6 +49,13 @@ class PepperRobot:
             if not await self.connection.connect():
                 return False
             
+            # Disable autonomous mode if not using bridge (bridge handles this)
+            if not (hasattr(self.connection, 'use_bridge') and self.connection.use_bridge):
+                try:
+                    await self.disable_autonomous_mode()
+                except Exception as e:
+                    self.logger.warning(f"Could not disable autonomous mode: {e}")
+            
             # Initialize sensors and actuators
             await self.sensors.initialize()
             await self.actuators.initialize()
@@ -210,3 +217,34 @@ class PepperRobot:
         self.logger.warning("Emergency stop activated!")
         await self.actuators.stop_all()
         await self.actuators.set_stiffness(False)  # Disable motors
+    
+    async def disable_autonomous_mode(self):
+        """Disable Pepper's autonomous mode"""
+        try:
+            if not (hasattr(self.connection, 'use_bridge') and self.connection.use_bridge):
+                # Direct connection mode
+                try:
+                    autonomous_service = self.connection.get_service("ALAutonomousLife")
+                    autonomous_service.setState("disabled")
+                    self.logger.info("Autonomous mode disabled")
+                except Exception as e:
+                    self.logger.warning(f"Could not disable autonomous mode: {e}")
+            # Bridge mode - autonomous mode should already be handled by bridge
+            else:
+                self.logger.info("Bridge mode - autonomous mode handled by bridge service")
+        except Exception as e:
+            self.logger.warning(f"Failed to disable autonomous mode: {e}")
+    
+    async def enable_autonomous_mode(self):
+        """Enable Pepper's autonomous mode"""
+        try:
+            if not (hasattr(self.connection, 'use_bridge') and self.connection.use_bridge):
+                # Direct connection mode
+                try:
+                    autonomous_service = self.connection.get_service("ALAutonomousLife")
+                    autonomous_service.setState("solitary")
+                    self.logger.info("Autonomous mode enabled")
+                except Exception as e:
+                    self.logger.warning(f"Could not enable autonomous mode: {e}")
+        except Exception as e:
+            self.logger.warning(f"Failed to enable autonomous mode: {e}")
