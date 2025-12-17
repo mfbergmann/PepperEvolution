@@ -6,8 +6,8 @@ set host "10.0.100.100"
 set user "nao"
 set password "nao"
 
-# Check if bridge is already running
-spawn ssh -o StrictHostKeyChecking=no $user@$host "ps aux | grep pepper_bridge.py | grep -v grep"
+# Check if bridge is already running (v2 preferred)
+spawn ssh -o StrictHostKeyChecking=no $user@$host "ps aux | egrep 'pepper_bridge_v2.py|pepper_bridge.py' | grep -v grep"
 expect {
     "password:" {
         send "$password\r"
@@ -17,8 +17,12 @@ expect {
         send "$password\r"
         exp_continue
     }
+    "pepper_bridge_v2.py" {
+        puts "Bridge v2 is already running"
+        exit 0
+    }
     "pepper_bridge.py" {
-        puts "Bridge is already running"
+        puts "Bridge (v1) is already running"
         exit 0
     }
     "$ " {
@@ -43,13 +47,12 @@ expect {
     }
 }
 
-send "cd /home/nao\r"
-expect "$ "
-send "nohup python pepper_bridge.py > /tmp/pepper_bridge.log 2>&1 &\r"
+# Prefer v2 script if available
+send "if [ -f /home/nao/pepper_bridge_export/pepper_bridge_v2.py ]; then cd /home/nao/pepper_bridge_export; nohup python pepper_bridge_v2.py > /tmp/pepper_bridge.log 2>&1 &; else cd /home/nao; nohup python pepper_bridge.py > /tmp/pepper_bridge.log 2>&1 &; fi\r"
 expect "$ "
 send "sleep 2\r"
 expect "$ "
-send "ps aux | grep pepper_bridge.py | grep -v grep\r"
+send "ps aux | egrep 'pepper_bridge_v2.py|pepper_bridge.py' | grep -v grep\r"
 expect "$ "
 send "tail -10 /tmp/pepper_bridge.log\r"
 expect "$ "

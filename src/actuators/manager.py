@@ -25,6 +25,7 @@ class ActuatorManager:
         self.led_service = None
         self.tablet_service = None
         self.animation_service = None
+        self.awareness_service = None
         
         # Movement state
         self._is_moving = False
@@ -49,6 +50,7 @@ class ActuatorManager:
             self.led_service = self.connection.get_service("ALLeds")
             self.tablet_service = self.connection.get_service("ALTabletService")
             self.animation_service = self.connection.get_service("ALAnimationPlayer")
+            self.awareness_service = self.connection.get_service("ALBasicAwareness")
             
             # Enable motion
             self.motion_service.wakeUp()
@@ -215,6 +217,50 @@ class ActuatorManager:
             self.logger.error(f"Failed to get current pose: {e}")
             return self._current_pose
     
+    # Head and posture
+    
+    async def move_head(self, yaw: float, pitch: float, speed: float = 0.2) -> bool:
+        """Move head to angles in degrees"""
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.move_head(yaw, pitch, speed)
+                return result.get("success", False)
+            # direct
+            self.motion_service.setStiffnesses("Head", 1.0)
+            yaw_rad = math.radians(yaw)
+            pitch_rad = math.radians(pitch)
+            self.motion_service.setAngles(["HeadYaw", "HeadPitch"], [yaw_rad, pitch_rad], speed)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to move head: {e}")
+            return False
+    
+    async def wake_up(self) -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.wake_up()
+                return result.get("success", False)
+            self.motion_service.wakeUp()
+            try:
+                self.posture_service.goToPosture("StandInit", 0.5)
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to wake up: {e}")
+            return False
+    
+    async def rest(self) -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.rest()
+                return result.get("success", False)
+            self.motion_service.rest()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to rest: {e}")
+            return False
+
     # Speech methods
     
     async def speak(self, text: str, language: str = "en") -> bool:
@@ -369,6 +415,38 @@ class ActuatorManager:
             self.logger.error(f"Failed to nod head: {e}", exc_info=True)
             return False
     
+    # System settings
+    
+    async def set_volume(self, volume: int) -> bool:
+        """Set TTS volume 0-100"""
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.set_volume(volume)
+                return result.get("success", False)
+            if not self.tts_service:
+                return False
+            self.tts_service.setVolume(max(0.0, min(1.0, float(volume) / 100.0)))
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set volume: {e}")
+            return False
+    
+    async def set_awareness(self, enabled: bool) -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.set_awareness(enabled)
+                return result.get("success", False)
+            if not self.awareness_service:
+                return False
+            if enabled:
+                self.awareness_service.startAwareness()
+            else:
+                self.awareness_service.stopAwareness()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set awareness: {e}")
+            return False
+
     # LED control
     
     async def set_eye_color(self, color: str):
@@ -446,23 +524,65 @@ class ActuatorManager:
     
     # Tablet control
     
-    async def show_image(self, image_path: str):
-        """Show image on tablet"""
+    async def show_image(self, image_path_or_url: str):
+        """Show image on tablet (supports URL via bridge)"""
         try:
-            self.tablet_service.showImage(image_path)
-            self.logger.info(f"Showing image: {image_path}")
-            
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.tablet_show_image(image_path_or_url)
+                return result.get("success", False)
+            self.tablet_service.showImage(image_path_or_url)
+            self.logger.info(f"Showing image: {image_path_or_url}")
+            return True
         except Exception as e:
             self.logger.error(f"Failed to show image: {e}")
+            return False
     
     async def show_webpage(self, url: str):
         """Show webpage on tablet"""
         try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.tablet_show_web(url)
+                return result.get("success", False)
             self.tablet_service.showWebview(url)
             self.logger.info(f"Showing webpage: {url}")
-            
+            return True
         except Exception as e:
             self.logger.error(f"Failed to show webpage: {e}")
+            return False
+    
+    async def tablet_show_text(self, text: str, background: str = "#000000") -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.tablet_show_text(text, background)
+                return result.get("success", False)
+            # direct: create simple html content via showWebview not implemented here
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to show text on tablet: {e}")
+            return False
+    
+    async def tablet_hide(self) -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.tablet_hide()
+                return result.get("success", False)
+            self.tablet_service.hideWebview()
+            self.tablet_service.hideImage()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to hide tablet: {e}")
+            return False
+    
+    async def tablet_set_brightness(self, brightness: int) -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.tablet_set_brightness(brightness)
+                return result.get("success", False)
+            self.tablet_service.setBrightness(max(0.0, min(1.0, float(brightness) / 100.0)))
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set tablet brightness: {e}")
+            return False
     
     # Utility methods
     
@@ -479,18 +599,48 @@ class ActuatorManager:
         except Exception as e:
             self.logger.error(f"Failed to set stiffness: {e}")
     
+    async def list_animations(self) -> List[str]:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.list_animations()
+                if isinstance(result, dict) and 'animations' in result:
+                    return result['animations']
+                return []
+            if not self.animation_service:
+                return []
+            return list(self.animation_service.getAnimationList())
+        except Exception as e:
+            self.logger.error(f"Failed to list animations: {e}")
+            return []
+    
+    async def play_animation(self, name: str) -> bool:
+        try:
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                result = self.connection.bridge_client.play_animation(name)
+                return result.get("success", False)
+            if not self.animation_service:
+                return False
+            self.animation_service.run(name)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to play animation: {e}")
+            return False
+    
     async def stop_all(self):
         """Stop all ongoing activities"""
         try:
             # Stop movement
-            self.motion_service.stopMove()
+            if self.motion_service:
+                self.motion_service.stopMove()
             self._is_moving = False
             
             # Stop speech
-            self.tts_service.stopAll()
+            if self.tts_service and hasattr(self.tts_service, 'stopAll'):
+                self.tts_service.stopAll()
             
             # Stop animations
-            self.animation_service.stopAll()
+            if self.animation_service and hasattr(self.animation_service, 'stopAll'):
+                self.animation_service.stopAll()
             
             self.logger.info("All activities stopped")
             

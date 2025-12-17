@@ -171,13 +171,19 @@ class PepperConnection:
                 health = self.bridge_client.health_check()
                 if health.get("status") == "healthy":
                     status = self.bridge_client.get_status()
-                    return {
+                    result = {
                         "status": "connected",
                         "robot_name": status.get("robot_name", "Unknown"),
-                        "bridge_url": BRIDGE_URL,
+                        "bridge_url": self.bridge_url,
                         "battery": status.get("battery", 0),
                         "system_version": status.get("system_version", "Unknown")
                     }
+                    # Include optional v2 metadata
+                    if self.bridge_client.version:
+                        result["bridge_version"] = self.bridge_client.version
+                    if getattr(self.bridge_client, "streams", None):
+                        result["streams"] = self.bridge_client.streams
+                    return result
                 else:
                     return {"status": "disconnected", "error": "Bridge not healthy"}
             except Exception as e:

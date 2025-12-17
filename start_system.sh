@@ -37,7 +37,7 @@ if [ "$BRIDGE_RUNNING" = false ]; then
         else
             echo "   ✗ Failed to start bridge service"
             echo "   Try manually: ssh $PEPPER_USER@$PEPPER_IP"
-            echo "   Then run: cd /home/nao && nohup python pepper_bridge.py > /tmp/pepper_bridge.log 2>&1 &"
+            echo "   Then run: if [ -f /home/nao/pepper_bridge_export/pepper_bridge_v2.py ]; then cd /home/nao/pepper_bridge_export && nohup python pepper_bridge_v2.py > /tmp/pepper_bridge.log 2>&1 &; else cd /home/nao && nohup python pepper_bridge.py > /tmp/pepper_bridge.log 2>&1 &; fi"
             exit 1
         fi
     else
@@ -101,7 +101,7 @@ echo "=========================================="
 echo "Starting PepperEvolution Application"
 echo "=========================================="
 echo ""
-echo "Bridge service: ✓ Running on port 8888"
+echo "Bridge service: ✓ Running on port 8888 (WS on 8889 in v2)"
 echo "Main application: Starting..."
 echo ""
 echo "Press Ctrl+C to stop"

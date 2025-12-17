@@ -23,6 +23,24 @@ class CommandRequest(BaseModel):
     command: str
     params: Optional[Dict[str, Any]] = {}
 
+class MoveHeadRequest(BaseModel):
+    yaw: float
+    pitch: float
+    speed: float = 0.2
+
+class TabletTextRequest(BaseModel):
+    text: str
+    background: Optional[str] = "#000000"
+
+class TabletURLRequest(BaseModel):
+    url: str
+
+class AwarenessRequest(BaseModel):
+    enabled: bool
+
+class VolumeRequest(BaseModel):
+    volume: int
+
 
 class APIServer:
     """REST API server for PepperEvolution"""
@@ -182,6 +200,14 @@ class APIServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
         
+        @self.app.post("/move/head")
+        async def move_head(req: MoveHeadRequest):
+            try:
+                success = await self.robot.actuators.move_head(req.yaw, req.pitch, req.speed)
+                return {"success": success, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.post("/move/turn")
         async def turn(angle: float = 90):
             """Turn robot"""
@@ -246,6 +272,38 @@ class APIServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
         
+        @self.app.post("/wake_up")
+        async def wake_up():
+            try:
+                success = await self.robot.actuators.wake_up()
+                return {"success": success, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/rest")
+        async def rest():
+            try:
+                success = await self.robot.actuators.rest()
+                return {"success": success, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/volume")
+        async def set_volume(req: VolumeRequest):
+            try:
+                success = await self.robot.actuators.set_volume(req.volume)
+                return {"success": success, "volume": req.volume, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/awareness")
+        async def set_awareness(req: AwarenessRequest):
+            try:
+                success = await self.robot.actuators.set_awareness(req.enabled)
+                return {"success": success, "enabled": req.enabled, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.post("/led/eyes")
         async def set_eye_color(color: str = "blue"):
             """Set eye LED color"""
@@ -272,6 +330,62 @@ class APIServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
         
+        @self.app.post("/tablet/text")
+        async def tablet_text(req: TabletTextRequest):
+            try:
+                success = await self.robot.actuators.tablet_show_text(req.text, req.background)
+                return {"success": success, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/tablet/web")
+        async def tablet_web(req: TabletURLRequest):
+            try:
+                success = await self.robot.actuators.show_webpage(req.url)
+                return {"success": success, "url": req.url, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/tablet/image")
+        async def tablet_image(req: TabletURLRequest):
+            try:
+                success = await self.robot.actuators.show_image(req.url)
+                return {"success": success, "url": req.url, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/tablet/hide")
+        async def tablet_hide():
+            try:
+                success = await self.robot.actuators.tablet_hide()
+                return {"success": success, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/tablet/brightness")
+        async def tablet_brightness(brightness: int = 100):
+            try:
+                success = await self.robot.actuators.tablet_set_brightness(brightness)
+                return {"success": success, "brightness": brightness, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/animations")
+        async def get_animations():
+            try:
+                animations = await self.robot.actuators.list_animations()
+                return {"animations": animations, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/animation")
+        async def play_animation(name: str):
+            try:
+                success = await self.robot.actuators.play_animation(name)
+                return {"success": success, "name": name, "timestamp": asyncio.get_event_loop().time()}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.post("/emergency/stop")
         async def emergency_stop():
             """Emergency stop"""

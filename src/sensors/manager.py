@@ -116,11 +116,36 @@ class SensorManager:
     # Camera methods
     
     async def take_photo(self) -> Optional[np.ndarray]:
-        """Take a photo using Pepper's camera"""
+        """Take a photo using Pepper's camera.
+        In bridge mode v2, uses /picture (base64 RGB) endpoint. In direct mode, uses NAOqi camera.
+        """
         try:
-            # Get image from camera
-            image_data = self.camera_service.getImageRemote("pepper_camera")
+            # Bridge mode handling
+            if getattr(self.connection, 'use_bridge', False) and getattr(self.connection, 'bridge_client', None):
+                try:
+                    # Prefer v2 endpoint if available
+                    pic = self.connection.bridge_client.take_picture()
+                    if pic.get("success") and pic.get("data"):
+                        import base64
+                        data_b64 = pic["data"]
+                        width = int(pic.get("width", 0))
+                        height = int(pic.get("height", 0))
+                        raw = base64.b64decode(data_b64)
+                        # RGB format
+                        image_array = np.frombuffer(raw, dtype=np.uint8)
+                        image_array = image_array.reshape((height, width, 3))
+                        self._latest_camera_frame = image_array
+                        return image_array
+                except Exception as be:
+                    self.logger.warning(f"Bridge picture failed, falling back if possible: {be}")
+                # If v2 picture not available, fall through to NAOqi (if configured)
             
+            # Direct NAOqi mode
+            if not self.camera_service:
+                self.logger.debug("Camera service not initialized; cannot take photo in direct mode")
+                return None
+            
+            image_data = self.camera_service.getImageRemote("pepper_camera")
             if image_data:
                 # Convert to numpy array
                 width = image_data[0]
@@ -155,6 +180,19 @@ class SensorManager:
             # Check if using bridge mode
             if hasattr(self.connection, 'use_bridge') and self.connection.use_bridge:
                 if self.connection.bridge_client:
+                    # Detect bridge version (cache via health_check)
+                    try:
+                        if not self.connection.bridge_client.version:
+                            self.connection.bridge_client.health_check()
+                    except Exception:
+                        pass
+                    if (self.connection.bridge_client.version and
+                        str(self.connection.bridge_client.version).startswith("2")):
+                        # v2 does not provide /listen; audio is streamed via WS.
+                        # For now, return None so callers can decide how to handle.
+                        self.logger.info("Bridge v2 detected: /listen not available; skipping speech capture")
+                        return None
+                    # v1 path
                     result = self.connection.bridge_client.listen_for_speech(timeout, "English")
                     if result.get("success") and result.get("text"):
                         return result.get("text")
