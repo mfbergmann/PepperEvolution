@@ -1,99 +1,84 @@
 """
-Pepper robot connection management using NAOqi 2.5
+Pepper robot connection management via the bridge server.
+
+Replaces direct NAOqi access with HTTP calls to the bridge.
 """
 
-import asyncio
-import logging
-from typing import Optional, Dict, Any
 from dataclasses import dataclass
-import qi
+from typing import Any, Dict
 
 from loguru import logger
+
+from .bridge_client import BridgeClient
+from .event_stream import EventStream
 
 
 @dataclass
 class ConnectionConfig:
-    """Configuration for Pepper robot connection"""
+    """Configuration for connecting to the Pepper bridge."""
     ip: str
-    port: int = 9559
-    username: str = "nao"
-    password: str = "nao"
-    timeout: int = 30
+    bridge_port: int = 8888
+    api_key: str = ""
+    timeout: float = 15.0
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.ip}:{self.bridge_port}"
+
+    @property
+    def ws_url(self) -> str:
+        return f"ws://{self.ip}:{self.bridge_port}/ws/events"
 
 
 class PepperConnection:
-    """Manages connection to Pepper robot via NAOqi"""
-    
+    """Manages the connection to Pepper via the bridge server."""
+
     def __init__(self, config: ConnectionConfig):
         self.config = config
-        self.session: Optional[qi.Session] = None
+        self.bridge = BridgeClient(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            timeout=config.timeout,
+        )
+        self.events = EventStream(
+            ws_url=config.ws_url,
+            api_key=config.api_key,
+        )
         self.connected = False
         self.logger = logger.bind(module="PepperConnection")
-        
+
     async def connect(self) -> bool:
-        """Establish connection to Pepper robot"""
+        """Connect to the bridge and verify it's alive."""
         try:
-            self.logger.info(f"Connecting to Pepper at {self.config.ip}:{self.config.port}")
-            
-            # Create session
-            self.session = qi.Session()
-            
-            # Connect to robot
-            self.session.connect(f"tcp://{self.config.ip}:{self.config.port}")
-            
-            if self.session.isConnected():
-                self.connected = True
-                self.logger.success("Successfully connected to Pepper robot")
-                return True
-            else:
-                self.logger.error("Failed to connect to Pepper robot")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Connection error: {e}")
+            self.logger.info(f"Connecting to bridge at {self.config.base_url}")
+            await self.bridge.connect()
+            health = await self.bridge.health()
+            self.connected = True
+            self.logger.success(f"Connected to bridge (version {health.get('version', '?')})")
+            # Start event stream
+            await self.events.start()
+            return True
+        except Exception as exc:
+            self.logger.error(f"Connection failed: {exc}")
             self.connected = False
             return False
-    
+
     async def disconnect(self):
-        """Disconnect from Pepper robot"""
-        if self.session and self.session.isConnected():
-            self.session.close()
-            self.connected = False
-            self.logger.info("Disconnected from Pepper robot")
-    
-    def get_service(self, service_name: str):
-        """Get a NAOqi service"""
-        if not self.connected or not self.session:
-            raise ConnectionError("Not connected to Pepper robot")
-        
-        try:
-            return self.session.service(service_name)
-        except Exception as e:
-            self.logger.error(f"Failed to get service {service_name}: {e}")
-            raise
-    
+        """Disconnect from the bridge."""
+        await self.events.stop()
+        await self.bridge.close()
+        self.connected = False
+        self.logger.info("Disconnected from bridge")
+
     def is_connected(self) -> bool:
-        """Check if connected to robot"""
-        return self.connected and self.session and self.session.isConnected()
-    
+        return self.connected
+
     async def health_check(self) -> Dict[str, Any]:
-        """Perform health check on connection"""
-        if not self.is_connected():
+        """Check bridge health."""
+        if not self.connected:
             return {"status": "disconnected", "error": "Not connected"}
-        
         try:
-            # Try to get a basic service to test connection
-            system_service = self.get_service("ALSystem")
-            robot_name = system_service.robotName()
-            
-            return {
-                "status": "connected",
-                "robot_name": robot_name,
-                "ip": self.config.ip,
-                "port": self.config.port
-            }
-        except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e)
-            }
+            data = await self.bridge.health()
+            return {"status": "connected", **data}
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}

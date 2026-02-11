@@ -1,160 +1,139 @@
 
-# PepperEvolution 🤖☁️
+# PepperEvolution v2
 
-A cloud-based AI control system for Pepper robots that offloads the robot's "brain" to the cloud, enabling advanced AI capabilities through bidirectional communication.
+A cloud-based AI control system for SoftBank Pepper robots. A bridge server on the robot wraps NAOqi as HTTP/WebSocket endpoints; the host application connects via async HTTP and drives conversations with Anthropic Claude using native tool calling.
 
 ## Overview
 
-PepperEvolution transforms your Pepper robot into an AI-powered companion by connecting it to cloud-based AI models (like GPT-5) through a robust Python interface. The system provides:
+PepperEvolution transforms Pepper into an AI-powered companion:
 
-- **Bidirectional Communication**: Real-time sensor data from Pepper to AI, and AI instructions back to Pepper
-- **Cloud-Based Intelligence**: Offloads computational heavy lifting to powerful cloud AI models
-- **Modular Architecture**: Easy to extend and customize for different use cases
-- **Open Source**: Contributes to the Pepper community since the robot is discontinued
-
-
-
-## Upcoming Features
-
-### 🤖 Robot Control
-- Movement control (walking, turning, gestures)
-- Speech synthesis and recognition
-- Camera and sensor data processing
-- Touch and button interaction handling
-- LED and display control
-
-### 🧠 AI Integration
-- OpenAI GPT-5 integration (configurable for other models)
-- Real-time sensor data analysis
-- Natural language understanding and generation
-- Context-aware decision making
-- Memory and learning capabilities
-
-### 🔄 Communication
-- WebSocket-based real-time communication
-- RESTful API for external integrations
-- Event-driven architecture
-- Robust error handling and recovery
+- **Bridge architecture** - No NAOqi SDK needed on the host. A Python 2.7 Tornado server on the robot exposes all hardware as REST endpoints.
+- **AI tool calling** - Anthropic Claude uses structured tool calls (speak, move, gesture, photo, sensors) instead of regex-parsed action tags.
+- **Real-time events** - WebSocket push from the robot for touch, sonar, battery, and people detection events.
+- **Web interface** - Browser-based control panel with chat, direct controls, and live event stream.
 
 ## Prerequisites
 
-- Pepper robot (version 1.6 or 1.7)
-- NAOqi 2.5 Python SDK
-- Python 3.8+
-- OpenAI API key
-- Network connectivity between Pepper and cloud server
+- Pepper robot with NAOqi 2.5 on the network
+- Python 3.12+ on the host (no NAOqi SDK needed)
+- Anthropic API key (or OpenAI API key)
+- SSH access to the robot (nao/nao)
 
-## Installation
+## Quick Start
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/mfbergmann/PepperEvolution.git
-   cd PepperEvolution
-   ```
+```bash
+# Install
+git clone https://github.com/mfbergmann/PepperEvolution.git
+cd PepperEvolution
+pip install -r requirements.txt
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+# Configure
+cp env.example .env
+# Edit .env: set PEPPER_IP, ANTHROPIC_API_KEY
 
-3. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your OpenAI API key and Pepper IP address
-   ```
+# Deploy bridge and start
+./scripts/start.sh
+```
 
-4. **Run the system**
-   ```bash
-   python main.py
-   ```
+Or manually:
+```bash
+# Deploy bridge to robot
+python robot_bridge/deploy.py
+
+# Verify bridge
+curl http://10.0.100.100:8888/health
+
+# Start host application
+python main.py
+```
+
+Then open `examples/web_interface.html` or use the API:
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Wave at me and say hello!"}'
+```
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Pepper Robot  │◄──►│  PepperEvolution │◄──►│  Cloud AI Model │
-│                 │    │     Gateway      │    │   (GPT-5, etc.) │
-│ • Sensors       │    │                  │    │                 │
-│ • Actuators     │    │ • NAOqi Bridge   │    │ • Natural Lang  │
-│ • Camera        │    │ • WebSocket API  │    │ • Reasoning     │
-│ • Microphone    │    │ • Data Processing│    │ • Memory        │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+Pepper Robot (NAOqi 2.5)          Host (Python 3.12+)
+┌──────────────────────┐  HTTP   ┌──────────────────────────┐
+│ pepper_bridge.py     │◄───────►│ BridgeClient (httpx)     │
+│ Tornado :8888        │         │ EventStream (websockets)  │
+│ REST + /ws/events    │  WS     │ AIManager + ToolExecutor  │
+└──────────────────────┘◄───────►│ FastAPI :8000             │
+                                 │ WebSocket :8765           │
+                                 └──────────────────────────┘
+                                         ▲
+                                         │ Tool calling
+                                  Anthropic Claude API
 ```
-
-## Quick Start
-
-1. **Basic AI Chat**
-   ```python
-   from pepper_evolution import PepperAI
-   
-   ai = PepperAI()
-   ai.start_conversation()
-   ```
-
-2. **Custom Behavior**
-   ```python
-   from pepper_evolution import PepperAI
-   
-   ai = PepperAI()
-   
-   @ai.on_sensor_data
-   def handle_sensor_data(data):
-       if data['touch_head']:
-           ai.speak("I felt that!")
-   
-   ai.run()
-   ```
-
-## Configuration
-
-### Environment Variables
-- `OPENAI_API_KEY`: Your OpenAI API key
-- `PEPPER_IP`: Pepper robot's IP address
-- `PEPPER_PORT`: NAOqi port (default: 9559)
-- `AI_MODEL`: AI model to use (default: gpt-5)
-- `LOG_LEVEL`: Logging level (default: INFO)
-
-### AI Model Configuration
-The system supports multiple AI models:
-- OpenAI GPT-5 (default)
-- OpenAI GPT-4
-- Anthropic Claude
-- Local models (via Ollama)
 
 ## Project Structure
 
 ```
 PepperEvolution/
+├── robot_bridge/
+│   ├── pepper_bridge.py    # Bridge server (runs on robot, Python 2.7)
+│   └── deploy.py           # SCP + SSH deploy script
 ├── src/
-│   ├── pepper/           # Pepper robot interface
-│   ├── ai/              # AI model integrations
-│   ├── communication/   # WebSocket and API handling
-│   ├── sensors/         # Sensor data processing
-│   └── actuators/       # Robot control commands
-├── examples/            # Example applications
-├── tests/              # Unit and integration tests
-├── docs/               # Documentation
-├── config/             # Configuration files
-└── requirements.txt    # Python dependencies
+│   ├── pepper/             # BridgeClient, EventStream, PepperConnection, PepperRobot
+│   ├── ai/                 # AIProvider, tools.py, ToolExecutor, AIManager
+│   ├── communication/      # FastAPI server, WebSocket server
+│   ├── sensors/            # SensorManager (reads from bridge)
+│   └── actuators/          # ActuatorManager (sends to bridge)
+├── tests/                  # 107 tests (respx-mocked, no robot needed)
+├── examples/
+│   └── web_interface.html  # Browser control panel
+├── scripts/
+│   └── start.sh            # Deploy + start convenience script
+├── docs/
+│   ├── GETTING_STARTED.md
+│   └── BRIDGE_API.md       # Full bridge endpoint reference
+└── main.py                 # Host application entry point
 ```
 
-## Contributing
+## AI Tools
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+The AI can call these tools during conversation:
+
+| Tool | Description |
+|------|-------------|
+| `speak` | Text-to-speech (with optional animated gestures) |
+| `move_forward` | Move forward/backward (clamped to 2m) |
+| `turn` | Turn left/right (clamped to 180 degrees) |
+| `move_head` | Look in a direction |
+| `set_posture` | Stand, Crouch, StandInit, StandZero |
+| `play_animation` | Wave, nod, and other gestures |
+| `set_eye_color` | Change eye LED color |
+| `take_photo` | Camera snapshot |
+| `get_sensors` | Battery, touch, sonar, people count |
+| `emergency_stop` | Stop all movement, disable motors |
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PEPPER_IP` | `10.0.100.100` | Robot IP |
+| `BRIDGE_PORT` | `8888` | Bridge port |
+| `BRIDGE_API_KEY` | | Optional auth |
+| `AI_MODEL` | `claude-sonnet-4-5-20250929` | AI model |
+| `ANTHROPIC_API_KEY` | | Required for Claude |
+| `OPENAI_API_KEY` | | Required for GPT |
+| `API_PORT` | `8000` | Host REST port |
+| `WEBSOCKET_PORT` | `8765` | Host WS port |
+
+## Testing
+
+```bash
+pytest tests/ -v --tb=short    # 107 tests, all pass without a robot
+```
+
+## Credits
+
+PepperEvolution is a research project from [TRiPL Lab](https://tripl.ca/), Toronto Metropolitan University.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Credits
-PepperEvolution is a performance research experiment running out of [TRiPL Lab](https://tripl.ca/).
-
-## Support
-
-- 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/mfbergmann/PepperEvolution/issues)
-- 💬 [Discussions](https://github.com/mfbergmann/PepperEvolution/discussions)
-
----
-
-**Note**: This project is designed for educational and research purposes. Please ensure compliance with local regulations when deploying AI-controlled robots.
+MIT License. See [LICENSE](LICENSE).

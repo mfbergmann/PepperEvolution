@@ -1,8 +1,20 @@
 """
-AI model integrations for Pepper robot
+AI model integrations for Pepper robot.
 """
 
 from .manager import AIManager
-from .models import OpenAIProvider, AnthropicProvider
+from .models import AIProvider, AnthropicProvider, OpenAIProvider, AIResponse, ToolCall, SYSTEM_PROMPT
+from .tools import TOOLS
+from .tool_executor import ToolExecutor
 
-__all__ = ["AIManager", "OpenAIProvider", "AnthropicProvider"]
+__all__ = [
+    "AIManager",
+    "AIProvider",
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "AIResponse",
+    "ToolCall",
+    "SYSTEM_PROMPT",
+    "TOOLS",
+    "ToolExecutor",
+]

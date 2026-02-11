@@ -1,17 +1,26 @@
 """
-REST API server for PepperEvolution
+FastAPI REST server for PepperEvolution.
+
+Simplified routes that work with the bridge-based architecture:
+- POST /chat — AI conversation with tool calling
+- GET /status — robot status
+- POST /command/{cmd} — direct robot commands
+- GET /tools — list available AI tools
 """
 
 import asyncio
-from typing import Dict, Any, Optional
+import json
+from typing import Any, Dict, Optional
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
 from loguru import logger
 
-from ..ai import AIManager
+from ..ai import AIManager, TOOLS
 from ..pepper import PepperRobot
 
 
@@ -19,394 +28,166 @@ class ChatRequest(BaseModel):
     message: str
 
 
-class CommandRequest(BaseModel):
-    command: str
-    params: Optional[Dict[str, Any]] = {}
+class CommandParams(BaseModel):
+    params: Dict[str, Any] = {}
 
 
 class APIServer:
-    """REST API server for PepperEvolution"""
-    
+    """REST API server for PepperEvolution."""
+
     def __init__(self, host: str, port: int, ai_manager: AIManager, robot: PepperRobot):
         self.host = host
         self.port = port
         self.ai_manager = ai_manager
         self.robot = robot
         self.logger = logger.bind(module="APIServer")
-        
-        # Create FastAPI app
+        self.server: Optional[uvicorn.Server] = None
+
         self.app = FastAPI(
             title="PepperEvolution API",
-            description="REST API for controlling Pepper robot with AI",
-            version="1.0.0"
+            description="Cloud AI control system for Pepper robot",
+            version="2.0.0",
         )
-        
-        # Add CORS middleware
+
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # Configure appropriately for production
+            allow_origins=["*"],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        
-        # Setup routes
+
         self._setup_routes()
-        
-        # Server instance
-        self.server = None
-        
+
     def _setup_routes(self):
-        """Setup API routes"""
-        
+
         @self.app.get("/")
         async def root():
-            """Root endpoint"""
-            return {
-                "message": "PepperEvolution API",
-                "version": "1.0.0",
-                "status": "running"
-            }
-        
+            return {"name": "PepperEvolution", "version": "2.0.0", "status": "running"}
+
         @self.app.get("/health")
-        async def health_check():
-            """Health check endpoint"""
+        async def health():
             try:
-                # Check robot connection
-                robot_health = await self.robot.connection.health_check()
-                
-                return {
-                    "status": "healthy",
-                    "robot": robot_health,
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
+                h = await self.robot.connection.health_check()
+                return {"status": "healthy", "bridge": h}
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+
         @self.app.get("/status")
-        async def get_status():
-            """Get robot status"""
+        async def status():
             try:
-                status = {
-                    "robot_state": self.robot.get_state().__dict__,
-                    "is_ready": await self.robot.is_ready(),
-                    "is_moving": self.robot.actuators.is_moving(),
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-                return status
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.get("/sensors")
-        async def get_sensor_data():
-            """Get sensor data"""
-            try:
-                sensor_data = await self.robot.get_environment_info()
+                state = self.robot.get_state()
+                sensors = await self.robot.get_sensors()
                 return {
-                    "sensor_data": sensor_data,
-                    "timestamp": asyncio.get_event_loop().time()
+                    "robot_state": {
+                        "battery_level": state.battery_level,
+                        "posture": state.posture,
+                        "robot_name": state.robot_name,
+                        "autonomous_life": state.autonomous_life,
+                        "is_connected": state.is_connected,
+                    },
+                    "sensors": sensors,
                 }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+
         @self.app.post("/chat")
         async def chat(request: ChatRequest):
-            """Send chat message to robot"""
             try:
-                response = await self.ai_manager.process_user_input(request.message)
-                return {
-                    "response": response,
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/command")
-        async def execute_command(request: CommandRequest):
-            """Execute robot command"""
+                result = await self.ai_manager.process_user_input(request.message)
+                return result
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+
+        @self.app.post("/command/{cmd}")
+        async def command(cmd: str, body: CommandParams):
             try:
-                result = await self._execute_robot_command(request.command, request.params)
-                return {
-                    "command": request.command,
-                    "result": result,
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/speak")
-        async def speak(request: ChatRequest):
-            """Make robot speak"""
-            try:
-                success = await self.robot.speak(request.message)
-                return {
-                    "success": success,
-                    "message": f"Spoke: {request.message}",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/move/forward")
-        async def move_forward(distance: float = 0.5):
-            """Move robot forward"""
-            try:
-                success = await self.robot.move_forward(distance)
-                return {
-                    "success": success,
-                    "message": f"Moved forward {distance}m",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/move/turn")
-        async def turn(angle: float = 90):
-            """Turn robot"""
-            try:
-                success = await self.robot.turn(angle)
-                return {
-                    "success": success,
-                    "message": f"Turned {angle} degrees",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/gesture/wave")
-        async def wave():
-            """Wave gesture"""
-            try:
-                success = await self.robot.wave_hand()
-                return {
-                    "success": success,
-                    "message": "Waved hand",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/gesture/nod")
-        async def nod():
-            """Nod head"""
-            try:
-                success = await self.robot.nod_head()
-                return {
-                    "success": success,
-                    "message": "Nodded head",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/photo")
-        async def take_photo():
-            """Take a photo"""
-            try:
-                photo = await self.robot.take_photo()
-                if photo is not None:
-                    # Convert to base64 for transmission
-                    import base64
-                    import cv2
-                    _, buffer = cv2.imencode('.jpg', photo)
-                    photo_base64 = base64.b64encode(buffer).decode('utf-8')
-                    return {
-                        "success": True,
-                        "photo": photo_base64,
-                        "timestamp": asyncio.get_event_loop().time()
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "message": "Failed to take photo",
-                        "timestamp": asyncio.get_event_loop().time()
-                    }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/led/eyes")
-        async def set_eye_color(color: str = "blue"):
-            """Set eye LED color"""
-            try:
-                await self.robot.actuators.set_eye_color(color)
-                return {
-                    "success": True,
-                    "message": f"Set eye color to {color}",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/led/chest")
-        async def set_chest_color(color: str = "blue"):
-            """Set chest LED color"""
-            try:
-                await self.robot.actuators.set_chest_led(color)
-                return {
-                    "success": True,
-                    "message": f"Set chest color to {color}",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        @self.app.post("/emergency/stop")
-        async def emergency_stop():
-            """Emergency stop"""
-            try:
-                await self.robot.emergency_stop()
-                return {
-                    "success": True,
-                    "message": "Emergency stop activated",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
+                result = await self._execute_command(cmd, body.params)
+                return result
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+
+        @self.app.get("/tools")
+        async def list_tools():
+            return {"tools": TOOLS}
+
         @self.app.get("/conversation/history")
-        async def get_conversation_history():
-            """Get conversation history"""
-            try:
-                history = self.ai_manager.get_conversation_history()
-                return {
-                    "history": history,
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
+        async def get_history():
+            return {"history": self.ai_manager.get_conversation_history()}
+
         @self.app.delete("/conversation/history")
-        async def clear_conversation_history():
-            """Clear conversation history"""
-            try:
-                self.ai_manager.clear_conversation_history()
-                return {
-                    "success": True,
-                    "message": "Conversation history cleared",
-                    "timestamp": asyncio.get_event_loop().time()
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-        
+        async def clear_history():
+            self.ai_manager.clear_conversation_history()
+            return {"success": True}
+
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
-            """WebSocket endpoint for real-time communication"""
             await websocket.accept()
             try:
                 while True:
-                    # Receive message
-                    data = await websocket.receive_text()
-                    
-                    # Parse JSON
-                    import json
-                    message = json.loads(data)
-                    
-                    # Handle message
-                    if message.get("type") == "chat":
-                        response = await self.ai_manager.process_user_input(message.get("message", ""))
-                        await websocket.send_text(json.dumps({
-                            "type": "chat_response",
-                            "response": response
-                        }))
-                    elif message.get("type") == "status_request":
-                        status = {
-                            "robot_state": self.robot.get_state().__dict__,
-                            "is_ready": await self.robot.is_ready(),
-                            "is_moving": self.robot.actuators.is_moving()
-                        }
-                        await websocket.send_text(json.dumps({
+                    raw = await websocket.receive_text()
+                    data = json.loads(raw)
+                    msg_type = data.get("type", "")
+
+                    if msg_type == "chat":
+                        message = data.get("message", "")
+                        if message:
+                            result = await self.ai_manager.process_user_input(message)
+                            await websocket.send_json({"type": "chat_response", **result})
+                    elif msg_type == "status_request":
+                        state = self.robot.get_state()
+                        await websocket.send_json({
                             "type": "status_response",
-                            "status": status
-                        }))
+                            "robot_state": {
+                                "battery_level": state.battery_level,
+                                "posture": state.posture,
+                                "is_connected": state.is_connected,
+                            },
+                        })
                     else:
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "message": "Unknown message type"
-                        }))
-                        
+                        await websocket.send_json({"type": "error", "message": f"Unknown type: {msg_type}"})
             except WebSocketDisconnect:
                 self.logger.info("WebSocket client disconnected")
-            except Exception as e:
-                self.logger.error(f"WebSocket error: {e}")
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "message": str(e)
-                }))
-    
-    async def _execute_robot_command(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a robot command"""
-        try:
-            if command == "speak":
-                text = params.get("text", "")
-                language = params.get("language", "en")
-                success = await self.robot.speak(text, language)
-                return {"success": success, "message": f"Spoke: {text}"}
-                
-            elif command == "move_forward":
-                distance = params.get("distance", 0.5)
-                success = await self.robot.move_forward(distance)
-                return {"success": success, "message": f"Moved forward {distance}m"}
-                
-            elif command == "turn":
-                angle = params.get("angle", 90)
-                success = await self.robot.turn(angle)
-                return {"success": success, "message": f"Turned {angle} degrees"}
-                
-            elif command == "wave":
-                success = await self.robot.wave_hand()
-                return {"success": success, "message": "Waved hand"}
-                
-            elif command == "take_photo":
-                photo = await self.robot.take_photo()
-                if photo is not None:
-                    import base64
-                    import cv2
-                    _, buffer = cv2.imencode('.jpg', photo)
-                    photo_base64 = base64.b64encode(buffer).decode('utf-8')
-                    return {"success": True, "photo": photo_base64}
-                else:
-                    return {"success": False, "message": "Failed to take photo"}
-                    
-            elif command == "set_eye_color":
-                color = params.get("color", "blue")
-                await self.robot.actuators.set_eye_color(color)
-                return {"success": True, "message": f"Set eye color to {color}"}
-                
-            elif command == "emergency_stop":
-                await self.robot.emergency_stop()
-                return {"success": True, "message": "Emergency stop activated"}
-                
-            else:
-                return {"success": False, "message": f"Unknown command: {command}"}
-                
-        except Exception as e:
-            self.logger.error(f"Error executing command {command}: {e}")
-            return {"success": False, "error": str(e)}
-    
+            except Exception as exc:
+                self.logger.error(f"WebSocket error: {exc}")
+
+    async def _execute_command(self, cmd: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a direct robot command."""
+        bridge = self.robot.connection.bridge
+
+        dispatch = {
+            "speak": lambda: bridge.speak(params.get("text", ""), language=params.get("language")),
+            "move_forward": lambda: bridge.move_forward(params.get("distance", 0.5)),
+            "turn": lambda: bridge.move_turn(params.get("angle", 90)),
+            "move_head": lambda: bridge.move_head(params.get("yaw", 0), params.get("pitch", 0)),
+            "posture": lambda: bridge.set_posture(params.get("posture", "Stand")),
+            "wake_up": lambda: bridge.wake_up(),
+            "rest": lambda: bridge.rest(),
+            "stop": lambda: bridge.stop(),
+            "emergency_stop": lambda: bridge.emergency_stop(),
+            "photo": lambda: bridge.take_picture(camera=params.get("camera", 0)),
+            "sensors": lambda: bridge.get_sensors(),
+            "eye_color": lambda: bridge.set_eye_leds(color=params.get("color", "white")),
+            "chest_color": lambda: bridge.set_chest_leds(color=params.get("color", "white")),
+            "animation": lambda: bridge.play_animation(params.get("name", "")),
+            "volume": lambda: bridge.set_volume(params.get("level", 50)),
+            "awareness": lambda: bridge.set_awareness(params.get("enabled", True)),
+        }
+
+        handler = dispatch.get(cmd)
+        if not handler:
+            return {"success": False, "error": f"Unknown command: {cmd}"}
+
+        result = await handler()
+        return {"success": True, "command": cmd, "result": result}
+
     async def start(self):
-        """Start the API server"""
-        try:
-            self.logger.info(f"Starting API server on {self.host}:{self.port}")
-            
-            config = uvicorn.Config(
-                self.app,
-                host=self.host,
-                port=self.port,
-                log_level="info"
-            )
-            
-            self.server = uvicorn.Server(config)
-            await self.server.serve()
-            
-        except Exception as e:
-            self.logger.error(f"Failed to start API server: {e}")
-            raise
-    
+        self.logger.info(f"Starting API server on {self.host}:{self.port}")
+        config = uvicorn.Config(self.app, host=self.host, port=self.port, log_level="info")
+        self.server = uvicorn.Server(config)
+        await self.server.serve()
+
     async def stop(self):
-        """Stop the API server"""
-        try:
-            if self.server:
-                self.server.should_exit = True
-                self.logger.info("API server stopped")
-        except Exception as e:
-            self.logger.error(f"Error stopping API server: {e}")
+        if self.server:
+            self.server.should_exit = True
+            self.logger.info("API server stopped")

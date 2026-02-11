@@ -5,267 +5,108 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PepperEvolution Control Panel</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
+            min-height: 100vh; padding: 20px;
         }
-
         .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
+            max-width: 1200px; margin: 0 auto; background: white;
+            border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); overflow: hidden;
         }
-
         .header {
             background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
+            color: white; padding: 30px; text-align: center;
         }
-
-        .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            font-size: 1.2em;
-            opacity: 0.9;
-        }
-
-        .main-content {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            padding: 30px;
-        }
-
-        .control-panel {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 25px;
-        }
-
-        .control-panel h2 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 1.5em;
-        }
-
-        .control-group {
-            margin-bottom: 25px;
-        }
-
-        .control-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #555;
-        }
-
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .main-content { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; padding: 30px; }
+        .panel { background: #f8f9fa; border-radius: 10px; padding: 25px; }
+        .panel h2 { color: #333; margin-bottom: 20px; font-size: 1.5em; }
+        .control-group { margin-bottom: 20px; }
+        .control-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
         .control-group input, .control-group select {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
+            width: 100%; padding: 12px; border: 2px solid #e1e5e9;
+            border-radius: 8px; font-size: 16px; transition: border-color 0.3s;
         }
-
-        .control-group input:focus, .control-group select:focus {
-            outline: none;
-            border-color: #4facfe;
-        }
-
+        .control-group input:focus, .control-group select:focus { outline: none; border-color: #4facfe; }
         .btn {
             background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 600;
-            transition: transform 0.2s, box-shadow 0.2s;
-            margin: 5px;
+            color: white; border: none; padding: 12px 24px; border-radius: 8px;
+            cursor: pointer; font-size: 16px; font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s; margin: 5px;
         }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
-        }
-
-        .btn:active {
-            transform: translateY(0);
-        }
-
-        .btn.danger {
-            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
-        }
-
-        .btn.success {
-            background: linear-gradient(135deg, #2ed573 0%, #1e90ff 100%);
-        }
-
-        .status-panel {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 25px;
-        }
-
-        .status-panel h2 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 1.5em;
-        }
-
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(79,172,254,0.4); }
+        .btn:active { transform: translateY(0); }
+        .btn.danger { background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); }
+        .btn.success { background: linear-gradient(135deg, #2ed573 0%, #1e90ff 100%); }
         .status-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px;
-            background: white;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 15px; background: white; border-radius: 8px;
+            margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
-
-        .status-label {
-            font-weight: 600;
-            color: #555;
-        }
-
-        .status-value {
-            font-weight: 500;
-            color: #333;
-        }
-
-        .status-value.connected {
-            color: #2ed573;
-        }
-
-        .status-value.disconnected {
-            color: #ff6b6b;
-        }
-
-        .chat-panel {
-            grid-column: 1 / -1;
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 25px;
-            margin-top: 20px;
-        }
-
-        .chat-panel h2 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 1.5em;
-        }
-
+        .status-label { font-weight: 600; color: #555; }
+        .status-value { font-weight: 500; color: #333; }
+        .status-value.connected { color: #2ed573; }
+        .status-value.disconnected { color: #ff6b6b; }
+        .chat-panel { grid-column: 1 / -1; }
         .chat-messages {
-            height: 300px;
-            overflow-y: auto;
-            background: white;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            border: 2px solid #e1e5e9;
+            height: 400px; overflow-y: auto; background: white; border-radius: 8px;
+            padding: 15px; margin-bottom: 15px; border: 2px solid #e1e5e9;
         }
-
-        .message {
-            margin-bottom: 10px;
-            padding: 10px;
-            border-radius: 8px;
+        .message { margin-bottom: 10px; padding: 10px; border-radius: 8px; }
+        .message.user { background: #e3f2fd; margin-left: 20%; }
+        .message.robot { background: #f3e5f5; margin-right: 20%; }
+        .message.tool-call {
+            background: #fff3e0; margin-right: 10%; font-family: monospace;
+            font-size: 0.85em; border-left: 3px solid #ff9800;
         }
-
-        .message.user {
-            background: #e3f2fd;
-            margin-left: 20%;
+        .message.event {
+            background: #e8f5e9; font-size: 0.85em;
+            border-left: 3px solid #4caf50;
         }
-
-        .message.robot {
-            background: #f3e5f5;
-            margin-right: 20%;
-        }
-
-        .chat-input {
-            display: flex;
-            gap: 10px;
-        }
-
+        .chat-input { display: flex; gap: 10px; }
         .chat-input input {
-            flex: 1;
-            padding: 12px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 16px;
+            flex: 1; padding: 12px; border: 2px solid #e1e5e9;
+            border-radius: 8px; font-size: 16px;
         }
-
-        .chat-input input:focus {
-            outline: none;
-            border-color: #4facfe;
-        }
-
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-            color: #666;
-        }
-
-        .loading.show {
-            display: block;
-        }
-
+        .chat-input input:focus { outline: none; border-color: #4facfe; }
+        .loading { display: none; text-align: center; padding: 10px; color: #666; }
+        .loading.show { display: block; }
         @media (max-width: 768px) {
-            .main-content {
-                grid-template-columns: 1fr;
-            }
-            
-            .header h1 {
-                font-size: 2em;
-            }
+            .main-content { grid-template-columns: 1fr; }
+            .header h1 { font-size: 2em; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 PepperEvolution</h1>
-            <p>Cloud-based AI Control System for Pepper Robot</p>
+            <h1>PepperEvolution</h1>
+            <p>Cloud AI Control System for Pepper Robot</p>
         </div>
 
         <div class="main-content">
-            <div class="control-panel">
-                <h2>🎮 Robot Control</h2>
-                
+            <div class="panel">
+                <h2>Robot Control</h2>
+
                 <div class="control-group">
                     <label for="speech-text">Speech Text:</label>
                     <input type="text" id="speech-text" placeholder="Enter text for Pepper to speak...">
-                    <button class="btn" onclick="speak()">🗣️ Speak</button>
+                    <button class="btn" onclick="directCommand('speak', {text: document.getElementById('speech-text').value})">Speak</button>
                 </div>
 
                 <div class="control-group">
                     <label for="move-distance">Move Distance (meters):</label>
-                    <input type="number" id="move-distance" value="0.5" step="0.1" min="0.1" max="2.0">
-                    <button class="btn" onclick="moveForward()">🚶 Move Forward</button>
+                    <input type="number" id="move-distance" value="0.5" step="0.1" min="-2" max="2">
+                    <button class="btn" onclick="directCommand('move_forward', {distance: parseFloat(document.getElementById('move-distance').value)})">Move Forward</button>
                 </div>
 
                 <div class="control-group">
                     <label for="turn-angle">Turn Angle (degrees):</label>
                     <input type="number" id="turn-angle" value="90" step="15" min="-180" max="180">
-                    <button class="btn" onclick="turn()">🔄 Turn</button>
+                    <button class="btn" onclick="directCommand('turn', {angle: parseFloat(document.getElementById('turn-angle').value)})">Turn</button>
                 </div>
 
                 <div class="control-group">
@@ -280,378 +121,206 @@
                         <option value="white">White</option>
                         <option value="off">Off</option>
                     </select>
-                    <button class="btn" onclick="setEyeColor()">👁️ Set Eye Color</button>
+                    <button class="btn" onclick="directCommand('eye_color', {color: document.getElementById('eye-color').value})">Set Eye Color</button>
                 </div>
 
                 <div class="control-group">
-                    <label for="chest-color">Chest LED Color:</label>
-                    <select id="chest-color">
-                        <option value="blue">Blue</option>
-                        <option value="red">Red</option>
-                        <option value="green">Green</option>
-                        <option value="yellow">Yellow</option>
-                        <option value="purple">Purple</option>
-                        <option value="cyan">Cyan</option>
-                        <option value="white">White</option>
-                        <option value="off">Off</option>
-                    </select>
-                    <button class="btn" onclick="setChestColor()">💙 Set Chest Color</button>
-                </div>
-
-                <div class="control-group">
-                    <button class="btn success" onclick="wave()">👋 Wave Hand</button>
-                    <button class="btn success" onclick="nod()">👍 Nod Head</button>
-                    <button class="btn" onclick="takePhoto()">📸 Take Photo</button>
-                    <button class="btn danger" onclick="emergencyStop()">🛑 Emergency Stop</button>
+                    <button class="btn success" onclick="directCommand('animation', {name: 'animations/Stand/Gestures/Hey_1'})">Wave</button>
+                    <button class="btn success" onclick="directCommand('posture', {posture: 'Stand'})">Stand</button>
+                    <button class="btn" onclick="directCommand('photo')">Take Photo</button>
+                    <button class="btn danger" onclick="if(confirm('Emergency stop?')) directCommand('emergency_stop')">Emergency Stop</button>
                 </div>
             </div>
 
-            <div class="status-panel">
-                <h2>📊 Robot Status</h2>
-                
+            <div class="panel">
+                <h2>Robot Status</h2>
+
                 <div class="status-item">
                     <span class="status-label">Connection:</span>
                     <span class="status-value" id="connection-status">Checking...</span>
                 </div>
-
                 <div class="status-item">
-                    <span class="status-label">Battery Level:</span>
+                    <span class="status-label">Battery:</span>
                     <span class="status-value" id="battery-level">--</span>
                 </div>
-
                 <div class="status-item">
-                    <span class="status-label">Temperature:</span>
-                    <span class="status-value" id="temperature">--</span>
+                    <span class="status-label">Posture:</span>
+                    <span class="status-value" id="posture">--</span>
                 </div>
-
                 <div class="status-item">
-                    <span class="status-label">Movement Status:</span>
-                    <span class="status-value" id="movement-status">--</span>
-                </div>
-
-                <div class="status-item">
-                    <span class="status-label">Current Pose:</span>
-                    <span class="status-value" id="current-pose">--</span>
-                </div>
-
-                <div class="status-item">
-                    <span class="status-label">Touch Sensors:</span>
+                    <span class="status-label">Touch:</span>
                     <span class="status-value" id="touch-sensors">--</span>
                 </div>
-
                 <div class="status-item">
-                    <span class="status-label">Sonar Distance:</span>
+                    <span class="status-label">Sonar:</span>
                     <span class="status-value" id="sonar-distance">--</span>
                 </div>
+                <div class="status-item">
+                    <span class="status-label">People:</span>
+                    <span class="status-value" id="people-count">--</span>
+                </div>
 
-                <button class="btn" onclick="refreshStatus()">🔄 Refresh Status</button>
+                <button class="btn" onclick="refreshStatus()">Refresh Status</button>
             </div>
 
-            <div class="chat-panel">
-                <h2>💬 AI Chat</h2>
-                
+            <div class="panel chat-panel">
+                <h2>AI Chat</h2>
+
                 <div class="chat-messages" id="chat-messages">
                     <div class="message robot">
-                        <strong>Pepper:</strong> Hello! I'm ready to help you. How can I assist you today?
+                        <strong>Pepper:</strong> Hello! I'm ready to help you.
                     </div>
                 </div>
+                <div class="loading" id="loading">Thinking...</div>
 
                 <div class="chat-input">
-                    <input type="text" id="chat-input" placeholder="Type your message here..." onkeypress="handleChatKeyPress(event)">
-                    <button class="btn" onclick="sendChatMessage()">📤 Send</button>
+                    <input type="text" id="chat-input" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendChat()">
+                    <button class="btn" onclick="sendChat()">Send</button>
                 </div>
             </div>
-        </div>
-
-        <div class="loading" id="loading">
-            <p>Processing request...</p>
         </div>
     </div>
 
     <script>
-        // Configuration
-        const API_BASE_URL = 'http://localhost:8000';
+        const API_BASE = 'http://localhost:8000';
         const WS_URL = 'ws://localhost:8765';
-
-        // WebSocket connection
         let ws = null;
-        let isConnected = false;
 
-        // Initialize WebSocket connection
-        function initWebSocket() {
-            ws = new WebSocket(WS_URL);
-            
-            ws.onopen = function() {
-                console.log('WebSocket connected');
-                isConnected = true;
-                updateConnectionStatus('Connected', 'connected');
-            };
-            
-            ws.onmessage = function(event) {
-                const data = JSON.parse(event.data);
-                handleWebSocketMessage(data);
-            };
-            
-            ws.onclose = function() {
-                console.log('WebSocket disconnected');
-                isConnected = false;
-                updateConnectionStatus('Disconnected', 'disconnected');
-                // Try to reconnect after 5 seconds
-                setTimeout(initWebSocket, 5000);
-            };
-            
-            ws.onerror = function(error) {
-                console.error('WebSocket error:', error);
-                updateConnectionStatus('Error', 'disconnected');
-            };
+        // --- Helpers ---
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
-        // Handle WebSocket messages
-        function handleWebSocketMessage(data) {
-            switch(data.type) {
-                case 'welcome':
-                    console.log('Connected to PepperEvolution WebSocket server');
-                    break;
-                case 'chat_response':
-                    addChatMessage('Pepper', data.message, 'robot');
-                    break;
-                case 'status_update':
-                    updateStatusDisplay(data.status);
-                    break;
-                case 'sensor_update':
-                    updateSensorDisplay(data.sensor_data);
-                    break;
-                case 'error':
-                    console.error('WebSocket error:', data.message);
-                    break;
-            }
+        function addMessage(sender, text, cls) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'message ' + cls;
+            div.innerHTML = '<strong>' + escapeHtml(sender) + ':</strong> ' + escapeHtml(text);
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
         }
 
-        // API functions
-        async function apiRequest(endpoint, method = 'GET', body = null) {
+        function addToolCall(name, input, result) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'message tool-call';
+            div.textContent = 'Tool: ' + name + '(' + JSON.stringify(input) + ') -> ' + result;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('show', show);
+        }
+
+        // --- API ---
+        async function apiRequest(endpoint, method, body) {
+            const opts = { method: method || 'GET', headers: {'Content-Type': 'application/json'} };
+            if (body) opts.body = JSON.stringify(body);
+            const resp = await fetch(API_BASE + endpoint, opts);
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.json();
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+            input.value = '';
+            addMessage('You', message, 'user');
+            showLoading(true);
+
             try {
-                showLoading(true);
-                
-                const options = {
-                    method: method,
-                    headers: {
-                        'Content-Type': 'application/json',
+                const result = await apiRequest('/chat', 'POST', { message });
+                // Show tool calls
+                if (result.tool_calls) {
+                    for (const tc of result.tool_calls) {
+                        addToolCall(tc.name, tc.input, tc.result || '');
                     }
-                };
-                
-                if (body) {
-                    options.body = JSON.stringify(body);
                 }
-                
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.detail || 'API request failed');
+                // Show text response
+                if (result.text) {
+                    addMessage('Pepper', result.text, 'robot');
                 }
-                
-                return data;
-            } catch (error) {
-                console.error('API request failed:', error);
-                alert('Error: ' + error.message);
-                throw error;
+            } catch (err) {
+                addMessage('System', 'Error: ' + err.message, 'event');
             } finally {
                 showLoading(false);
             }
         }
 
-        // Robot control functions
-        async function speak() {
-            const text = document.getElementById('speech-text').value;
-            if (!text) {
-                alert('Please enter text to speak');
-                return;
-            }
-            
+        async function directCommand(cmd, params) {
             try {
-                await apiRequest('/speak', 'POST', { message: text });
-                addChatMessage('System', `Pepper said: "${text}"`, 'robot');
-            } catch (error) {
-                console.error('Speak failed:', error);
+                showLoading(true);
+                const result = await apiRequest('/command/' + cmd, 'POST', { params: params || {} });
+                addMessage('System', cmd + ': OK', 'event');
+            } catch (err) {
+                addMessage('System', cmd + ' failed: ' + err.message, 'event');
+            } finally {
+                showLoading(false);
             }
         }
 
-        async function moveForward() {
-            const distance = parseFloat(document.getElementById('move-distance').value);
-            
-            try {
-                await apiRequest(`/move/forward?distance=${distance}`, 'POST');
-                addChatMessage('System', `Pepper moved forward ${distance}m`, 'robot');
-            } catch (error) {
-                console.error('Move forward failed:', error);
-            }
-        }
-
-        async function turn() {
-            const angle = parseFloat(document.getElementById('turn-angle').value);
-            
-            try {
-                await apiRequest(`/move/turn?angle=${angle}`, 'POST');
-                addChatMessage('System', `Pepper turned ${angle} degrees`, 'robot');
-            } catch (error) {
-                console.error('Turn failed:', error);
-            }
-        }
-
-        async function wave() {
-            try {
-                await apiRequest('/gesture/wave', 'POST');
-                addChatMessage('System', 'Pepper waved his hand', 'robot');
-            } catch (error) {
-                console.error('Wave failed:', error);
-            }
-        }
-
-        async function nod() {
-            try {
-                await apiRequest('/gesture/nod', 'POST');
-                addChatMessage('System', 'Pepper nodded his head', 'robot');
-            } catch (error) {
-                console.error('Nod failed:', error);
-            }
-        }
-
-        async function takePhoto() {
-            try {
-                const result = await apiRequest('/photo', 'POST');
-                if (result.success) {
-                    addChatMessage('System', 'Photo taken successfully!', 'robot');
-                    // Could display the photo here if needed
-                } else {
-                    addChatMessage('System', 'Failed to take photo', 'robot');
-                }
-            } catch (error) {
-                console.error('Take photo failed:', error);
-            }
-        }
-
-        async function setEyeColor() {
-            const color = document.getElementById('eye-color').value;
-            
-            try {
-                await apiRequest(`/led/eyes?color=${color}`, 'POST');
-                addChatMessage('System', `Set eye color to ${color}`, 'robot');
-            } catch (error) {
-                console.error('Set eye color failed:', error);
-            }
-        }
-
-        async function setChestColor() {
-            const color = document.getElementById('chest-color').value;
-            
-            try {
-                await apiRequest(`/led/chest?color=${color}`, 'POST');
-                addChatMessage('System', `Set chest color to ${color}`, 'robot');
-            } catch (error) {
-                console.error('Set chest color failed:', error);
-            }
-        }
-
-        async function emergencyStop() {
-            if (confirm('Are you sure you want to perform an emergency stop?')) {
-                try {
-                    await apiRequest('/emergency/stop', 'POST');
-                    addChatMessage('System', 'Emergency stop activated!', 'robot');
-                } catch (error) {
-                    console.error('Emergency stop failed:', error);
-                }
-            }
-        }
-
-        // Status functions
         async function refreshStatus() {
             try {
-                const status = await apiRequest('/status');
-                updateStatusDisplay(status);
-                
-                const sensors = await apiRequest('/sensors');
-                updateSensorDisplay(sensors.sensor_data);
-            } catch (error) {
-                console.error('Refresh status failed:', error);
+                const data = await apiRequest('/status');
+                const s = data.robot_state || {};
+                const sensors = data.sensors || {};
+                document.getElementById('connection-status').textContent = s.is_connected ? 'Connected' : 'Disconnected';
+                document.getElementById('connection-status').className = 'status-value ' + (s.is_connected ? 'connected' : 'disconnected');
+                document.getElementById('battery-level').textContent = (s.battery_level || 0) + '%';
+                document.getElementById('posture').textContent = s.posture || '--';
+
+                const touch = sensors.touch || {};
+                const touched = Object.entries(touch).filter(([k,v]) => v).map(([k]) => k);
+                document.getElementById('touch-sensors').textContent = touched.length ? touched.join(', ') : 'None';
+
+                const sonar = sensors.sonar || {};
+                document.getElementById('sonar-distance').textContent =
+                    'L: ' + (sonar.left != null ? sonar.left.toFixed(2) + 'm' : '--') +
+                    ', R: ' + (sonar.right != null ? sonar.right.toFixed(2) + 'm' : '--');
+
+                document.getElementById('people-count').textContent = sensors.people_count != null ? sensors.people_count : '--';
+            } catch (err) {
+                console.error('Status refresh failed:', err);
             }
         }
 
-        function updateStatusDisplay(status) {
-            document.getElementById('battery-level').textContent = `${status.robot_state.battery_level}%`;
-            document.getElementById('temperature').textContent = `${status.robot_state.temperature}°C`;
-            document.getElementById('movement-status').textContent = status.is_moving ? 'Moving' : 'Stopped';
-            document.getElementById('current-pose').textContent = status.robot_state.current_pose;
+        // --- WebSocket for events ---
+        function initWebSocket() {
+            ws = new WebSocket(WS_URL);
+            ws.onopen = function() {
+                console.log('WS connected');
+                document.getElementById('connection-status').textContent = 'Connected';
+                document.getElementById('connection-status').className = 'status-value connected';
+            };
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'robot_event') {
+                    const container = document.getElementById('chat-messages');
+                    const div = document.createElement('div');
+                    div.className = 'message event';
+                    div.textContent = 'Event [' + escapeHtml(data.event) + ']: ' + JSON.stringify(data.data);
+                    container.appendChild(div);
+                    container.scrollTop = container.scrollHeight;
+                }
+            };
+            ws.onclose = function() {
+                document.getElementById('connection-status').textContent = 'Disconnected';
+                document.getElementById('connection-status').className = 'status-value disconnected';
+                setTimeout(initWebSocket, 5000);
+            };
+            ws.onerror = function() {
+                document.getElementById('connection-status').textContent = 'Error';
+                document.getElementById('connection-status').className = 'status-value disconnected';
+            };
         }
 
-        function updateSensorDisplay(sensorData) {
-            if (sensorData.touch) {
-                const touched = sensorData.touch.touched ? 'Touched' : 'Not touched';
-                document.getElementById('touch-sensors').textContent = touched;
-            }
-            
-            if (sensorData.sonar) {
-                const left = sensorData.sonar.left_distance || 0;
-                const right = sensorData.sonar.right_distance || 0;
-                document.getElementById('sonar-distance').textContent = `L: ${left.toFixed(2)}m, R: ${right.toFixed(2)}m`;
-            }
-        }
-
-        function updateConnectionStatus(status, className) {
-            const element = document.getElementById('connection-status');
-            element.textContent = status;
-            element.className = `status-value ${className}`;
-        }
-
-        // Chat functions
-        async function sendChatMessage() {
-            const input = document.getElementById('chat-input');
-            const message = input.value.trim();
-            
-            if (!message) return;
-            
-            addChatMessage('You', message, 'user');
-            input.value = '';
-            
-            try {
-                const response = await apiRequest('/chat', 'POST', { message: message });
-                addChatMessage('Pepper', response.response, 'robot');
-            } catch (error) {
-                console.error('Chat failed:', error);
-                addChatMessage('System', 'Sorry, I encountered an error processing your message.', 'robot');
-            }
-        }
-
-        function handleChatKeyPress(event) {
-            if (event.key === 'Enter') {
-                sendChatMessage();
-            }
-        }
-
-        function addChatMessage(sender, message, type) {
-            const chatMessages = document.getElementById('chat-messages');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${type}`;
-            messageDiv.innerHTML = `<strong>${sender}:</strong> ${message}`;
-            chatMessages.appendChild(messageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        // Utility functions
-        function showLoading(show) {
-            const loading = document.getElementById('loading');
-            if (show) {
-                loading.classList.add('show');
-            } else {
-                loading.classList.remove('show');
-            }
-        }
-
-        // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             initWebSocket();
             refreshStatus();
-            
-            // Auto-refresh status every 10 seconds
             setInterval(refreshStatus, 10000);
         });
     </script>

@@ -1,10 +1,8 @@
 """
-Actuator manager for Pepper robot - handles all robot control commands
+Actuator manager - delegates to the bridge for all robot control.
 """
 
-import asyncio
-from typing import Optional, Dict, Any, List, Tuple
-import math
+from typing import Optional
 
 from loguru import logger
 
@@ -12,366 +10,154 @@ from ..pepper.connection import PepperConnection
 
 
 class ActuatorManager:
-    """Manages all Pepper robot actuators and movement"""
-    
+    """Sends actuation commands via the bridge HTTP API."""
+
     def __init__(self, connection: PepperConnection):
         self.connection = connection
         self.logger = logger.bind(module="ActuatorManager")
-        
-        # NAOqi services
-        self.motion_service = None
-        self.posture_service = None
-        self.tts_service = None
-        self.led_service = None
-        self.tablet_service = None
-        self.animation_service = None
-        
-        # Movement state
-        self._is_moving = False
-        self._current_pose = "unknown"
-        
-    async def initialize(self):
-        """Initialize all actuator services"""
+
+    @property
+    def bridge(self):
+        return self.connection.bridge
+
+    async def speak(self, text: str, language: Optional[str] = None, animated: bool = False) -> bool:
         try:
-            self.logger.info("Initializing actuator services...")
-            
-            # Get NAOqi services
-            self.motion_service = self.connection.get_service("ALMotion")
-            self.posture_service = self.connection.get_service("ALRobotPosture")
-            self.tts_service = self.connection.get_service("ALTextToSpeech")
-            self.led_service = self.connection.get_service("ALLeds")
-            self.tablet_service = self.connection.get_service("ALTabletService")
-            self.animation_service = self.connection.get_service("ALAnimationPlayer")
-            
-            # Enable motion
-            self.motion_service.wakeUp()
-            
-            # Set initial posture
-            await self.set_posture("Stand")
-            
-            self.logger.success("Actuator services initialized successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to initialize actuators: {e}")
-            raise
-    
-    # Movement methods
-    
+            await self.bridge.speak(text, language=language, animated=animated)
+            return True
+        except Exception as exc:
+            self.logger.error(f"speak failed: {exc}")
+            return False
+
+    async def set_volume(self, level: int) -> bool:
+        try:
+            await self.bridge.set_volume(level)
+            return True
+        except Exception as exc:
+            self.logger.error(f"set_volume failed: {exc}")
+            return False
+
     async def move_forward(self, distance: float = 0.5, speed: float = 0.3) -> bool:
-        """Move forward by specified distance"""
         try:
-            if self._is_moving:
-                self.logger.warning("Robot is already moving")
-                return False
-            
-            self._is_moving = True
-            self.logger.info(f"Moving forward {distance}m at speed {speed}")
-            
-            # Calculate movement time based on distance and speed
-            movement_time = distance / speed
-            
-            # Move forward
-            self.motion_service.moveTo(distance, 0, 0, [["MaxVelXY", speed]])
-            
-            # Wait for movement to complete
-            await asyncio.sleep(movement_time)
-            
-            # Stop movement
-            self.motion_service.stopMove()
-            self._is_moving = False
-            
+            await self.bridge.move_forward(distance, speed)
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to move forward: {e}")
-            self._is_moving = False
+        except Exception as exc:
+            self.logger.error(f"move_forward failed: {exc}")
             return False
-    
-    async def turn(self, angle: float, speed: float = 0.5) -> bool:
-        """Turn by specified angle (degrees)"""
+
+    async def turn(self, angle: float) -> bool:
         try:
-            if self._is_moving:
-                self.logger.warning("Robot is already moving")
-                return False
-            
-            self._is_moving = True
-            self.logger.info(f"Turning {angle} degrees at speed {speed}")
-            
-            # Convert degrees to radians
-            angle_rad = math.radians(angle)
-            
-            # Calculate movement time
-            movement_time = abs(angle_rad) / speed
-            
-            # Turn
-            self.motion_service.moveTo(0, 0, angle_rad, [["MaxVelTheta", speed]])
-            
-            # Wait for movement to complete
-            await asyncio.sleep(movement_time)
-            
-            # Stop movement
-            self.motion_service.stopMove()
-            self._is_moving = False
-            
+            await self.bridge.move_turn(angle)
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to turn: {e}")
-            self._is_moving = False
+        except Exception as exc:
+            self.logger.error(f"turn failed: {exc}")
             return False
-    
-    async def move_to(self, x: float, y: float, theta: float = 0.0, speed: float = 0.3) -> bool:
-        """Move to specific coordinates"""
+
+    async def move_head(self, yaw: float = 0, pitch: float = 0, speed: float = 0.2) -> bool:
         try:
-            if self._is_moving:
-                self.logger.warning("Robot is already moving")
-                return False
-            
-            self._is_moving = True
-            self.logger.info(f"Moving to position ({x}, {y}, {theta})")
-            
-            # Calculate distance for timing
-            distance = math.sqrt(x*x + y*y)
-            movement_time = distance / speed
-            
-            # Move to position
-            self.motion_service.moveTo(x, y, theta, [["MaxVelXY", speed]])
-            
-            # Wait for movement to complete
-            await asyncio.sleep(movement_time)
-            
-            # Stop movement
-            self.motion_service.stopMove()
-            self._is_moving = False
-            
+            await self.bridge.move_head(yaw, pitch, speed)
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to move to position: {e}")
-            self._is_moving = False
+        except Exception as exc:
+            self.logger.error(f"move_head failed: {exc}")
             return False
-    
-    async def stop_movement(self):
-        """Stop all movement"""
+
+    async def move_to(self, x: float, y: float, theta: float = 0) -> bool:
         try:
-            self.motion_service.stopMove()
-            self._is_moving = False
-            self.logger.info("Movement stopped")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to stop movement: {e}")
-    
-    # Posture and pose methods
-    
-    async def set_posture(self, posture: str) -> bool:
-        """Set robot posture (Stand, Sit, Crouch, etc.)"""
-        try:
-            self.logger.info(f"Setting posture to {posture}")
-            
-            # Go to posture
-            self.posture_service.goToPosture(posture, 0.5)
-            
-            # Update current pose
-            self._current_pose = posture
-            
+            await self.bridge.move_to(x, y, theta)
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to set posture: {e}")
+        except Exception as exc:
+            self.logger.error(f"move_to failed: {exc}")
             return False
-    
-    async def get_current_pose(self) -> str:
-        """Get current robot pose"""
+
+    async def stop(self) -> bool:
         try:
-            return self.posture_service.getPosture()
-        except Exception as e:
-            self.logger.error(f"Failed to get current pose: {e}")
-            return self._current_pose
-    
-    # Speech methods
-    
-    async def speak(self, text: str, language: str = "en") -> bool:
-        """Make Pepper speak text"""
-        try:
-            self.logger.info(f"Speaking: {text}")
-            
-            # Set language if different
-            if language != "en":
-                self.tts_service.setLanguage(language)
-            
-            # Speak the text
-            self.tts_service.say(text)
-            
+            await self.bridge.stop()
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to speak: {e}")
+        except Exception as exc:
+            self.logger.error(f"stop failed: {exc}")
             return False
-    
-    async def set_speech_rate(self, rate: float):
-        """Set speech rate (0.5 to 2.0)"""
+
+    async def emergency_stop(self) -> bool:
         try:
-            self.tts_service.setParameter("speed", rate)
-            self.logger.info(f"Speech rate set to {rate}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to set speech rate: {e}")
-    
-    async def set_voice(self, voice: str):
-        """Set TTS voice"""
-        try:
-            self.tts_service.setVoice(voice)
-            self.logger.info(f"Voice set to {voice}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to set voice: {e}")
-    
-    # Gesture methods
-    
-    async def wave_hand(self) -> bool:
-        """Perform a waving gesture"""
-        try:
-            self.logger.info("Performing wave gesture")
-            
-            # Play waving animation
-            self.animation_service.run("animations/Stand/Gestures/Hey_1")
-            
+            await self.bridge.emergency_stop()
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to wave hand: {e}")
+        except Exception as exc:
+            self.logger.error(f"emergency_stop failed: {exc}")
             return False
-    
-    async def point_at(self, x: float, y: float, z: float) -> bool:
-        """Point at a specific location"""
+
+    async def set_posture(self, posture: str, speed: float = 0.5) -> bool:
         try:
-            self.logger.info(f"Pointing at ({x}, {y}, {z})")
-            
-            # Calculate joint angles for pointing
-            # This is a simplified version - would need proper inverse kinematics
-            self.motion_service.setAngles("RArm", [x, y, z, 0, 0, 0], 0.3)
-            
+            await self.bridge.set_posture(posture, speed)
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to point: {e}")
+        except Exception as exc:
+            self.logger.error(f"set_posture failed: {exc}")
             return False
-    
-    async def nod_head(self) -> bool:
-        """Nod head up and down"""
+
+    async def wake_up(self) -> bool:
         try:
-            self.logger.info("Nodding head")
-            
-            # Nod animation
-            self.animation_service.run("animations/Stand/Gestures/Enthusiastic_4")
-            
+            await self.bridge.wake_up()
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to nod head: {e}")
+        except Exception as exc:
+            self.logger.error(f"wake_up failed: {exc}")
             return False
-    
-    # LED control
-    
-    async def set_eye_color(self, color: str):
-        """Set eye LED color"""
+
+    async def rest(self) -> bool:
         try:
-            color_map = {
-                "red": 0xFF0000,
-                "green": 0x00FF00,
-                "blue": 0x0000FF,
-                "yellow": 0xFFFF00,
-                "purple": 0xFF00FF,
-                "cyan": 0x00FFFF,
-                "white": 0xFFFFFF,
-                "off": 0x000000
-            }
-            
-            if color in color_map:
-                self.led_service.fadeRGB("FaceLeds", color_map[color], 0.5)
-                self.logger.info(f"Eye color set to {color}")
-            else:
-                self.logger.warning(f"Unknown color: {color}")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to set eye color: {e}")
-    
-    async def set_chest_led(self, color: str):
-        """Set chest LED color"""
+            await self.bridge.rest()
+            return True
+        except Exception as exc:
+            self.logger.error(f"rest failed: {exc}")
+            return False
+
+    async def set_eye_color(self, color: str) -> bool:
         try:
-            color_map = {
-                "red": 0xFF0000,
-                "green": 0x00FF00,
-                "blue": 0x0000FF,
-                "yellow": 0xFFFF00,
-                "purple": 0xFF00FF,
-                "cyan": 0x00FFFF,
-                "white": 0xFFFFFF,
-                "off": 0x000000
-            }
-            
-            if color in color_map:
-                self.led_service.fadeRGB("ChestLeds", color_map[color], 0.5)
-                self.logger.info(f"Chest LED set to {color}")
-            else:
-                self.logger.warning(f"Unknown color: {color}")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to set chest LED: {e}")
-    
-    # Tablet control
-    
-    async def show_image(self, image_path: str):
-        """Show image on tablet"""
+            await self.bridge.set_eye_leds(color=color)
+            return True
+        except Exception as exc:
+            self.logger.error(f"set_eye_color failed: {exc}")
+            return False
+
+    async def set_chest_led(self, color: str) -> bool:
         try:
-            self.tablet_service.showImage(image_path)
-            self.logger.info(f"Showing image: {image_path}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to show image: {e}")
-    
-    async def show_webpage(self, url: str):
-        """Show webpage on tablet"""
+            await self.bridge.set_chest_leds(color=color)
+            return True
+        except Exception as exc:
+            self.logger.error(f"set_chest_led failed: {exc}")
+            return False
+
+    async def play_animation(self, name: str) -> bool:
         try:
-            self.tablet_service.showWebview(url)
-            self.logger.info(f"Showing webpage: {url}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to show webpage: {e}")
-    
-    # Utility methods
-    
-    async def set_stiffness(self, enabled: bool):
-        """Enable or disable motor stiffness"""
+            await self.bridge.play_animation(name)
+            return True
+        except Exception as exc:
+            self.logger.error(f"play_animation failed: {exc}")
+            return False
+
+    async def set_awareness(self, enabled: bool) -> bool:
         try:
-            if enabled:
-                self.motion_service.wakeUp()
-                self.logger.info("Motors enabled")
-            else:
-                self.motion_service.rest()
-                self.logger.info("Motors disabled")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to set stiffness: {e}")
-    
-    async def stop_all(self):
-        """Stop all ongoing activities"""
+            await self.bridge.set_awareness(enabled)
+            return True
+        except Exception as exc:
+            self.logger.error(f"set_awareness failed: {exc}")
+            return False
+
+    async def set_autonomous_life(self, state: str) -> bool:
         try:
-            # Stop movement
-            self.motion_service.stopMove()
-            self._is_moving = False
-            
-            # Stop speech
-            self.tts_service.stopAll()
-            
-            # Stop animations
-            self.animation_service.stopAll()
-            
-            self.logger.info("All activities stopped")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to stop all activities: {e}")
-    
-    def is_moving(self) -> bool:
-        """Check if robot is currently moving"""
-        return self._is_moving
+            await self.bridge.set_autonomous_life(state)
+            return True
+        except Exception as exc:
+            self.logger.error(f"set_autonomous_life failed: {exc}")
+            return False
+
+    async def take_picture(self, camera: int = 0):
+        try:
+            return await self.bridge.take_picture(camera=camera)
+        except Exception as exc:
+            self.logger.error(f"take_picture failed: {exc}")
+            return None
+
+    async def record_audio(self, duration: float = 3.0):
+        try:
+            return await self.bridge.record_audio(duration)
+        except Exception as exc:
+            self.logger.error(f"record_audio failed: {exc}")
+            return None
