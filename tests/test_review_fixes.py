@@ -345,13 +345,9 @@ class TestEventStreamAuth:
 
 class TestCooldownClock:
 
-    async def test_first_touch_reacts_even_when_monotonic_clock_is_small(
-        self, mock_ai_manager, mock_ai_provider, monkeypatch
-    ):
+    async def test_first_touch_reacts_even_when_monotonic_clock_is_small(self, mock_ai_manager, mock_ai_provider):
         """CI runners boot seconds before the tests run; monotonic() can be below the cooldown."""
-        import src.ai.manager as manager_module
-
-        monkeypatch.setattr(manager_module.time, "monotonic", lambda: 3.0)
+        mock_ai_manager._clock = lambda: 3.0  # never patch time.monotonic itself: asyncio's loop clock uses it
         mock_ai_manager.touch_cooldown = 60
         await mock_ai_manager.handle_event("touch", {"sensor": "head_front", "touched": True})
         await asyncio.sleep(0.05)

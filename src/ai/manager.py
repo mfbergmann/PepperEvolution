@@ -74,6 +74,7 @@ class AIManager:
         self.last_photo: Optional[Photo] = None
         self._lock = asyncio.Lock()
         self._last_event_reaction: Optional[float] = None  # monotonic time; None = never (monotonic may start near 0)
+        self._clock = time.monotonic  # injectable for tests
         self._tablet_ok = True
         self._tasks: Set[asyncio.Task] = set()
         self._response_callbacks: List[ResponseCallback] = []
@@ -297,7 +298,7 @@ class AIManager:
         message = EVENT_MESSAGES.get((event_type, data.get("sensor", "")))
         if not message:
             return
-        now = time.monotonic()
+        now = self._clock()
         if self.busy or self.robot.direct_commands_running or self.robot.halted:
             return
         if self._last_event_reaction is not None and now - self._last_event_reaction < self.touch_cooldown:
@@ -314,7 +315,7 @@ class AIManager:
             self.logger.debug("Dropping sensor reaction: robot busy")
             self._last_event_reaction = None
             return
-        if time.monotonic() - scheduled_at > self.EVENT_MAX_AGE:
+        if self._clock() - scheduled_at > self.EVENT_MAX_AGE:
             self.logger.debug("Dropping sensor reaction: stale")
             self._last_event_reaction = None
             return
