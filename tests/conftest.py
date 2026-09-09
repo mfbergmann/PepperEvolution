@@ -1,25 +1,38 @@
 """
 Pytest configuration and fixtures for PepperEvolution v2 tests.
 
-Uses respx to mock HTTP calls to the bridge server.
-No NAOqi or MockQi needed.
+Two layers of doubles are available:
+- ``mock_connection`` / ``mock_robot``: AsyncMock-based, for unit tests that
+  assert on exact bridge calls.
+- ``fake_robot``: a real PepperRobot wired to FakeBridgeClient, for tests that
+  exercise the whole host stack without a robot.
 """
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
-import respx
-import httpx
-from unittest.mock import AsyncMock, MagicMock
 
-from src.pepper.connection import ConnectionConfig, PepperConnection
-from src.pepper.bridge_client import BridgeClient
-from src.pepper.robot import PepperRobot
-from src.ai.models import AnthropicProvider, OpenAIProvider, AIResponse, ToolCall
 from src.ai.manager import AIManager
-from src.ai.tool_executor import ToolExecutor
-
+from src.ai.models import AIResponse, AnthropicProvider
+from src.pepper.bridge_client import BridgeClient
+from src.pepper.connection import ConnectionConfig, PepperConnection
+from src.pepper.fake_bridge import FakeBridgeClient
+from src.pepper.robot import PepperRobot, RobotState
 
 BRIDGE_BASE = "http://10.0.100.100:8888"
+
+SENSORS = {
+    "ok": True,
+    "battery": 80,
+    "charging": False,
+    "touch": {"head_front": False, "head_middle": False, "head_rear": False, "hand_left": False, "hand_right": False},
+    "bumpers": {"front_left": False, "front_right": False, "back": False},
+    "sonar": {"front": 1.5, "back": 1.2},
+    "obstacle": False,
+    "people_count": 0,
+    "people_ids": [],
+}
 
 
 @pytest.fixture
@@ -42,81 +55,115 @@ async def connected_bridge_client(bridge_client):
 
 @pytest.fixture
 def mock_connection(connection_config):
-    """PepperConnection with mocked bridge and events."""
-    conn = PepperConnection(connection_config)
+    """PepperConnection with a mocked bridge and no event stream."""
+    conn = PepperConnection(connection_config, events=False)
     conn.connected = True
-    # Replace bridge with a mock
-    conn.bridge = AsyncMock(spec=BridgeClient)
-    conn.bridge.health = AsyncMock(return_value={"ok": True, "version": "2.0.0"})
-    conn.bridge.status = AsyncMock(return_value={
-        "ok": True, "battery": 80, "posture": "Stand",
-        "robot_name": "Pepper", "autonomous_life": "solitary",
-    })
-    conn.bridge.get_sensors = AsyncMock(return_value={
-        "ok": True, "battery": 80,
-        "touch": {"head_front": False, "head_middle": False, "head_rear": False,
-                   "hand_left": False, "hand_right": False},
-        "sonar": {"left": 1.5, "right": 1.2},
-        "people_count": 0,
-    })
-    conn.bridge.speak = AsyncMock(return_value={"ok": True})
-    conn.bridge.move_forward = AsyncMock(return_value={"ok": True})
-    conn.bridge.move_turn = AsyncMock(return_value={"ok": True})
-    conn.bridge.move_head = AsyncMock(return_value={"ok": True})
-    conn.bridge.set_posture = AsyncMock(return_value={"ok": True})
-    conn.bridge.take_picture = AsyncMock(return_value={
-        "ok": True, "image": "base64data", "width": 640, "height": 480, "format": "jpeg",
-    })
-    conn.bridge.play_animation = AsyncMock(return_value={"ok": True})
-    conn.bridge.set_eye_leds = AsyncMock(return_value={"ok": True})
-    conn.bridge.set_chest_leds = AsyncMock(return_value={"ok": True})
-    conn.bridge.emergency_stop = AsyncMock(return_value={"ok": True})
-    conn.bridge.stop = AsyncMock(return_value={"ok": True})
-    conn.bridge.wake_up = AsyncMock(return_value={"ok": True})
-    conn.bridge.rest = AsyncMock(return_value={"ok": True})
-    conn.bridge.set_volume = AsyncMock(return_value={"ok": True})
-    conn.bridge.set_awareness = AsyncMock(return_value={"ok": True})
-    conn.bridge.set_autonomous_life = AsyncMock(return_value={"ok": True})
-    conn.bridge.record_audio = AsyncMock(return_value={"ok": True, "audio": "base64audio"})
-    conn.bridge.move_to = AsyncMock(return_value={"ok": True})
-    conn.bridge.close = AsyncMock()
+    bridge = AsyncMock(spec=BridgeClient)
+    bridge.health = AsyncMock(return_value={"ok": True, "version": "2.1.0"})
+    bridge.status = AsyncMock(
+        return_value={
+            "ok": True,
+            "battery": 80,
+            "charging": False,
+            "posture": "Stand",
+            "robot_name": "Pepper",
+            "autonomous_life": "disabled",
+            "awake": True,
+            "language": "English",
+            "volume": 60,
+        }
+    )
+    bridge.get_sensors = AsyncMock(return_value=dict(SENSORS))
+    bridge.speak = AsyncMock(return_value={"ok": True, "duration": 1.2})
+    bridge.stop_speaking = AsyncMock(return_value={"ok": True})
+    bridge.move_forward = AsyncMock(return_value={"ok": True})
+    bridge.move_turn = AsyncMock(return_value={"ok": True})
+    bridge.move_head = AsyncMock(return_value={"ok": True})
+    bridge.move_to = AsyncMock(return_value={"ok": True})
+    bridge.set_posture = AsyncMock(return_value={"ok": True})
+    bridge.take_picture = AsyncMock(
+        return_value={"ok": True, "image": "base64data", "width": 640, "height": 480, "format": "jpeg"}
+    )
+    bridge.play_animation = AsyncMock(return_value={"ok": True})
+    bridge.list_animations = AsyncMock(return_value=["animations/Stand/Gestures/Hey_1"])
+    bridge.set_eye_leds = AsyncMock(return_value={"ok": True})
+    bridge.set_chest_leds = AsyncMock(return_value={"ok": True})
+    bridge.emergency_stop = AsyncMock(return_value={"ok": True})
+    bridge.stop = AsyncMock(return_value={"ok": True})
+    bridge.wake_up = AsyncMock(return_value={"ok": True})
+    bridge.rest = AsyncMock(return_value={"ok": True})
+    bridge.prepare = AsyncMock(return_value={"ok": True})
+    bridge.set_volume = AsyncMock(return_value={"ok": True})
+    bridge.set_awareness = AsyncMock(return_value={"ok": True})
+    bridge.set_autonomous_life = AsyncMock(return_value={"ok": True})
+    bridge.record_audio = AsyncMock(return_value={"ok": True, "audio": "base64audio"})
+    bridge.tablet_text = AsyncMock(return_value={"ok": True})
+    bridge.tablet_web = AsyncMock(return_value={"ok": True})
+    bridge.tablet_image = AsyncMock(return_value={"ok": True})
+    bridge.tablet_hide = AsyncMock(return_value={"ok": True})
+    bridge.close = AsyncMock()
+    bridge.connect = AsyncMock()
+    conn.bridge = bridge
     return conn
 
 
 @pytest.fixture
 def mock_robot(mock_connection):
-    """PepperRobot with mocked connection."""
+    """PepperRobot with mocked connection (robot methods are real, bridge is mocked)."""
     robot = PepperRobot.__new__(PepperRobot)
     robot.connection = mock_connection
     robot.sensors = MagicMock()
-    robot.sensors.get_all = AsyncMock(return_value={"battery": 80, "touch": {}, "sonar": {}})
+    robot.sensors.get_all = AsyncMock(return_value={"battery": 80, "touch": {}, "sonar": {"front": 1.5, "back": 1.2}})
     robot.actuators = MagicMock()
-    robot.state = MagicMock()
-    robot.state.battery_level = 80
-    robot.state.posture = "Stand"
-    robot.state.robot_name = "Pepper"
-    robot.state.autonomous_life = "solitary"
-    robot.state.is_connected = True
+    robot.state = RobotState(
+        battery_level=80,
+        posture="Stand",
+        robot_name="Pepper",
+        autonomous_life="disabled",
+        awake=True,
+        language="English",
+        is_connected=True,
+    )
+    robot.animations = ["animations/Stand/Gestures/Hey_1", "animations/Stand/Gestures/BowShort_1"]
+    robot.last_photo = None
+    robot.halted = False
+    robot.direct_commands_running = 0
+    robot.photo_resolution = 2
+    robot.last_prepare = {}
     robot.logger = MagicMock()
     robot._event_callbacks = []
+    robot._state_task = None
     return robot
+
+
+@pytest.fixture
+def fake_bridge():
+    bridge = FakeBridgeClient()
+    bridge.speech_delay = 0
+    return bridge
+
+
+@pytest_asyncio.fixture
+async def fake_robot(fake_bridge):
+    """A real PepperRobot talking to the in-memory FakeBridgeClient."""
+    robot = PepperRobot(ConnectionConfig(ip="fake"), bridge=fake_bridge)
+    assert await robot.initialize()
+    yield robot
+    await robot.shutdown()
 
 
 @pytest.fixture
 def mock_ai_provider():
     """Mock AI provider that returns predictable responses."""
     provider = AsyncMock(spec=AnthropicProvider)
-    provider.chat = AsyncMock(return_value=AIResponse(
-        text="Hello! I'm Pepper.",
-        tool_calls=[],
-        stop_reason="end_turn",
-        model="claude-sonnet-4-5-20250929",
-    ))
+    provider.model = "claude-opus-5"
+    provider.chat = AsyncMock(
+        return_value=AIResponse(text="Hello! I'm Pepper.", tool_calls=[], stop_reason="end_turn", model="claude-opus-5")
+    )
     return provider
 
 
 @pytest.fixture
 def mock_ai_manager(mock_robot, mock_ai_provider):
-    """AIManager with mocked robot and provider."""
-    manager = AIManager(mock_robot, mock_ai_provider)
-    return manager
+    """AIManager with mocked robot and provider; speech off so tests stay fast."""
+    return AIManager(mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False)

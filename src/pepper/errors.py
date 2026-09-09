@@ -1,22 +1,15 @@
 """
 Typed exception hierarchy for PepperEvolution.
+
+``BridgeError`` (in bridge_client.py) is the exception the bridge client
+raises; it is re-exported here so callers can catch a single base class.
 """
+
+from .bridge_client import BridgeError
 
 
 class PepperError(Exception):
     """Base exception for all PepperEvolution errors."""
-
-
-class BridgeConnectionError(PepperError):
-    """Failed to connect to the bridge server."""
-
-
-class BridgeRequestError(PepperError):
-    """Bridge returned an error response."""
-
-
-class BridgeTimeoutError(PepperError):
-    """Bridge request timed out."""
 
 
 class ToolExecutionError(PepperError):
@@ -25,3 +18,6 @@ class ToolExecutionError(PepperError):
 
 class AIProviderError(PepperError):
     """AI provider API call failed."""
+
+
+__all__ = ["BridgeError", "PepperError", "ToolExecutionError", "AIProviderError"]

@@ -28,6 +28,7 @@ MANIFEST
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
 env.bak/
@@ -48,6 +49,9 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Local artefacts
+last_photo.*
 
 # Logs
 *.log

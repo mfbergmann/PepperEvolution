@@ -5,16 +5,19 @@ loguru>=0.7.2
 # HTTP client (bridge communication)
 httpx>=0.27.0
 
-# WebSocket (event stream + host WS server)
+# WebSocket client for the bridge event stream
 websockets>=13.0
 
+# Image handling (camera frames -> JPEG for the vision model, fake camera)
+Pillow>=10.0.0
+
 # AI providers
-anthropic>=0.40.0
+anthropic>=1.0.0
 openai>=1.50.0
 
-# Host API server
+# Host API server (REST + WebSocket + web UI)
 fastapi>=0.115.0
-uvicorn>=0.32.0
+uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
 
 # Deploy script
@@ -24,6 +27,8 @@ paramiko>=3.5.0
 pytest>=8.3.0
 pytest-asyncio>=0.24.0
 respx>=0.22.0
+# Only for unit-testing the robot-side bridge off-robot (the robot ships its own Tornado 3.1)
+tornado>=6.4
 
 # Development
 black>=24.0.0

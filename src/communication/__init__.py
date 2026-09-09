@@ -2,7 +2,6 @@
 Communication modules for PepperEvolution
 """
 
-from .websocket import WebSocketServer
-from .api import APIServer
+from .api import APIServer, WebSocketHub, create_app, execute_command
 
-__all__ = ["WebSocketServer", "APIServer"]
+__all__ = ["APIServer", "WebSocketHub", "create_app", "execute_command"]

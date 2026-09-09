@@ -15,20 +15,21 @@ Thank you for your interest in contributing to PepperEvolution! This project aim
 
 ### 2. Set Up Development Environment
 
-1. Create a virtual environment:
+1. Create a virtual environment (Python 3.12+):
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
-2. Install dependencies:
+2. Install dependencies (runtime, test and dev tools are all in one file):
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Install development dependencies:
+3. Run everything without a robot to check your setup:
    ```bash
-   pip install -r requirements-dev.txt  # If available
+   pytest tests/ -q
+   PEPPER_FAKE_BRIDGE=true python main.py
    ```
 
 ### 3. Make Your Changes
@@ -39,11 +40,11 @@ Thank you for your interest in contributing to PepperEvolution! This project aim
    ```
 
 2. Make your changes following our coding standards:
-   - Use Python 3.8+ syntax
-   - Follow PEP 8 style guidelines
-   - Add type hints where appropriate
-   - Write docstrings for all functions and classes
-   - Add logging using the loguru library
+   - Host code: Python 3.12+, type hints, docstrings, `loguru` logging, black (120 cols), flake8, mypy
+   - `robot_bridge/pepper_bridge.py` runs **on the robot under Python 2.7 / Tornado 3.1.1**: no f-strings,
+     no `async`/`await`, no type hints, no `pathlib` (a test enforces this)
+   - Keep the bridge contract in sync everywhere: bridge handler, `docs/BRIDGE_API.md`, `BridgeClient`,
+     `FakeBridgeClient`
 
 3. Write tests for your changes:
    ```bash
@@ -54,9 +55,10 @@ Thank you for your interest in contributing to PepperEvolution! This project aim
 
 Before submitting your changes, please ensure:
 
-- All tests pass: `pytest tests/`
-- Code follows style guidelines: `black src/` and `flake8 src/`
-- Type checking passes: `mypy src/`
+- All tests pass: `pytest tests/` (includes starting the real bridge with `tests/fakenaoqi`)
+- Code follows style guidelines: `black src/ main.py examples/ robot_bridge/deploy.py tests/ --line-length=120` and `flake8`
+- Type checking passes: `mypy src/ --ignore-missing-imports --no-strict-optional`
+- If you touched the bridge, also byte-compile it with a Python 2.7 interpreter if you have one
 
 ### 5. Commit and Push
 
@@ -112,17 +114,16 @@ Before submitting your changes, please ensure:
 
 ### High Priority
 
-- **Speech Recognition**: Implement proper speech-to-text functionality
-- **Computer Vision**: Add object detection and recognition
-- **Navigation**: Implement autonomous navigation capabilities
-- **Safety Features**: Add collision avoidance and safety protocols
+- **Speech input**: stream microphone audio from the bridge (`/audio/record` exists) to a speech-to-text
+  service so people can talk to Pepper instead of typing
+- **Wake word / turn taking**: know when someone is talking to the robot
+- **Navigation**: use the laser/sonar data for longer, safer moves
 
 ### Medium Priority
 
-- **Web Interface**: Create a web-based control panel
-- **Mobile App**: Develop a mobile app for robot control
-- **Plugin System**: Create a plugin architecture for extensions
-- **Multi-Robot Support**: Support controlling multiple Pepper robots
+- **Tablet UI**: richer content on the chest tablet (the bridge already serves `/tablet/page`)
+- **Multi-Robot Support**: support controlling multiple Pepper robots
+- **Memory**: remember people and earlier conversations across sessions
 
 ### Low Priority
 

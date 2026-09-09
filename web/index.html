@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PepperEvolution</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:14px 22px; background:var(--panel); border-bottom:1px solid #334155; }
+  header h1 { font-size:1.3rem; letter-spacing:.3px; }
+  header .conn { font-size:.85rem; color:var(--muted); }
+  header .conn b { color:var(--ok); } header .conn b.off { color:var(--bad); }
+  main { display:grid; grid-template-columns: 1.4fr 1fr; gap:16px; padding:16px 22px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border-radius:12px; padding:16px; border:1px solid #334155; }
+  .panel h2 { font-size:.95rem; color:var(--muted); text-transform:uppercase; letter-spacing:.8px; margin-bottom:12px; }
+  #chat { height:520px; overflow-y:auto; background:#0b1220; border-radius:8px; padding:12px; border:1px solid #334155; }
+  .msg { margin:6px 0; padding:9px 12px; border-radius:10px; max-width:88%; line-height:1.35; white-space:pre-wrap; }
+  .msg.user { background:#1d4ed8; margin-left:auto; }
+  .msg.robot { background:#334155; }
+  .msg.partial { background:#3b4a63; color:#cbd5e1; font-style:italic; }
+  .msg.tool { background:#2a2313; border-left:3px solid var(--warn); font-family:ui-monospace,Menlo,monospace; font-size:.78rem; max-width:100%; }
+  .msg.tool.fail { border-left-color:var(--bad); }
+  .msg.event { background:#0f2e26; border-left:3px solid var(--ok); font-size:.8rem; max-width:100%; }
+  .msg.sys { color:var(--muted); font-size:.8rem; background:transparent; }
+  .msg img { max-width:100%; border-radius:8px; margin-top:6px; display:block; }
+  .row { display:flex; gap:8px; margin-top:10px; }
+  input[type=text], input[type=number], select { background:#0b1220; color:var(--text); border:1px solid #334155; border-radius:8px; padding:9px 10px; font-size:.95rem; }
+  input[type=text] { flex:1; }
+  button { background:var(--accent); color:#0b1220; border:none; border-radius:8px; padding:9px 13px; font-weight:600; cursor:pointer; font-size:.9rem; }
+  button:hover { filter:brightness(1.1); }
+  button.secondary { background:var(--panel2); color:var(--text); }
+  button.danger { background:var(--bad); color:#0b1220; }
+  button.ok { background:var(--ok); color:#0b1220; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap:8px; }
+  .status { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .stat { background:#0b1220; border-radius:8px; padding:8px 10px; border:1px solid #334155; }
+  .stat .k { font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
+  .stat .v { font-size:1rem; margin-top:2px; }
+  .section { margin-top:14px; }
+  .section h3 { font-size:.8rem; color:var(--muted); margin-bottom:6px; }
+  #busy { display:none; color:var(--warn); font-size:.85rem; margin-top:6px; }
+  #busy.show { display:block; }
+  small { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>PepperEvolution</h1>
+  <div class="conn">UI <b id="ws-state" class="off">disconnected</b> &nbsp;·&nbsp; Robot <b id="robot-state" class="off">?</b></div>
+</header>
+<main>
+  <section class="panel">
+    <h2>Talk to Pepper</h2>
+    <div id="chat"></div>
+    <div id="busy">Pepper is thinking…</div>
+    <div class="row">
+      <input type="text" id="chat-input" placeholder="Say something to Pepper… (Enter to send)">
+      <button id="send">Send</button>
+      <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted)"><input type="checkbox" id="speak" checked> speak</label>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Robot</h2>
+    <div class="status">
+      <div class="stat"><div class="k">Battery</div><div class="v" id="battery">–</div></div>
+      <div class="stat"><div class="k">Posture</div><div class="v" id="posture">–</div></div>
+      <div class="stat"><div class="k">Motors</div><div class="v" id="awake">–</div></div>
+      <div class="stat"><div class="k">Autonomous life</div><div class="v" id="life">–</div></div>
+      <div class="stat"><div class="k">Sonar front / back</div><div class="v" id="sonar">–</div></div>
+      <div class="stat"><div class="k">People / touch</div><div class="v" id="people">–</div></div>
+    </div>
+
+    <div class="section">
+      <h3>Quick actions</h3>
+      <div class="grid">
+        <button class="ok" data-cmd="prepare">Prepare</button>
+        <button class="secondary" data-cmd="wake_up">Wake up</button>
+        <button class="secondary" data-cmd="rest">Rest</button>
+        <button class="secondary" data-cmd="posture" data-params='{"posture":"Stand"}'>Stand</button>
+        <button class="secondary" data-cmd="animation" data-params='{"name":"animations/Stand/Gestures/Hey_1"}'>Wave</button>
+        <button class="secondary" data-cmd="animation" data-params='{"name":"animations/Stand/Gestures/BowShort_1"}'>Bow</button>
+        <button class="secondary" data-cmd="move_head" data-params='{"yaw":0,"pitch":0}'>Look ahead</button>
+        <button class="secondary" data-cmd="photo">Take photo</button>
+        <button class="secondary" data-cmd="tablet_hide">Clear tablet</button>
+        <button class="secondary" data-cmd="stop_speaking">Hush</button>
+        <button class="secondary" data-cmd="stop">Stop moving</button>
+        <button class="danger" id="estop" title="Also: Escape key">EMERGENCY STOP</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Say (no AI)</h3>
+      <div class="row"><input type="text" id="say-text" placeholder="Text to speak"><button class="secondary" id="say">Say</button></div>
+    </div>
+
+    <div class="section">
+      <h3>Move</h3>
+      <div class="row">
+        <input type="number" id="dist" value="0.3" step="0.1" min="-2" max="2" style="width:90px"> m
+        <button class="secondary" id="move">Drive</button>
+        <input type="number" id="angle" value="45" step="15" min="-180" max="180" style="width:90px"> °
+        <button class="secondary" id="turn">Turn</button>
+      </div>
+      <div class="row">
+        yaw <input type="number" id="yaw" value="0" step="10" min="-119" max="119" style="width:80px">
+        pitch <input type="number" id="pitch" value="0" step="5" min="-40" max="25" style="width:80px">
+        <button class="secondary" id="head">Look</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Eyes &amp; tablet</h3>
+      <div class="row">
+        <select id="eye"><option>blue</option><option>green</option><option>red</option><option>yellow</option><option>purple</option><option>cyan</option><option>white</option><option>orange</option><option>pink</option><option>off</option></select>
+        <button class="secondary" id="eyes">Set eyes</button>
+        <input type="text" id="tablet-text" placeholder="Text for the tablet"><button class="secondary" id="tablet">Show</button>
+      </div>
+    </div>
+    <div class="section"><small>Direct controls bypass the AI and talk to the bridge. Events from the robot appear in the chat. After an emergency stop, press <b>Wake up</b> (or Prepare) before moving again.</small></div>
+  </section>
+</main>
+
+<script>
+const chat = document.getElementById('chat');
+const clientId = Math.random().toString(36).slice(2);
+let ws = null;
+let wsLive = false;
+let partialEl = null;
+
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function add(cls, html){ const div=document.createElement('div'); div.className='msg '+cls; div.innerHTML=html; chat.appendChild(div); chat.scrollTop=chat.scrollHeight; return div; }
+function setBusy(b){ document.getElementById('busy').classList.toggle('show', b); }
+
+async function api(path, method, body){
+  const opts={method:method||'GET', headers:{'Content-Type':'application/json'}};
+  if(body) opts.body=JSON.stringify(body);
+  const r=await fetch(path, opts);
+  if(!r.ok){ let t=''; try{ t=(await r.json()).detail||''; }catch(e){} throw new Error('HTTP '+r.status+' '+t); }
+  return r.json();
+}
+
+async function sendChat(){
+  const input=document.getElementById('chat-input');
+  const message=input.value.trim(); if(!message) return;
+  input.value='';
+  add('user', esc(message));
+  setBusy(true);
+  try{
+    const speak=document.getElementById('speak').checked;
+    const result=await api('/chat','POST',{message, speak, client_id: clientId});
+    if(!wsLive) renderResponse(result, true);  // with a live socket the broadcast already rendered it
+  }catch(err){ add('sys','Error: '+esc(err.message)); }
+  finally{ setBusy(false); }
+}
+
+function renderResponse(r, fromMe){
+  if(partialEl){ partialEl.remove(); partialEl=null; }
+  (r.tool_calls||[]).forEach(tc=>{
+    add('tool'+(tc.ok===false?' fail':''), esc(tc.name+'('+JSON.stringify(tc.input)+') → '+(tc.result||'')));
+  });
+  const who = r.source==='event' ? 'Pepper (reacting)' : 'Pepper';
+  let html='<b>'+who+':</b> '+esc(r.text||'(no text)');
+  if(r.photo && r.photo.base64) html+='<img src="data:'+r.photo.media_type+';base64,'+r.photo.base64+'" alt="photo">';
+  add('robot', html);
+  refreshStatus();
+}
+
+async function directCommand(cmd, params){
+  try{
+    setBusy(true);
+    const r=await api('/command/'+cmd,'POST',{params:params||{}});
+    if(r.success){
+      if(cmd==='photo' && r.result && r.result.base64){
+        add('event', 'Photo taken<img src="data:'+r.result.media_type+';base64,'+r.result.base64+'">');
+      } else if(r.warnings && r.warnings.length){
+        add('sys', cmd+': partly done - '+esc(r.warnings.join('; ')));
+      } else {
+        add('sys', cmd+': ok');
+      }
+    } else add('sys', cmd+' failed: '+esc(r.error||''));
+  }catch(err){ add('sys', cmd+' failed: '+esc(err.message)); }
+  finally{ setBusy(false); refreshStatus(); }
+}
+
+async function refreshStatus(){
+  try{
+    const d=await api('/status');
+    const s=d.robot_state||{}, sen=d.sensors||{};
+    const rs=document.getElementById('robot-state');
+    rs.textContent = s.is_connected ? (s.robot_name||'connected') : 'disconnected';
+    rs.className = s.is_connected ? '' : 'off';
+    document.getElementById('battery').textContent = (s.battery_level!=null? Math.round(s.battery_level)+'%':'–') + (s.charging?' ⚡':'');
+    document.getElementById('posture').textContent = s.posture||'–';
+    document.getElementById('awake').textContent = s.awake===true?'on':(s.awake===false?'off':'–');
+    document.getElementById('life').textContent = s.autonomous_life||'–';
+    const so=sen.sonar||{};
+    document.getElementById('sonar').textContent = (so.front!=null?so.front.toFixed(2):'–')+' / '+(so.back!=null?so.back.toFixed(2):'–')+' m'+(sen.obstacle?' ⚠':'');
+    const touched=Object.entries(sen.touch||{}).filter(([k,v])=>v).map(([k])=>k);
+    document.getElementById('people').textContent = (sen.people_count!=null?sen.people_count:'–')+' / '+(touched.length?touched.join(', '):'none');
+  }catch(err){ document.getElementById('robot-state').textContent='?'; }
+}
+
+function initWebSocket(){
+  const proto = location.protocol==='https:'?'wss':'ws';
+  ws = new WebSocket(proto+'://'+location.host+'/ws');
+  const st=document.getElementById('ws-state');
+  ws.onopen=()=>{ wsLive=true; st.textContent='connected'; st.className=''; };
+  ws.onclose=()=>{ wsLive=false; st.textContent='disconnected'; st.className='off'; setTimeout(initWebSocket, 3000); };
+  ws.onerror=()=>{ st.textContent='error'; st.className='off'; };
+  ws.onmessage=(ev)=>{
+    let d; try{ d=JSON.parse(ev.data); }catch(e){ return; }
+    if(d.type==='chat_partial'){
+      if(!partialEl) partialEl=add('partial','');
+      partialEl.textContent += (partialEl.textContent?' ':'') + d.text;
+      chat.scrollTop=chat.scrollHeight;
+    } else if(d.type==='chat_response'){
+      renderResponse(d, d.client_id===clientId);  // replies to us, to other clients, and event reactions
+    } else if(d.type==='chat_user'){
+      add('user', esc(d.message)+' <small>(other client)</small>');
+    } else if(d.type==='error'){
+      add('sys', 'Error: '+esc(d.message||''));
+    } else if(d.type==='robot_event'){
+      if(d.event==='speech') return;
+      if(d.event==='sensors'){ refreshStatus(); return; }  // snapshot on connect, not chat-worthy
+      add('event', esc(d.event)+': '+esc(JSON.stringify(d.data)));
+      if(d.event==='battery'||d.event==='sonar'||d.event==='people'||d.event==='touch') refreshStatus();
+    }
+  };
+}
+
+document.getElementById('send').onclick=sendChat;
+document.getElementById('chat-input').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat(); });
+document.querySelectorAll('button[data-cmd]').forEach(b=>{
+  b.onclick=()=>directCommand(b.dataset.cmd, b.dataset.params?JSON.parse(b.dataset.params):{});
+});
+document.getElementById('estop').onclick=()=>directCommand('emergency_stop');  // no confirm dialog: stop first
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') directCommand('emergency_stop'); });
+document.getElementById('say').onclick=()=>directCommand('speak',{text:document.getElementById('say-text').value});
+document.getElementById('move').onclick=()=>directCommand('move_forward',{distance:parseFloat(document.getElementById('dist').value)});
+document.getElementById('turn').onclick=()=>directCommand('turn',{angle:parseFloat(document.getElementById('angle').value)});
+document.getElementById('head').onclick=()=>directCommand('move_head',{yaw:parseFloat(document.getElementById('yaw').value),pitch:parseFloat(document.getElementById('pitch').value)});
+document.getElementById('eyes').onclick=()=>directCommand('eye_color',{color:document.getElementById('eye').value});
+document.getElementById('tablet').onclick=()=>directCommand('tablet_text',{text:document.getElementById('tablet-text').value});
+
+initWebSocket();
+refreshStatus();
+setInterval(refreshStatus, 10000);
+add('sys','Connected UI. Type a message, or use the direct controls on the right.');
+</script>
+</body>
+</html>

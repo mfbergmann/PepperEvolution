@@ -18,15 +18,14 @@ def read_requirements():
 
 setup(
     name="pepper-evolution",
-    version="2.0.0",
+    version="2.1.0",
     author="PepperEvolution Team",
     author_email="mfb@torontomu.ca",
     description="Cloud-based AI control system for Pepper robots",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/mfbergmann/PepperEvolution",
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=["src"] + ["src." + p for p in find_packages(where="src")],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
@@ -49,11 +48,6 @@ setup(
             "black>=24.0.0",
             "flake8>=7.0.0",
             "mypy>=1.13.0",
-        ],
-    },
-    entry_points={
-        "console_scripts": [
-            "pepper-evolution=main:main",
         ],
     },
     include_package_data=True,

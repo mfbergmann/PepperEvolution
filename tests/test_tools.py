@@ -2,48 +2,51 @@
 Tests for AI tool definitions.
 """
 
-from src.ai.tools import TOOLS
+from src.ai.tools import KNOWN_ANIMATIONS, TOOL_NAMES, TOOLS
 
 
 class TestToolDefinitions:
 
-    def test_all_tools_have_name(self):
+    def test_all_tools_well_formed(self):
         for tool in TOOLS:
-            assert "name" in tool
             assert isinstance(tool["name"], str)
-
-    def test_all_tools_have_description(self):
-        for tool in TOOLS:
-            assert "description" in tool
             assert len(tool["description"]) > 10
-
-    def test_all_tools_have_input_schema(self):
-        for tool in TOOLS:
-            assert "input_schema" in tool
             assert tool["input_schema"]["type"] == "object"
+            assert "properties" in tool["input_schema"]
 
     def test_expected_tools_present(self):
-        names = {t["name"] for t in TOOLS}
         expected = {
-            "speak", "move_forward", "turn", "move_head", "set_posture",
-            "play_animation", "set_eye_color", "take_photo", "get_sensors",
+            "speak",
+            "play_animation",
+            "move_head",
+            "turn",
+            "move_forward",
+            "set_posture",
+            "set_eye_color",
+            "take_photo",
+            "get_sensors",
+            "show_on_tablet",
             "emergency_stop",
         }
-        assert expected == names
+        assert expected == set(TOOL_NAMES)
 
     def test_speak_requires_text(self):
         speak = next(t for t in TOOLS if t["name"] == "speak")
-        assert "text" in speak["input_schema"]["properties"]
         assert "text" in speak["input_schema"]["required"]
 
     def test_move_forward_schema(self):
         move = next(t for t in TOOLS if t["name"] == "move_forward")
-        props = move["input_schema"]["properties"]
-        assert "distance" in props
-        assert props["distance"]["type"] == "number"
+        assert move["input_schema"]["properties"]["distance"]["type"] == "number"
+        assert "distance" in move["input_schema"]["required"]
 
     def test_set_posture_enum(self):
         posture = next(t for t in TOOLS if t["name"] == "set_posture")
-        props = posture["input_schema"]["properties"]
-        assert "Stand" in props["posture"]["enum"]
-        assert "Crouch" in props["posture"]["enum"]
+        assert {"Stand", "Crouch"} <= set(posture["input_schema"]["properties"]["posture"]["enum"])
+
+    def test_animation_help_in_description(self):
+        anim = next(t for t in TOOLS if t["name"] == "play_animation")
+        for path in KNOWN_ANIMATIONS:
+            assert path in anim["description"]
+
+    def test_names_are_unique(self):
+        assert len(TOOL_NAMES) == len(set(TOOL_NAMES))

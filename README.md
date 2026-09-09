@@ -1,115 +1,102 @@
+# PepperEvolution v2.1
 
-# PepperEvolution v2
+A cloud-AI control system for SoftBank Pepper robots. A small bridge server on the robot wraps NAOqi as HTTP/WebSocket endpoints; the host application connects over the network, drives conversations with Anthropic Claude using native tool calling, and speaks the reply through the robot as it streams in.
 
-A cloud-based AI control system for SoftBank Pepper robots. A bridge server on the robot wraps NAOqi as HTTP/WebSocket endpoints; the host application connects via async HTTP and drives conversations with Anthropic Claude using native tool calling.
+## What it does
 
-## Overview
-
-PepperEvolution transforms Pepper into an AI-powered companion:
-
-- **Bridge architecture** - No NAOqi SDK needed on the host. A Python 2.7 Tornado server on the robot exposes all hardware as REST endpoints.
-- **AI tool calling** - Anthropic Claude uses structured tool calls (speak, move, gesture, photo, sensors) instead of regex-parsed action tags.
-- **Real-time events** - WebSocket push from the robot for touch, sonar, battery, and people detection events.
-- **Web interface** - Browser-based control panel with chat, direct controls, and live event stream.
+- **Talks like a person in the room** – the model's reply is streamed, split into sentences, and spoken by Pepper (animated speech, with inline gesture tags) while the rest is still being generated. Subtitles appear on the chest tablet.
+- **Acts** – Claude calls tools to wave, bow, nod, look around, turn, drive short distances, change eye colour, use the tablet, or stop.
+- **Sees** – `take_photo` returns the camera image to the model, so "what do you see?" gets a real answer.
+- **Feels** – head/hand touches and bumpers stream from the robot and trigger short reactions.
+- **Stays safe** – moves are clamped and sonar-checked, the bridge never blocks so emergency stop always gets through, and the robot is put into a known state (Autonomous Life off, motors on) when the host connects.
+- **Works without the robot** – `PEPPER_FAKE_BRIDGE=true` runs the whole stack with a simulated robot.
 
 ## Prerequisites
 
-- Pepper robot with NAOqi 2.5 on the network
+- Pepper robot with NAOqi 2.5 on the network (default `10.0.100.100`, ssh `nao`/`nao`)
 - Python 3.12+ on the host (no NAOqi SDK needed)
 - Anthropic API key (or OpenAI API key)
-- SSH access to the robot (nao/nao)
 
-## Quick Start
+## Quick start
 
 ```bash
-# Install
 git clone https://github.com/mfbergmann/PepperEvolution.git
 cd PepperEvolution
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp env.example .env            # set PEPPER_IP and ANTHROPIC_API_KEY
 
-# Configure
-cp env.example .env
-# Edit .env: set PEPPER_IP, ANTHROPIC_API_KEY
-
-# Deploy bridge and start
-./scripts/start.sh
+./scripts/start.sh --fake      # try it without a robot: http://localhost:8000
+./scripts/start.sh             # deploy the bridge to Pepper and start the host
 ```
 
-Or manually:
+Or step by step:
+
 ```bash
-# Deploy bridge to robot
-python robot_bridge/deploy.py
-
-# Verify bridge
-curl http://10.0.100.100:8888/health
-
-# Start host application
-python main.py
+python robot_bridge/deploy.py                  # upload + start the bridge, wait for /health
+curl http://10.0.100.100:8888/status           # bridge answers directly
+python main.py                                 # host app on http://localhost:8000
+python examples/basic_chat.py                  # or chat from the terminal
 ```
 
-Then open `examples/web_interface.html` or use the API:
+Then open the web UI, or:
+
 ```bash
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
   -d '{"message": "Wave at me and say hello!"}'
 ```
+
+See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a first-test checklist and troubleshooting, and [docs/BRIDGE_API.md](docs/BRIDGE_API.md) for every bridge endpoint.
 
 ## Architecture
 
 ```
-Pepper Robot (NAOqi 2.5)          Host (Python 3.12+)
-┌──────────────────────┐  HTTP   ┌──────────────────────────┐
-│ pepper_bridge.py     │◄───────►│ BridgeClient (httpx)     │
-│ Tornado :8888        │         │ EventStream (websockets)  │
-│ REST + /ws/events    │  WS     │ AIManager + ToolExecutor  │
-└──────────────────────┘◄───────►│ FastAPI :8000             │
-                                 │ WebSocket :8765           │
-                                 └──────────────────────────┘
-                                         ▲
-                                         │ Tool calling
-                                  Anthropic Claude API
+Pepper Robot (NAOqi 2.5, Python 2.7)        Host (Python 3.12+)
+┌──────────────────────────────┐   HTTP    ┌────────────────────────────────────┐
+│ robot_bridge/pepper_bridge.py│◄─────────►│ BridgeClient (httpx)               │
+│ Tornado 3.1.1 :8888          │           │ EventStream (websockets)           │
+│ REST + /ws/events + tablet   │ WebSocket │ PepperRobot                        │
+│ page; NAOqi calls run on     │◄─────────►│ AIManager + ToolExecutor + Speech  │
+│ worker threads               │           │ FastAPI :8000 (REST, /ws, web UI)  │
+└──────────────────────────────┘           └────────────────────────────────────┘
+                                                        ▲ streaming + tool calling
+                                                 Anthropic Claude API
 ```
 
-## Project Structure
+## Project structure
 
 ```
 PepperEvolution/
 ├── robot_bridge/
-│   ├── pepper_bridge.py    # Bridge server (runs on robot, Python 2.7)
-│   └── deploy.py           # SCP + SSH deploy script
+│   ├── pepper_bridge.py    # Bridge server (runs on robot, Python 2.7 + Tornado 3.1.1)
+│   └── deploy.py           # SSH deploy / restart / stop / status / logs
 ├── src/
-│   ├── pepper/             # BridgeClient, EventStream, PepperConnection, PepperRobot
-│   ├── ai/                 # AIProvider, tools.py, ToolExecutor, AIManager
-│   ├── communication/      # FastAPI server, WebSocket server
-│   ├── sensors/            # SensorManager (reads from bridge)
-│   └── actuators/          # ActuatorManager (sends to bridge)
-├── tests/                  # 107 tests (respx-mocked, no robot needed)
-├── examples/
-│   └── web_interface.html  # Browser control panel
-├── scripts/
-│   └── start.sh            # Deploy + start convenience script
-├── docs/
-│   ├── GETTING_STARTED.md
-│   └── BRIDGE_API.md       # Full bridge endpoint reference
+│   ├── pepper/             # BridgeClient, FakeBridgeClient, EventStream, PepperRobot
+│   ├── ai/                 # tools, Anthropic/OpenAI providers, speech streaming, ToolExecutor, AIManager
+│   ├── communication/      # FastAPI app: REST, /ws hub, direct commands
+│   ├── sensors/, actuators/# thin convenience wrappers
+├── web/index.html          # Browser control panel (served at /)
+├── examples/               # basic_chat.py (terminal), event_monitor.py
+├── tests/                  # ~200 tests incl. running the real bridge with tests/fakenaoqi
+├── docs/                   # GETTING_STARTED.md, BRIDGE_API.md
+├── scripts/start.sh        # deploy + start (or --fake)
 └── main.py                 # Host application entry point
 ```
 
-## AI Tools
-
-The AI can call these tools during conversation:
+## AI tools
 
 | Tool | Description |
 |------|-------------|
-| `speak` | Text-to-speech (with optional animated gestures) |
-| `move_forward` | Move forward/backward (clamped to 2m) |
-| `turn` | Turn left/right (clamped to 180 degrees) |
+| `speak` | Say something now, before a slow action or in another language (normal replies are spoken automatically) |
+| `play_animation` | Wave, bow, nod, shake head, think, explain, happy, ... |
 | `move_head` | Look in a direction |
-| `set_posture` | Stand, Crouch, StandInit, StandZero |
-| `play_animation` | Wave, nod, and other gestures |
-| `set_eye_color` | Change eye LED color |
-| `take_photo` | Camera snapshot |
-| `get_sensors` | Battery, touch, sonar, people count |
-| `emergency_stop` | Stop all movement, disable motors |
+| `turn` / `move_forward` | Turn in place, drive short distances (sonar-checked, max 2 m) |
+| `set_posture` | Stand, StandInit, StandZero, Crouch |
+| `set_eye_color` | Eye LED colour |
+| `take_photo` | Camera snapshot, returned to the model as an image |
+| `get_sensors` | Battery, touch, bumpers, sonar, people count |
+| `show_on_tablet` | Text or a web page on the chest tablet |
+| `emergency_stop` | Kill all movement and speech, then rest (motors off) |
 
 ## Configuration
 
@@ -117,17 +104,20 @@ The AI can call these tools during conversation:
 |----------|---------|-------------|
 | `PEPPER_IP` | `10.0.100.100` | Robot IP |
 | `BRIDGE_PORT` | `8888` | Bridge port |
-| `BRIDGE_API_KEY` | | Optional auth |
-| `AI_MODEL` | `claude-sonnet-4-5-20250929` | AI model |
+| `BRIDGE_API_KEY` | | Optional bridge auth |
+| `PEPPER_FAKE_BRIDGE` | `false` | Simulated robot |
+| `PEPPER_AUTONOMOUS_LIFE` | `disabled` | Autonomous Life state set on connect (`keep` to leave it) |
+| `AI_MODEL` | `claude-opus-5` | AI model (`claude-*` or `gpt-*`) |
+| `AI_EFFORT` | `low` | Claude reasoning effort |
 | `ANTHROPIC_API_KEY` | | Required for Claude |
 | `OPENAI_API_KEY` | | Required for GPT |
-| `API_PORT` | `8000` | Host REST port |
-| `WEBSOCKET_PORT` | `8765` | Host WS port |
+| `SPEAK_RESPONSES` / `TABLET_SUBTITLES` / `REACT_TO_TOUCH` | `true` | Behaviour switches |
+| `API_PORT` | `8000` | Host port (REST + WebSocket + UI) |
 
 ## Testing
 
 ```bash
-pytest tests/ -v --tb=short    # 107 tests, all pass without a robot
+pytest tests/ -q    # no robot needed; starts the real bridge process with a fake NAOqi
 ```
 
 ## Credits

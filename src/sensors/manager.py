@@ -22,8 +22,11 @@ class SensorManager:
             data = await self.connection.bridge.get_sensors()
             return {
                 "battery": data.get("battery"),
+                "charging": data.get("charging"),
                 "touch": data.get("touch", {}),
+                "bumpers": data.get("bumpers", {}),
                 "sonar": data.get("sonar", {}),
+                "obstacle": data.get("obstacle", False),
                 "people_count": data.get("people_count"),
             }
         except Exception as exc:
