@@ -46,7 +46,11 @@ curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
   -d '{"message": "Wave at me and say hello!"}'
 ```
 
-See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a first-test checklist and troubleshooting, and [docs/BRIDGE_API.md](docs/BRIDGE_API.md) for every bridge endpoint.
+See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a first-test checklist and troubleshooting, [docs/BRIDGE_API.md](docs/BRIDGE_API.md) for every bridge endpoint, and [docs/ROADMAP.md](docs/ROADMAP.md) for where the project is going.
+
+## Why this architecture
+
+Pepper's brain stays off-board: the robot exposes its hardware as documented, safety-bounded tools over the bridge, Claude plans and talks, and NAOqi's own skills and reflexes do the fast low-level work. A September 2026 survey of robot foundation models (NVIDIA GR00T, ByteDance GR-3, Gemini Robotics, pi0 and others) and of every recent Pepper/NAO language-model system confirmed this is the right shape for Pepper: those models drive manipulators with joint-level policies, need per-robot demonstration data and an on-board GPU, and none of that applies to a wheeled social robot with gesture arms. What does transfer (a reactive layer, point-based vision grounding, voice input, memory) is on the roadmap. Details and sources: [docs/RESEARCH_2026-09.md](docs/RESEARCH_2026-09.md).
 
 ## Architecture
 

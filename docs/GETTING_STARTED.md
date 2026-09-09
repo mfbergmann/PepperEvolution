@@ -26,6 +26,8 @@ Open http://localhost:8000. Everything works (chat, streaming speech, photos, ev
 
 ## First test with the real robot
 
+The fuller, ordered checklist for the first session (what to verify endpoint by endpoint and what is most likely to need tuning) is Milestone 0 in [ROADMAP.md](ROADMAP.md).
+
 1. **Turn Pepper on** and wait for it to boot. Check reachability: `ping 10.0.100.100`.
 2. **Deploy the bridge** (uploads `robot_bridge/pepper_bridge.py`, starts it, polls `/health`):
    ```bash

@@ -112,25 +112,15 @@ Before submitting your changes, please ensure:
 
 ## Areas for Contribution
 
-### High Priority
+The prioritised milestones live in [docs/ROADMAP.md](docs/ROADMAP.md); the reasoning behind them, with sources, is in [docs/RESEARCH_2026-09.md](docs/RESEARCH_2026-09.md). In short:
 
-- **Speech input**: stream microphone audio from the bridge (`/audio/record` exists) to a speech-to-text
-  service so people can talk to Pepper instead of typing
-- **Wake word / turn taking**: know when someone is talking to the robot
-- **Navigation**: use the laser/sonar data for longer, safer moves
+1. **First live session** (Milestone 0): run the checklist on the physical robot and fix what breaks.
+2. **Reactive layer**: gaze tracking, LED state signalling and backchannels on the bridge, no model calls.
+3. **Voice input**: stream microphone audio from the bridge to a streaming speech-to-text service.
+4. **Vision grounding**: `look_at(x, y)` from a photo, verify-after-act.
+5. **Memory and people**: remember who Pepper talked to and what was said.
 
-### Medium Priority
-
-- **Tablet UI**: richer content on the chest tablet (the bridge already serves `/tablet/page`)
-- **Multi-Robot Support**: support controlling multiple Pepper robots
-- **Memory**: remember people and earlier conversations across sessions
-
-### Low Priority
-
-- **Documentation**: Improve documentation and tutorials
-- **Testing**: Add more comprehensive test coverage
-- **Performance**: Optimize code for better performance
-- **Internationalization**: Add support for multiple languages
+Things we are deliberately not doing (learned joint-level policies, on-robot inference, NAOqi 2.9 migration) are listed under "Non-goals" in the roadmap.
 
 ## Bug Reports
 

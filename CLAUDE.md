@@ -114,6 +114,8 @@ Copy `env.example` to `.env`. Key variables:
 
 - `docs/BRIDGE_API.md` — Full HTTP/WebSocket endpoint reference for the bridge server
 - `docs/GETTING_STARTED.md` — Setup guide, first-test checklist and troubleshooting
+- `docs/ROADMAP.md` — Milestones (M0 first live session checklist, reactive layer, voice input, vision grounding, memory) and non-goals
+- `docs/RESEARCH_2026-09.md` — Why the off-board bridge architecture, what robot foundation models do and do not offer Pepper, prior Pepper/NAO LLM work with sources
 
 ## Code Standards
 
