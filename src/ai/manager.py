@@ -73,7 +73,7 @@ class AIManager:
         self.conversation_history: List[Dict[str, Any]] = []
         self.last_photo: Optional[Photo] = None
         self._lock = asyncio.Lock()
-        self._last_event_reaction = 0.0
+        self._last_event_reaction: Optional[float] = None  # monotonic time; None = never (monotonic may start near 0)
         self._tablet_ok = True
         self._tasks: Set[asyncio.Task] = set()
         self._response_callbacks: List[ResponseCallback] = []
@@ -300,7 +300,7 @@ class AIManager:
         now = time.monotonic()
         if self.busy or self.robot.direct_commands_running or self.robot.halted:
             return
-        if now - self._last_event_reaction < self.touch_cooldown:
+        if self._last_event_reaction is not None and now - self._last_event_reaction < self.touch_cooldown:
             return
         self._last_event_reaction = now
         prompt = f"[Sensor event] {message} React in one short sentence, or stay quiet if it doesn't warrant a reply."
@@ -312,11 +312,11 @@ class AIManager:
         # Re-check right before taking the lock: a user turn may have started in the meantime.
         if self._lock.locked() or self.robot.direct_commands_running or self.robot.halted:
             self.logger.debug("Dropping sensor reaction: robot busy")
-            self._last_event_reaction = 0.0
+            self._last_event_reaction = None
             return
         if time.monotonic() - scheduled_at > self.EVENT_MAX_AGE:
             self.logger.debug("Dropping sensor reaction: stale")
-            self._last_event_reaction = 0.0
+            self._last_event_reaction = None
             return
         try:
             await self.process_user_input(prompt, source="event")

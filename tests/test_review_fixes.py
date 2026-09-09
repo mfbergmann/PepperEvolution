@@ -231,7 +231,7 @@ class TestEventReactions:
         await user_turn
         await asyncio.sleep(0.02)
         assert mock_ai_provider.chat.call_count == 1  # the reaction saw the lock and dropped itself
-        assert mock_ai_manager._last_event_reaction == 0.0  # cooldown reset so the next touch works
+        assert mock_ai_manager._last_event_reaction is None  # cooldown reset so the next touch works
 
     async def test_reaction_skipped_during_direct_command(self, mock_ai_manager, mock_ai_provider, mock_robot):
         mock_robot.direct_commands_running = 1
@@ -341,3 +341,18 @@ class TestEventStreamAuth:
         es = EventStream("ws://x/ws/events", api_key="bad")
         await es._handle_raw(json.dumps({"type": "error", "data": {"error": "unauthorized"}}))
         assert es._backoff == 30.0
+
+
+class TestCooldownClock:
+
+    async def test_first_touch_reacts_even_when_monotonic_clock_is_small(
+        self, mock_ai_manager, mock_ai_provider, monkeypatch
+    ):
+        """CI runners boot seconds before the tests run; monotonic() can be below the cooldown."""
+        import src.ai.manager as manager_module
+
+        monkeypatch.setattr(manager_module.time, "monotonic", lambda: 3.0)
+        mock_ai_manager.touch_cooldown = 60
+        await mock_ai_manager.handle_event("touch", {"sensor": "head_front", "touched": True})
+        await asyncio.sleep(0.05)
+        assert mock_ai_provider.chat.call_count == 1
