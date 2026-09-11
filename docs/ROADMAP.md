@@ -4,12 +4,12 @@ Last updated: September 2026. See [RESEARCH_2026-09.md](RESEARCH_2026-09.md) for
 
 ## Where we are
 
-v2.1 is a complete rewrite of the bridge and the host (September 2026). It has been verified off-robot only:
+v2.1 was a complete rewrite of the bridge and the host (September 2026); v2.2 added the reactive layer (Milestone 1) and voice input (Milestone 2) on top, borrowing the design of the local intent table, state signals and safety ledger from Autonomous OS (see the research notes). Everything has been verified off-robot only:
 
-- 259 tests, including the real bridge process running under a fake NAOqi.
+- About 380 tests, including the real bridge process running under a fake NAOqi that also pumps microphone frames.
 - The bridge suite also passes under Python 2.7.18 + Tornado 3.1.1, the robot's own environment.
 - Live runs against the Anthropic API with the simulated robot (tool calls, photo description, touch reactions, streaming speech).
-- An adversarial multi-agent review; all 28 confirmed findings fixed with regression tests.
+- Adversarial multi-agent reviews; every confirmed finding fixed with a regression test.
 
 **It has never been run on the physical robot.** Milestone 0 is that first contact.
 
@@ -34,29 +34,38 @@ Checklist (in order; stop and fix before moving on):
 9. `python examples/event_monitor.py`: touch head, hands, bumpers; check `people` events with someone in view.
 10. `GET /picture` at resolutions 1 and 2; check the JPEG opens and the exposure is usable.
 11. `POST /tablet/text`: confirm the tablet can reach `http://198.18.0.1:8888/tablet/page`.
-12. `python main.py`, open the UI, run the first prompts from GETTING_STARTED; then `examples/basic_chat.py`.
+12. `POST /awareness {"enabled": true, "tracking_mode": "Head"}`: the head should follow a person walking past; `POST /move/head` must still work (awareness pauses and resumes by itself).
+13. `curl http://10.0.100.100:8888/audio/stream`, then `python examples/mic_monitor.py`: `streaming` goes true, `frames` climbs, the level meter moves when someone talks, and `dropped` climbs during `POST /speak` (the robot must not hear itself).
+14. `python main.py`, open the UI, run the first prompts from GETTING_STARTED; then `examples/basic_chat.py`. Say "stop" mid-reply (typed) and check the eyes change colour with the turn.
+15. With `STT_BACKEND` set: hold-to-talk from `http://localhost:8000`; then `VOICE_INPUT=true` and talk to the robot from a metre away. Save utterances with `VOICE_RECORD_DIR` for tuning.
 
-Things most likely to need adjusting on the day: `bodyLanguageMode` config on `ALAnimatedSpeech.say`, head-pitch comfort limits, the 0.45 m obstacle threshold, speech volume, and which animations are actually installed.
+Things most likely to need adjusting on the day: `bodyLanguageMode` config on `ALAnimatedSpeech.say`, head-pitch comfort limits, the 0.45 m obstacle threshold, speech volume, the microphone mute tail (0.4 s) and the energy-detector thresholds, and which animations are actually installed. [SAFETY.md](SAFETY.md) lists every bound.
 
-## Milestone 1: reactive layer
+## Milestone 1: reactive layer (implemented in v2.2, unverified on the robot)
 
 Goal: Pepper looks alive while Claude is thinking, without any model call.
 
-- Gaze: track the speaking or nearest person with `ALBasicAwareness`-style head tracking that yields to explicit `move_head` calls and resumes afterwards.
-- State signalling: eye LEDs for listening / thinking / speaking, chest LED for errors.
-- Backchannels: an idle "thinking" gesture or a short verbal filler after ~1.5 s of model latency; interruptible.
-- Reflexes stay on the bridge: collision protection, sonar guard, halt on emergency stop.
+- [x] Gaze: `/prepare` can enable `ALBasicAwareness` head-only tracking (people, sound, touch stimuli); NAOqi pauses it while `move_head` runs and resumes right afterwards. Off by default (`PEPPER_AWARENESS`) until the live session shows whether the resume undoes the model's "look left" too quickly; "look at me" / "look ahead" toggle it.
+- [x] State signalling: eye LEDs blue / purple / white for listening / thinking / speaking, restored to the last chosen colour after the turn (`LED_STATE_SIGNALS`).
+- [x] Backchannels: a short verbal filler after `BACKCHANNEL_AFTER` (2 s) without model text, user turns only.
+- [x] Local intents: stop / emergency stop / quiet / wake up / rest / look at me / look ahead, matched before the turn lock and executed in milliseconds; "stop" cancels the remaining tool calls of a running turn and silences it (`src/ai/intents.py`).
+- [x] Reflexes stay on the bridge: collision protection, sonar guard, halt on emergency stop, microphone mute while speaking.
+- [ ] Chest LED for errors; an idle "thinking" gesture (animation) instead of, or in addition to, the filler.
+- [ ] Tune on the robot: filler delay, LED colours in daylight, whether the `Sound` stimulus makes the head twitch during conversation, and whether `move_head` should pause awareness for a few seconds (bridge-side `pauseAwareness` + timer) so the model's gaze commands hold.
 
 Acceptance: perceived latency in a conversation drops; no model calls are made by this layer.
 
-## Milestone 2: voice input
+## Milestone 2: voice input (implemented in v2.2, unverified on the robot)
 
 Goal: people talk to Pepper instead of typing.
 
-- Bridge: stream 16 kHz mono microphone audio over a WebSocket (`ALAudioDevice` remote module), muting capture while Pepper speaks (Pepper 1.8 has no echo cancellation).
-- Host: streaming speech-to-text with end-of-utterance detection, then the existing `process_user_input`. Target under 2 s from end of speech to first spoken word (the literature reports 4 to 9 s for naive cascades, 1.35 s for a well-engineered one).
-- Turn taking: a simple push-to-talk fallback in the UI; later, interruption handling.
-- Known failure mode from every Pepper study: speech recognition with accents, dialects and noise. Log transcripts for tuning.
+- [x] Bridge: `/ws/audio` streams 16 kHz mono PCM from the front microphone through a qi service subscribed to `ALAudioDevice`, only while a client is connected; capture is muted around `/speak`, on `ALTextToSpeech/Status` events and for 0.4 s after speech (Pepper 1.8 has no echo cancellation).
+- [x] Host: `src/audio/` with two backends behind one interface: `sherpa-onnx` streaming transducer with its own endpointing (recommended; partial transcripts, ~80 MB zipformer or the 2026 Nemotron streaming model), and `faster-whisper` per utterance behind an energy endpointer. Finals go to `process_user_input(source="voice")`; control phrases are intents.
+- [x] Turn taking: hold-to-talk in the web UI (browser microphone, raw PCM to `POST /voice/utterance`); the robot microphone path is opt-in with `VOICE_INPUT`.
+- [x] Transcript logging (`VOICE_RECORD_DIR`) for tuning on real audio.
+- [ ] Measure end-of-speech to first spoken word on the robot; target under 2 s (the literature reports 4 to 9 s for naive cascades, 1.35 s for a well-engineered one).
+- [ ] Barge-in: let a spoken "stop" interrupt while Pepper is speaking. Today the bridge mutes the microphone for the whole reply (sentences follow each other with a 0.4 s tail), so a spoken "stop" only lands between turns; typed, button and hold-to-talk stops work at any time. Needs either echo cancellation on the host (the bridge would have to stream during speech) or keyword spotting on the muted-out audio; not planned before M0 shows how much Pepper hears of itself.
+- [ ] A neural VAD (Silero/TEN through sherpa-onnx) in front of the whisper path if the energy detector proves too crude in the lab.
 
 Acceptance: a five-turn spoken conversation with tool use, end to end.
 
@@ -83,6 +92,16 @@ Goal: Pepper remembers who it talked to and what was said.
 - Bridge autostart on robot boot (`autoload.ini`) and a watchdog.
 - Latency budget per turn in the log; per-sentence speech timing.
 - Session recording (transcripts, photos, tool calls) for later analysis.
+
+## Testing without the robot
+
+Three levels, from cheapest to most faithful:
+
+1. **`PEPPER_FAKE_BRIDGE=true`** (host only): the whole host stack against an in-memory robot. Checks the model, tools, speech streaming, voice input with `STT_BACKEND=fake`, and the UI.
+2. **`tests/fakenaoqi`** (bridge included): the real bridge process under a fake `qi` module that answers every NAOqi call with plausible data, toggles a touch sensor and pumps microphone frames. This is what the test suite runs, also under Python 2.7 + Tornado 3.1.1. It proves the bridge's threading, HTTP and WebSocket behaviour, not that the NAOqi calls exist.
+3. **A virtual Pepper on NAOqi's own desktop binary.** Choregraphe 2.5 ships `naoqi-bin`, the same NAOqi that runs on the robot, compiled for Linux x86-64; it runs headless (`naoqi --qi-listen-url tcp://127.0.0.1:9559`) and Pepper is selected by editing `etc/naoqi/ALRobotModel.xml` to `JULIETTEY20MP.xml`. The bridge can be started against it with `--naoqi tcp://127.0.0.1:9559` using the Python 2.7 `pynaoqi` SDK (needs a shared, UCS4 Python 2.7; the AUR `python2` package qualifies). Aldebaran's site is gone (Maxvision bought the assets in 2025) but the original installers are still served from `community-static.aldebaran.com` (`choregraphe-suite-2.5.10.7-linux64.tar.gz`, `naoqi-sdk-2.5.x-linux64`, `pynaoqi-python2.7-2.5.x-linux64`), with unpacked mirrors on GitHub; Choregraphe's free licence key is published on the successor's support pages. What this level *does* verify: every method name and signature the bridge calls on `ALMotion`, `ALRobotPosture`, `ALTextToSpeech` (events only, no audio), `ALAnimatedSpeech`, `ALBasicAwareness`, `ALAutonomousLife`, `ALLeds`, `ALMemory`, `ALBehaviorManager` and the `qi` service registration used for audio. What it *cannot* verify: sonar, touch and battery keys (no hardware layer), camera frames, `ALAudioDevice` and `ALTabletService` (absent on the desktop build), the installed animation package, and anything about timing or the real room. Worth doing before the live session because "wrong NAOqi signature" is the most likely class of bug left; it does not replace Milestone 0.
+
+qiBullet (PyBullet with a Pepper model) and the ROS 2 / Gazebo Pepper packages simulate physics with their own APIs, not NAOqi's, so they would not exercise the bridge. Webots has no Pepper model.
 
 ## Watch list (no action now)
 

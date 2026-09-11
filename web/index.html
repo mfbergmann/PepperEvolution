@@ -34,6 +34,9 @@
   button.secondary { background:var(--panel2); color:var(--text); }
   button.danger { background:var(--bad); color:#0b1220; }
   button.ok { background:var(--ok); color:#0b1220; }
+  button.mic { min-width:150px; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none; }
+  button.mic.live { background:var(--bad); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; filter:none; }
   .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap:8px; }
   .status { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
   .stat { background:#0b1220; border-radius:8px; padding:8px 10px; border:1px solid #334155; }
@@ -59,6 +62,7 @@
     <div class="row">
       <input type="text" id="chat-input" placeholder="Say something to Pepper… (Enter to send)">
       <button id="send">Send</button>
+      <button class="secondary mic" id="mic" title="Hold to talk">🎤 Hold to talk</button>
       <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted)"><input type="checkbox" id="speak" checked> speak</label>
     </div>
   </section>
@@ -133,7 +137,7 @@ let partialEl = null;
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function add(cls, html){ const div=document.createElement('div'); div.className='msg '+cls; div.innerHTML=html; chat.appendChild(div); chat.scrollTop=chat.scrollHeight; return div; }
-function setBusy(b){ document.getElementById('busy').classList.toggle('show', b); }
+function setBusy(b, text){ const el=document.getElementById('busy'); el.textContent = text || 'Pepper is thinking…'; el.classList.toggle('show', b); }
 
 async function api(path, method, body){
   const opts={method:method||'GET', headers:{'Content-Type':'application/json'}};
@@ -218,9 +222,14 @@ function initWebSocket(){
       partialEl.textContent += (partialEl.textContent?' ':'') + d.text;
       chat.scrollTop=chat.scrollHeight;
     } else if(d.type==='chat_response'){
+      setBusy(false);
       renderResponse(d, d.client_id===clientId);  // replies to us, to other clients, and event reactions
     } else if(d.type==='chat_user'){
       add('user', esc(d.message)+' <small>(other client)</small>');
+    } else if(d.type==='transcript'){
+      if(!d.final){ setBusy(true, 'Hearing: '+d.text); }
+      else if(d.delivered){ add('user', esc(d.text)+' <small>('+(d.source!=='ptt'?'robot microphone':(d.client_id===clientId?'voice, this browser':'voice, other client'))+')</small>'); setBusy(true); }
+      else { setBusy(false); if(d.text) add('sys', 'Heard nothing usable: "'+esc(d.text)+'"'); }
     } else if(d.type==='error'){
       add('sys', 'Error: '+esc(d.message||''));
     } else if(d.type==='robot_event'){
@@ -246,8 +255,72 @@ document.getElementById('head').onclick=()=>directCommand('move_head',{yaw:parse
 document.getElementById('eyes').onclick=()=>directCommand('eye_color',{color:document.getElementById('eye').value});
 document.getElementById('tablet').onclick=()=>directCommand('tablet_text',{text:document.getElementById('tablet-text').value});
 
+// --- Voice: hold the microphone button, release to send the utterance to the host ---
+const micBtn = document.getElementById('mic');
+let rec = null, pressed = false;
+async function startTalking(){
+  if(rec || micBtn.disabled) return;
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ add('sys','The browser only allows the microphone over https or http://localhost'); return; }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1, echoCancellation:true, noiseSuppression:true}});
+    if(!pressed){ stream.getTracks().forEach(t=>t.stop()); return; }  // released while the permission prompt was up
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    if(ctx.state!=='running'){ try{ await ctx.resume(); }catch(e){} }
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    proc.onaudioprocess = e => { chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    src.connect(proc); proc.connect(ctx.destination);
+    rec = {ctx, stream, proc, chunks, rate: ctx.sampleRate};
+    micBtn.classList.add('live'); micBtn.textContent='● Listening… release to send';
+  }catch(err){ add('sys','Microphone error: '+esc(err.message)); }
+}
+async function stopTalking(){
+  if(!rec) return;
+  const r = rec; rec = null;
+  try{ r.proc.disconnect(); r.stream.getTracks().forEach(t=>t.stop()); r.ctx.close(); }catch(e){}
+  micBtn.classList.remove('live'); micBtn.textContent='🎤 Hold to talk';
+  const pcm = downsampleToPcm16(r.chunks, r.rate, 16000);
+  if(pcm.byteLength < 6400){ add('sys','Too short: hold the button while you speak'); return; }  // under 200 ms
+  setBusy(true, 'Listening…');
+  try{
+    const resp = await fetch('/voice/utterance?sample_rate=16000&client_id='+clientId, {method:'POST', headers:{'Content-Type':'audio/pcm'}, body: pcm});
+    let data = {}; try{ data = await resp.json(); }catch(e){}
+    if(!resp.ok) throw new Error((typeof data.detail==='string' && data.detail) || ('HTTP '+resp.status));
+    if(!wsLive){
+      if(data.ignored) add('sys','Heard nothing usable'+(data.text?': "'+esc(data.text)+'"':''));
+      else { add('user', esc(data.text)+' <small>(voice)</small>'); if(data.response) renderResponse(data.response, true); }
+    }
+  }catch(err){ add('sys','Voice error: '+esc(err.message)); }
+  finally{ setBusy(false); }
+}
+function downsampleToPcm16(chunks, fromRate, toRate){
+  let total=0; chunks.forEach(c=>total+=c.length);
+  const input=new Float32Array(total); let off=0; chunks.forEach(c=>{ input.set(c, off); off+=c.length; });
+  const ratio=fromRate/toRate, outLen=Math.floor(input.length/ratio);
+  const out=new Int16Array(outLen);
+  for(let i=0;i<outLen;i++){
+    const start=Math.floor(i*ratio), end=Math.min(Math.floor((i+1)*ratio), input.length);  // average the source samples
+    let sum=0, n=0; for(let j=start;j<end;j++){ sum+=input[j]; n++; }
+    const v = n? sum/n : 0;
+    out[i]=Math.max(-32768, Math.min(32767, Math.round(v*32767)));
+  }
+  return out.buffer;
+}
+micBtn.addEventListener('pointerdown', e=>{ e.preventDefault(); pressed=true; try{ micBtn.setPointerCapture(e.pointerId); }catch(err){} startTalking(); });
+['pointerup','pointercancel'].forEach(ev=>micBtn.addEventListener(ev, ()=>{ pressed=false; stopTalking(); }));
+micBtn.addEventListener('contextmenu', e=>e.preventDefault());  // a long press on Android must not cancel the recording
+async function initVoice(){
+  try{
+    const v=await api('/voice/status');
+    if(!v.enabled){ micBtn.disabled=true; micBtn.title='Voice is off on the host: set STT_BACKEND (see docs/GETTING_STARTED.md, Voice input)'; }
+    else micBtn.title='Hold to talk ('+v.backend+(v.robot_microphone?', robot microphone also on':'')+')';
+  }catch(err){ /* host unreachable right now; the button reports the error when used */ }
+}
+
 initWebSocket();
 refreshStatus();
+initVoice();
 setInterval(refreshStatus, 10000);
 add('sys','Connected UI. Type a message, or use the direct controls on the right.');
 </script>

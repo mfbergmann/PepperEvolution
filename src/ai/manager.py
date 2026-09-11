@@ -7,6 +7,7 @@ a final text response. Also turns robot sensor events into short reactions.
 """
 
 import asyncio
+import random
 import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
@@ -14,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from loguru import logger
 
 from ..pepper.robot import PepperRobot, Photo
+from .intents import Intent, IntentExecutor, match_intent
 from .models import ERROR_TEXT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
@@ -24,6 +26,10 @@ PartialCallback = Callable[[str], Awaitable[None]]
 
 MAX_ROUNDS_TEXT = "I got a bit carried away there. What would you like next?"
 HALTED_TEXT = "Emergency stop pressed. I'm resting until someone wakes me up."
+ABORTED_TEXT = "Okay, stopping."
+FILLERS = ["Hmm.", "Let me think.", "One moment.", "Let me see."]
+# Eye colours that show what Pepper is doing; "idle" restores whatever colour was chosen last.
+LED_STATES = {"listening": "blue", "thinking": "purple", "speaking": "white", "idle": None}
 TRUNCATED_TOOL_TEXT = (
     "Not executed: your reply was cut off by the output token limit before this tool call was complete. "
     "Reply again more briefly."
@@ -57,6 +63,8 @@ class AIManager:
         touch_cooldown: float = 8.0,
         history_turns: int = 20,
         image_history: int = 2,
+        led_signals: bool = True,
+        backchannel_after: float = 2.0,
     ):
         self.robot = robot
         self.provider = provider
@@ -77,6 +85,16 @@ class AIManager:
         self._clock = time.monotonic  # injectable for tests
         self._tablet_ok = True
         self._tasks: Set[asyncio.Task] = set()
+        self.intents = IntentExecutor(robot)
+        self.led_signals = led_signals  # eye colour shows listening / thinking / speaking
+        self.backchannel_after = backchannel_after  # seconds of silence before a filler ("Hmm.") is spoken
+        self._led_ok = True
+        self._hush = False  # "be quiet": suppress the rest of the current turn's speech
+        self._abort = False  # "stop": cancel the current turn's remaining tool calls
+        self._chat_task: Optional[asyncio.Task] = None  # the model call in flight, cancelled by "stop"
+        self._last_stop_at: Optional[float] = None  # turns submitted before this are dropped, not run
+        self._eye_color_at_start: Optional[str] = None  # to leave a colour the model chose mid-turn alone
+        self._spoke_this_turn = False
         self._response_callbacks: List[ResponseCallback] = []
         self._partial_callbacks: List[PartialCallback] = []
 
@@ -114,17 +132,88 @@ class AIManager:
             - model, stop_reason, usage, rounds, source, client_id
         """
         speak = self.speak_responses if speak is None else speak
+        if source in ("user", "voice"):
+            intent = match_intent(user_input)
+            if intent is not None:
+                # Control phrases never wait behind the model or an in-flight turn.
+                return await self._handle_intent(intent, user_input, speak, source, client_id)
+        submitted = self._clock()
         async with self._lock:
+            if self._last_stop_at is not None and submitted < self._last_stop_at:
+                # Queued behind the turn that "stop" cancelled: the person does not want it any more.
+                self.logger.info(f"[{source}] dropped after a stop: {user_input!r}")
+                return self._bare_result("", source, client_id, "cancelled")
             return await self._run_turn(user_input, speak, source, client_id)
+
+    async def _handle_intent(
+        self, intent: Intent, user_input: str, speak: bool, source: str, client_id: Optional[str]
+    ) -> Dict[str, Any]:
+        self.logger.info(f"[{source}] {user_input!r} -> intent {intent.name}")
+        if intent.hushes:
+            self._hush = True
+        if intent.aborts_turn:
+            self._abort = True
+            self._last_stop_at = self._clock()
+            chat = self._chat_task
+            if chat is not None and not chat.done():
+                chat.cancel()  # do not wait for the model to finish a reply nobody wants
+        outcome = await self.intents.execute(intent)
+        spoken: List[str] = []
+        ack = intent.ack if outcome.get("ok") else "Sorry, that didn't work."
+        if speak and ack and not self.robot.halted:
+            try:
+                await self.robot.speak(ack, animated=False)
+                spoken.append(ack)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"Intent acknowledgement failed: {exc}")
+        result = self._bare_result(ack or "", source, client_id, "intent", spoken=spoken, intent=intent.name)
+        if not outcome.get("ok"):
+            result["error"] = outcome.get("error")
+        if not self.busy:
+            await self._signal("idle")  # e.g. the "listening" colour set by voice input
+        for cb in self._response_callbacks:
+            try:
+                await cb(result)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug(f"response callback failed: {exc}")
+        return result
+
+    @staticmethod
+    def _bare_result(text: str, source: str, client_id: Optional[str], stop_reason: str, **extra: Any) -> Dict:
+        result: Dict[str, Any] = {
+            "text": text,
+            "spoken": [],
+            "tool_calls": [],
+            "photo": None,
+            "model": "",
+            "stop_reason": stop_reason,
+            "usage": {},
+            "rounds": 0,
+            "source": source,
+            "client_id": client_id,
+        }
+        result.update(extra)
+        return result
 
     async def _run_turn(self, user_input: str, speak: bool, source: str, client_id: Optional[str]) -> Dict[str, Any]:
         self.logger.info(f"[{source}] {user_input}")
         self.conversation_history.append({"role": "user", "content": user_input})
         self._trim_history()
 
+        self._hush = False
+        self._abort = False
+        self._spoke_this_turn = False
+        self._eye_color_at_start = self.robot.last_eye_color
         speaker = SpeechStreamer(
-            self._speak_sentence, enabled=speak, on_sentence=self._on_sentence, gate=lambda: not self.robot.halted
+            self._speak_sentence,
+            enabled=speak,
+            on_sentence=self._on_sentence,
+            gate=lambda: not self.robot.halted and not self._hush,
         )
+        await self._signal("thinking")
+        backchannel: Optional[asyncio.Task] = None
+        if speak and source == "user" and self.backchannel_after > 0:
+            backchannel = asyncio.create_task(self._backchannel(speaker), name="backchannel")
         all_tool_calls: List[Dict[str, Any]] = []
         photo: Optional[Photo] = None
         text_parts: List[str] = []
@@ -138,13 +227,37 @@ class AIManager:
 
         try:
             for rounds in range(1, self.MAX_TOOL_ROUNDS + 1):
-                response = await self.provider.chat(
-                    messages=self.conversation_history,
-                    tools=TOOLS,
-                    system=self._build_system_prompt(),
-                    on_text=speaker.on_text,
+                if self._abort:
+                    await say(ABORTED_TEXT)
+                    break
+                chat = asyncio.ensure_future(
+                    self.provider.chat(
+                        messages=self.conversation_history,
+                        tools=TOOLS,
+                        system=self._build_system_prompt(),
+                        on_text=speaker.on_text,
+                    )
                 )
+                self._chat_task = chat
+                try:
+                    response = await chat
+                except asyncio.CancelledError:
+                    if not self._abort:
+                        chat.cancel()  # we are being cancelled (shutdown): take the model call down too
+                        raise
+                    self.logger.info("Model call cancelled by a stop intent")
+                    if self._is_user_text(self.conversation_history[-1]):
+                        self.conversation_history.pop()  # nothing answered it; keep the history valid
+                    else:
+                        self.conversation_history.append({"role": "assistant", "content": ABORTED_TEXT})
+                    text_parts.append(ABORTED_TEXT)
+                    break
+                finally:
+                    self._chat_task = None
                 await speaker.flush()  # each model message ends a sentence, even mid-tool-loop
+                if backchannel is not None:
+                    backchannel.cancel()  # the model has answered; a filler now would talk over a tool
+                    backchannel = None
 
                 if response.is_error:
                     self._drop_dangling_user_message()
@@ -213,6 +326,8 @@ class AIManager:
                 for tc in response.tool_calls:
                     if self.robot.halted:
                         outcome = self.executor.halted_outcome()
+                    elif self._abort:
+                        outcome = self.executor.aborted_outcome()
                     else:
                         outcome = await self.executor.execute(tc.name, tc.input)
                     tool_results.append(outcome.tool_result(tc.id))
@@ -229,12 +344,22 @@ class AIManager:
                     await say(HALTED_TEXT)
                     self.conversation_history.append({"role": "assistant", "content": HALTED_TEXT})
                     break
+                if self._abort:
+                    # The stop intent already said "Okay." and hushed the streamer; this only closes the
+                    # history and the reply text.
+                    self.logger.info("Turn aborted by a stop intent")
+                    await say(ABORTED_TEXT)
+                    self.conversation_history.append({"role": "assistant", "content": ABORTED_TEXT})
+                    break
             else:
                 self.logger.warning("Hit max tool-call rounds")
                 await say(MAX_ROUNDS_TEXT)
                 self.conversation_history.append({"role": "assistant", "content": MAX_ROUNDS_TEXT})
         finally:
+            if backchannel is not None:
+                backchannel.cancel()
             spoken = await speaker.finish()
+            await self._signal("idle")
 
         self._prune_images()
         text = strip_animation_tags("\n".join(p for p in text_parts if p))
@@ -269,7 +394,39 @@ class AIManager:
     async def _speak_sentence(self, sentence: str):
         await self.robot.speak(sentence, animated=True)
 
+    async def _backchannel(self, speaker: SpeechStreamer):
+        """Say a short filler if the model has not produced any text after backchannel_after seconds."""
+        try:
+            await asyncio.sleep(self.backchannel_after)
+        except asyncio.CancelledError:
+            return
+        if speaker.first_text_at is None and not self._hush and not self.robot.halted:
+            await speaker.say_filler(random.choice(FILLERS))
+
+    async def _signal(self, state: str):
+        """Show what Pepper is doing with its eye colour (best effort; off after the first failure)."""
+        if not self.led_signals or not self._led_ok or self.robot.halted:
+            return
+        color = LED_STATES.get(state)
+        if color is None:  # idle: restore the colour the model or the user chose, if any
+            color = self.robot.last_eye_color or "white"
+        try:
+            await self.robot.bridge.set_eye_leds(color=color)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(f"Eye LED state signals disabled after error: {exc}")
+            self._led_ok = False
+
+    async def signal_state(self, state: str):
+        """Show an external state (``listening``/``idle``) on the eyes when no turn is running."""
+        if self.busy:
+            return
+        await self._signal(state)
+
     async def _on_sentence(self, sentence: str):
+        if not self._spoke_this_turn:
+            self._spoke_this_turn = True
+            if not self._hush and self.robot.last_eye_color == self._eye_color_at_start:
+                await self._signal("speaking")  # unless the model just chose a colour: leave that alone
         display = strip_animation_tags(sentence)
         for cb in self._partial_callbacks:
             try:

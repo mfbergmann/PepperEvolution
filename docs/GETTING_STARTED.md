@@ -1,4 +1,4 @@
-# Getting Started with PepperEvolution v2.1
+# Getting Started with PepperEvolution v2.2
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ The fuller, ordered checklist for the first session (what to verify endpoint by 
    ```bash
    python robot_bridge/deploy.py
    ```
-   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=2.1.0`. Right after a robot boot
+   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=2.2.0`. Right after a robot boot
    this can take up to about two minutes while NAOqi finishes starting (deploy prints `waiting for NAOqi` meanwhile).
    If it fails, `python robot_bridge/deploy.py --logs` shows `bridge.log` from the robot.
 3. **Sanity-check the bridge directly** (no AI involved):
@@ -46,10 +46,36 @@ The fuller, ordered checklist for the first session (what to verify endpoint by 
    curl -X POST http://10.0.100.100:8888/leds/eyes -H 'Content-Type: application/json' -d '{"color":"blue"}'
    ```
    `python examples/event_monitor.py` prints touch/bumper/sonar/battery events; tap Pepper's head to see one.
+   `python examples/mic_monitor.py --speak` shows the microphone level from `/ws/audio` and checks that capture is muted while Pepper talks.
 4. **Start the host application:** `python main.py` and open http://localhost:8000.
-   On connect it disables Autonomous Life and wakes the robot (`PREPARE_ON_CONNECT`); set `PEPPER_AUTONOMOUS_LIFE=keep` if you'd rather leave Pepper's own behaviours running.
+   On connect it disables Autonomous Life and wakes the robot (`PREPARE_ON_CONNECT`); set `PEPPER_AUTONOMOUS_LIFE=keep` if you'd rather leave Pepper's own behaviours running. `PEPPER_AWARENESS=true` (or saying "look at me") makes the head follow people and sounds; NAOqi resumes that tracking right after every `move_head`, so try it before making it the default.
 5. **Talk.** Good first prompts: *"Wave at me and say hello"*, *"What do you see?"*, *"Look to your left"*, *"Turn your eyes green and bow"*. Tap the head to trigger a reaction.
 6. **Stop.** Ctrl-C in the terminal shuts the host down; `REST_ON_EXIT=true` also puts the robot to rest. The EMERGENCY STOP button (also the Escape key, or `POST /command/emergency_stop`) stops all animations, speech and motion and puts the robot to rest (motors off). The robot then refuses every move until you press *Wake up* or *Prepare*.
+
+## What Pepper does without the model (reactive layer)
+
+- **Control phrases** are answered locally in milliseconds, typed or spoken, even while a reply is in progress: *stop* / *halt* / *freeze* / *wait* (stops moving and talking, cancels the rest of the turn and the model call, motors stay on), *emergency stop* / *e-stop* / *kill the motors* (full stop and rest), *be quiet* / *shh* (finishes the turn silently), *wake up*, *rest* / *go to sleep*, *look at me*, *look ahead*. "Please" and "now" around them are fine. The list is in `src/ai/intents.py`. Note that the robot microphone is muted while Pepper talks, so a *spoken* "stop" only lands between sentences of a reply or between turns; the UI's Stop / Hush buttons, the Escape key and hold-to-talk work at any time.
+- **Eye colour** shows the state: blue listening, purple thinking, white speaking; afterwards the eyes go back to whatever colour was last chosen (`LED_STATE_SIGNALS`).
+- **Fillers**: if the model has said nothing after two seconds, Pepper says "Hmm." or "Let me think." so the pause does not feel dead (`BACKCHANNEL_AFTER`).
+- **Gaze**: with `PEPPER_AWARENESS=true` (or after "look at me") the head follows people, sounds and touches through NAOqi's own ALBasicAwareness; it pauses whenever the model moves the head and resumes right afterwards, which is why it is off by default until the live session shows how that feels.
+
+## Voice input
+
+Typing always works. To let people *talk* to Pepper:
+
+1. Install a recogniser on the host (CPU only, no extra API key):
+   ```bash
+   pip install -r requirements-voice.txt        # sherpa-onnx + numpy
+   wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+   tar xf sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+   ```
+   and in `.env`: `STT_BACKEND=sherpa` and `STT_MODEL=/path/to/sherpa-onnx-streaming-zipformer-en-2023-06-26`.
+   Alternative: `pip install faster-whisper`, `STT_BACKEND=whisper`, `STT_MODEL=base` (or `small` for better accuracy; both run per utterance, so replies start a little later).
+2. **Hold-to-talk in the browser** now works: press and hold the microphone button, speak, release. The browser needs a secure context for the microphone, so open the UI at `http://localhost:8000` on the machine running `main.py` (or put it behind https); on a plain `http://<ip>:8000` page the button explains why it cannot record.
+3. **Robot microphone**: set `VOICE_INPUT=true` and the host streams Pepper's front microphone from the bridge (`/ws/audio`), cuts it into utterances and answers what people say near the robot. The bridge mutes the stream while Pepper talks, so Pepper does not answer itself. Check `curl http://10.0.100.100:8888/audio/stream` to see frames flowing (`streaming`, `frames`, `dropped`).
+4. Control phrases ("stop", "be quiet") work by voice too and never wait for the model.
+
+Recognition with accents, dialects and noise is the weak point of every Pepper study; `VOICE_RECORD_DIR=recordings` saves each utterance as a WAV file so the recogniser and the thresholds in `src/audio/endpointer.py` can be tuned on real data. `GET /voice/status` shows the backend, counters and the last transcript.
 
 ## What the AI can do
 
@@ -89,7 +115,8 @@ NAOqi 2.5 services (ALMotion, ALTextToSpeech, ALAnimatedSpeech, ALVideoDevice, A
 ## Running tests
 
 ```bash
-pytest tests/ -q          # ~200 tests, no robot; includes starting the real bridge with a fake NAOqi
+pytest tests/ -q          # ~380 tests, no robot; includes starting the real bridge with a fake NAOqi
+PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py   # the bridge under the robot's Python 2.7 + Tornado 3.1.1
 ```
 
 ## Troubleshooting
@@ -111,6 +138,14 @@ pytest tests/ -q          # ~200 tests, no robot; includes starting the real bri
 **"Phantom tool call" warning in the log** — the model wrote a tool call as text; the host retries automatically. If it happens often, try `AI_EFFORT=medium`.
 
 **Tablet subtitles off** — the first tablet error disables them for the session (see the log); check that ALTabletService works and that the tablet can reach `http://198.18.0.1:8888/tablet/page`.
+
+**Microphone button greyed out** — the host has `STT_BACKEND=none`; set a backend (see *Voice input*). If it is enabled but the browser refuses, the page is not a secure context: use `http://localhost:8000` or https.
+
+**Pepper hears itself / answers its own sentences** — the bridge should drop frames while speaking (`dropped` grows in `GET /audio/stream` during `/speak`). If it does not, the `ALTextToSpeech/Status` subscription failed (see `bridge.log`) or the tail after speech (`AUDIO_MUTE_TAIL`, 0.4 s) is too short for the room.
+
+**Voice picks up nothing** — `GET /voice/status` shows `source_connected`; `GET /audio/stream` on the bridge shows `streaming: true` and `frames` increasing. For the whisper backend the energy detector needs speech clearly above the room noise (`EnergyVAD` in `src/audio/endpointer.py`); the sherpa backend does its own endpointing and copes better with quiet rooms.
+
+**Head keeps turning away while talking** — that is ALBasicAwareness following sounds; `PEPPER_AWARENESS=false`, or `POST /awareness` with `"stimuli": ["People"]` to ignore sounds.
 
 ## Safety
 

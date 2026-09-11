@@ -113,6 +113,7 @@ class PepperRobot:
         self.direct_commands_running = 0  # UI/API commands in flight (event reactions wait)
         self.photo_resolution = 2  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
         self.last_prepare: Dict[str, Any] = {}
+        self.last_eye_color: Optional[str] = None  # colour chosen by the model/user (restored after state signals)
         self.logger = logger.bind(module="PepperRobot")
         self._event_callbacks: List[Callable[[str, Dict[str, Any]], Coroutine]] = []
         self._state_task: Optional[asyncio.Task] = None
@@ -276,7 +277,9 @@ class PepperRobot:
         return await self.bridge.play_animation(name)
 
     async def set_eye_color(self, color: str) -> Dict[str, Any]:
-        return await self.bridge.set_eye_leds(color=color)
+        result = await self.bridge.set_eye_leds(color=color)
+        self.last_eye_color = color
+        return result
 
     async def set_chest_color(self, color: str) -> Dict[str, Any]:
         return await self.bridge.set_chest_leds(color=color)
@@ -284,8 +287,16 @@ class PepperRobot:
     async def set_volume(self, level: int) -> Dict[str, Any]:
         return await self.bridge.set_volume(level)
 
-    async def set_awareness(self, enabled: bool) -> Dict[str, Any]:
-        return await self.bridge.set_awareness(enabled)
+    async def set_awareness(
+        self,
+        enabled: bool,
+        tracking_mode: Optional[str] = None,
+        engagement_mode: Optional[str] = None,
+        stimuli: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return await self.bridge.set_awareness(
+            enabled, tracking_mode=tracking_mode, engagement_mode=engagement_mode, stimuli=stimuli
+        )
 
     async def set_autonomous_life(self, state: str) -> Dict[str, Any]:
         return await self.bridge.set_autonomous_life(state)

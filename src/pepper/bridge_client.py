@@ -180,8 +180,22 @@ class BridgeClient:
             body["awareness"] = awareness
         return await self._post("/prepare", json=body, timeout=self.action_timeout)
 
-    async def set_awareness(self, enabled: bool) -> Dict[str, Any]:
-        return await self._post("/awareness", json={"enabled": enabled})
+    async def set_awareness(
+        self,
+        enabled: bool,
+        tracking_mode: Optional[str] = None,
+        engagement_mode: Optional[str] = None,
+        stimuli: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """ALBasicAwareness on/off; tracking_mode Head|BodyRotation|WholeBody|MoveContextually (see bridge docs)."""
+        body: Dict[str, Any] = {"enabled": enabled}
+        if tracking_mode:
+            body["tracking_mode"] = tracking_mode
+        if engagement_mode:
+            body["engagement_mode"] = engagement_mode
+        if stimuli is not None:
+            body["stimuli"] = list(stimuli)
+        return await self._post("/awareness", json=body)
 
     async def set_autonomous_life(self, state: str) -> Dict[str, Any]:
         return await self._post("/autonomous_life", json={"state": state}, timeout=self.action_timeout)
@@ -195,6 +209,10 @@ class BridgeClient:
 
     async def record_audio(self, duration: float = 3.0) -> Dict[str, Any]:
         return await self._post("/audio/record", json={"duration": duration}, timeout=self.action_timeout)
+
+    async def audio_stream_info(self) -> Dict[str, Any]:
+        """State of the microphone stream served on /ws/audio (streaming, clients, frames, dropped)."""
+        return await self._get("/audio/stream")
 
     # ------------------------------------------------------------------
     # LEDs / Animation

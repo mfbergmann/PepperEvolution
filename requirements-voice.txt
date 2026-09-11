@@ -1,0 +1,14 @@
+# Optional: voice input on the host (STT_BACKEND=sherpa or whisper).
+#   pip install -r requirements-voice.txt
+# Both backends run on the CPU; no GPU and no extra API key needed.
+
+numpy>=1.26
+
+# Streaming recogniser with built-in endpointing (recommended: STT_BACKEND=sherpa).
+# Models are downloaded separately, e.g.
+#   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+# then STT_MODEL=/path/to/sherpa-onnx-streaming-zipformer-en-2023-06-26
+sherpa-onnx>=1.13
+
+# Per-utterance recogniser (STT_BACKEND=whisper, STT_MODEL=base|small|...); models download on first use.
+# faster-whisper>=1.2

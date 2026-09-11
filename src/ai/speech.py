@@ -10,6 +10,7 @@ waits for silence.
 
 import asyncio
 import re
+import time
 from typing import Any, Awaitable, Callable, List, Optional, Set
 
 from loguru import logger
@@ -121,6 +122,9 @@ class SpeechStreamer:
         self.spoken: List[str] = []
         self.errors: List[str] = []
         self.suppressed: List[str] = []
+        self.fillers: List[str] = []  # backchannel phrases said while waiting for the model
+        self.first_enqueued_at: Optional[float] = None  # when the first real sentence was queued
+        self.first_text_at: Optional[float] = None  # when the first text delta arrived from the model
         self.suppress_repeats = False  # set after a phantom tool call so the retry does not re-say its preamble
         self._seen: Set[str] = set()
         self._queue: "asyncio.Queue[Optional[str]]" = asyncio.Queue()
@@ -128,13 +132,23 @@ class SpeechStreamer:
         self.logger = logger.bind(module="SpeechStreamer")
 
     async def on_text(self, delta: str):
+        if self.first_text_at is None and delta.strip():
+            self.first_text_at = time.monotonic()
         for sentence in self.splitter.feed(delta):
             await self._enqueue(sentence)
 
-    async def _enqueue(self, sentence: str):
+    async def say_filler(self, text: str):
+        """Queue a short backchannel phrase (does not count as the reply's first sentence)."""
+        if self.first_text_at is None and self.first_enqueued_at is None and self.enabled:
+            self.fillers.append(text)
+            await self._enqueue(text, filler=True)
+
+    async def _enqueue(self, sentence: str, filler: bool = False):
         cleaned = clean_for_speech(sentence)
         if not cleaned:
             return
+        if not filler and self.first_enqueued_at is None:
+            self.first_enqueued_at = time.monotonic()
         if looks_like_tool_xml(cleaned):
             self.logger.warning(f"Suppressed tool-call XML from speech: {cleaned[:80]!r}")
             self.suppressed.append(cleaned)

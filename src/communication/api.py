@@ -10,6 +10,8 @@ One process, one port:
 - GET  /photo/latest        last photo taken (image/jpeg)
 - POST /photo               take a photo now
 - GET/DELETE /conversation/history
+- GET  /voice/status        speech-to-text state
+- POST /voice/utterance     push-to-talk: raw 16-bit PCM body -> transcript -> AI turn
 - WS   /ws                  chat + live robot events (see WebSocketHub)
 """
 
@@ -22,16 +24,18 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 
 from ..ai import TOOLS, AIManager
+from ..audio import VoiceInput
 from ..pepper import PepperRobot
 
 DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+MAX_UTTERANCE_SECONDS = 60  # push-to-talk body cap (60 s of 16 kHz PCM is 1.9 MB)
 
 
 class ChatRequest(BaseModel):
@@ -84,6 +88,9 @@ class WebSocketHub:
     async def on_partial(self, sentence: str):
         await self.broadcast({"type": "chat_partial", "text": sentence})
 
+    async def on_transcript(self, payload: Dict[str, Any]):
+        await self.broadcast({"type": "transcript", **payload})
+
     async def on_response(self, result: Dict[str, Any]):
         await self.broadcast({"type": "chat_response", **result})
 
@@ -122,12 +129,17 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
             awareness=p.get("awareness"),
         ),
         "autonomous_life": lambda: bridge.set_autonomous_life(p.get("state", "solitary")),
-        "awareness": lambda: bridge.set_awareness(bool(p.get("enabled", True))),
+        "awareness": lambda: bridge.set_awareness(
+            bool(p.get("enabled", True)),
+            tracking_mode=p.get("tracking_mode"),
+            engagement_mode=p.get("engagement_mode"),
+            stimuli=p.get("stimuli"),
+        ),
         "stop": lambda: bridge.stop(),
         "emergency_stop": lambda: bridge.emergency_stop(),
         "photo": photo,
         "sensors": lambda: bridge.get_sensors(),
-        "eye_color": lambda: bridge.set_eye_leds(color=p.get("color", "white")),
+        "eye_color": lambda: robot.set_eye_color(p.get("color", "white")),
         "chest_color": lambda: bridge.set_chest_leds(color=p.get("color", "white")),
         "animation": lambda: bridge.play_animation(p.get("name", "")),
         "animations": lambda: bridge.list_animations(),
@@ -156,13 +168,15 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
     return response
 
 
-def create_app(ai_manager: AIManager, robot: PepperRobot, web_dir: Optional[Path] = None) -> FastAPI:
+def create_app(
+    ai_manager: AIManager, robot: PepperRobot, web_dir: Optional[Path] = None, voice: Optional[VoiceInput] = None
+) -> FastAPI:
     web_dir = web_dir or DEFAULT_WEB_DIR
     hub = WebSocketHub()
     app = FastAPI(
         title="PepperEvolution API",
         description="Cloud AI control system for Pepper robot",
-        version="2.1.0",
+        version="2.2.0",
     )
     app.state.hub = hub
     app.add_middleware(
@@ -172,13 +186,15 @@ def create_app(ai_manager: AIManager, robot: PepperRobot, web_dir: Optional[Path
     robot.on_event(hub.on_robot_event)
     ai_manager.on_partial(hub.on_partial)
     ai_manager.on_response(hub.on_response)
+    if voice is not None:
+        voice.on_transcript(hub.on_transcript)
 
     @app.get("/")
     async def root():
         index = web_dir / "index.html"
         if index.exists():
             return FileResponse(str(index), media_type="text/html")
-        return {"name": "PepperEvolution", "version": "2.1.0", "status": "running"}
+        return {"name": "PepperEvolution", "version": "2.2.0", "status": "running"}
 
     @app.get("/health")
     async def health():
@@ -242,6 +258,39 @@ def create_app(ai_manager: AIManager, robot: PepperRobot, web_dir: Optional[Path
     async def clear_history():
         ai_manager.clear_conversation_history()
         return {"success": True}
+
+    @app.get("/voice/status")
+    async def voice_status():
+        if voice is None:
+            return {"enabled": False, "reason": "no speech-to-text backend configured (set STT_BACKEND)"}
+        return voice.status()
+
+    @app.post("/voice/utterance")
+    async def voice_utterance(
+        request: Request,
+        sample_rate: int = Query(16000, ge=8000, le=48000),
+        client_id: Optional[str] = None,
+    ):
+        """Push-to-talk: the body is raw 16-bit little-endian mono PCM at ``sample_rate`` (at most 60 s)."""
+        if voice is None:
+            raise HTTPException(status_code=503, detail="voice input is not configured (set STT_BACKEND)")
+        max_bytes = sample_rate * 2 * MAX_UTTERANCE_SECONDS
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"utterance longer than {MAX_UTTERANCE_SECONDS} s")
+        pcm = await request.body()
+        if len(pcm) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"utterance longer than {MAX_UTTERANCE_SECONDS} s")
+        if len(pcm) < sample_rate // 10 * 2:  # under 100 ms: a slipped button, not speech
+            raise HTTPException(status_code=400, detail="utterance too short")
+        try:
+            result = await voice.handle_utterance(pcm, sample_rate=sample_rate, client_id=client_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.bind(module="API").exception("voice utterance failed")
+            raise HTTPException(status_code=500, detail=str(exc))
+        if result.get("ignored") == "error":
+            raise HTTPException(status_code=502, detail=f"speech recognition failed: {result.get('error')}")
+        return result
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
@@ -312,13 +361,21 @@ class _Server(uvicorn.Server):
 class APIServer:
     """Runs the FastAPI app with uvicorn (handles SIGINT/SIGTERM for a clean shutdown)."""
 
-    def __init__(self, host: str, port: int, ai_manager: AIManager, robot: PepperRobot, web_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        ai_manager: AIManager,
+        robot: PepperRobot,
+        web_dir: Optional[Path] = None,
+        voice: Optional[VoiceInput] = None,
+    ):
         self.host = host
         self.port = port
         self.ai_manager = ai_manager
         self.robot = robot
         self.logger = logger.bind(module="APIServer")
-        self.app = create_app(ai_manager, robot, web_dir)
+        self.app = create_app(ai_manager, robot, web_dir, voice=voice)
         self.server: Optional[uvicorn.Server] = None
 
     @property

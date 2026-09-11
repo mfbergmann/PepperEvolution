@@ -95,7 +95,7 @@ class FakeBridgeClient:
     # -- endpoints ------------------------------------------------------------
 
     async def health(self) -> Dict[str, Any]:
-        return {"ok": True, "bridge": "fake_bridge", "version": "2.1.0", "naoqi": "fake", "robot_name": "FakePepper"}
+        return {"ok": True, "bridge": "fake_bridge", "version": "2.2.0", "naoqi": "fake", "robot_name": "FakePepper"}
 
     async def status(self) -> Dict[str, Any]:
         return {"ok": True, "robot_name": "FakePepper", "naoqi_version": "fake", **self.state}
@@ -190,9 +190,21 @@ class FakeBridgeClient:
             "prepare", autonomous_life=autonomous_life, wake_up=wake_up, posture=posture, awareness=awareness
         )
 
-    async def set_awareness(self, enabled: bool) -> Dict[str, Any]:
+    async def set_awareness(
+        self,
+        enabled: bool,
+        tracking_mode: Optional[str] = None,
+        engagement_mode: Optional[str] = None,
+        stimuli: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         self.state["awareness"] = bool(enabled)
-        return self._record("set_awareness", enabled=bool(enabled))
+        return self._record(
+            "set_awareness",
+            enabled=bool(enabled),
+            tracking_mode=tracking_mode,
+            engagement_mode=engagement_mode,
+            stimuli=list(stimuli) if stimuli is not None else None,
+        )
 
     async def set_autonomous_life(self, state: str) -> Dict[str, Any]:
         self.state["autonomous_life"] = state
@@ -205,6 +217,9 @@ class FakeBridgeClient:
     async def record_audio(self, duration: float = 3.0) -> Dict[str, Any]:
         self._record("record_audio", duration=duration)
         return {"ok": True, "audio": "", "format": "wav", "duration": duration}
+
+    async def audio_stream_info(self) -> Dict[str, Any]:
+        return {"ok": True, "streaming": False, "clients": 0, "sample_rate": 16000, "channels": 1, "muted": False}
 
     async def set_eye_leds(
         self, color: Optional[str] = None, r: float = 0, g: float = 0, b: float = 0, duration: float = 0.5

@@ -9,6 +9,8 @@ second so the sensor poller has something to report.
 """
 
 import logging
+import math
+import struct
 import threading
 import time
 
@@ -32,6 +34,66 @@ _MEMORY = {
 
 _STATE = {"language": "English", "awake": False, "life": "solitary", "volume": 0.5, "awareness": True}
 _SUBSCRIBERS = {}  # service -> set of subscriber names
+_SERVICES = {}  # name -> object registered with Session.registerService
+_AUDIO_PUMPS = {}  # subscriber name -> _AudioPump thread (ALAudioDevice.subscribe)
+
+AUDIO_FRAME_SAMPLES = 2730  # ~170 ms at 16 kHz, like the robot
+AUDIO_FRAME_PERIOD = 0.17
+
+
+def _tone_frame(n, phase):
+    """n samples of a 440 Hz tone as 16-bit little-endian PCM (what ALAudioDevice hands to processRemote)."""
+    samples = [int(3000 * math.sin(2 * math.pi * 440 * (phase + i) / 16000.0)) for i in range(n)]
+    return struct.pack("<%dh" % n, *samples)
+
+
+class _AudioPump(object):
+    """Calls the registered service's processRemote every 170 ms, like ALAudioDevice does."""
+
+    def __init__(self, subscriber):
+        self.subscriber = subscriber
+        self.running = True
+        self.phase = 0
+        self.thread = threading.Thread(target=self._run)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def _run(self):
+        while self.running:
+            time.sleep(AUDIO_FRAME_PERIOD)
+            target = _SERVICES.get(self.subscriber)
+            if target is None or not self.running:
+                continue
+            now = time.time()
+            stamp = [int(now), int((now - int(now)) * 1e6)]
+            try:
+                target.processRemote(1, AUDIO_FRAME_SAMPLES, stamp, _tone_frame(AUDIO_FRAME_SAMPLES, self.phase))
+            except Exception as exc:  # the real ALAudioDevice would just drop the frame
+                LOG.warning("processRemote failed: %s", exc)
+            self.phase += AUDIO_FRAME_SAMPLES
+
+    def stop(self):
+        self.running = False
+
+
+class _Signal(object):
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+        return len(self.callbacks)
+
+    def disconnect(self, link_id):
+        return True
+
+
+class _Subscriber(object):
+    """What ALMemory.subscriber(key) returns: an object with a ``signal``."""
+
+    def __init__(self, key):
+        self.key = key
+        self.signal = _Signal()
 
 
 def _toggle_touch():
@@ -113,10 +175,19 @@ class _Service(object):
             return None
         if method == "subscribe":
             _SUBSCRIBERS.setdefault(self.name, set()).add(args[0])
+            if self.name == "ALAudioDevice" and args[0] not in _AUDIO_PUMPS:
+                _AUDIO_PUMPS[args[0]] = _AudioPump(args[0])
             return None
         if method == "unsubscribe":
             _SUBSCRIBERS.setdefault(self.name, set()).discard(args[0])
+            pump = _AUDIO_PUMPS.pop(args[0], None)
+            if pump is not None:
+                pump.stop()
             return None
+        if method == "setClientPreferences":
+            return None
+        if method == "subscriber":
+            return _Subscriber(args[0])
         if method == "getSubscribersInfo":
             return [[n, 100, 0.0] for n in sorted(_SUBSCRIBERS.get(self.name, ()))]
         if method == "stopAllBehaviors":
@@ -150,6 +221,10 @@ class Session(object):
     def connect(self, url):
         LOG.info("fake qi session connect %s", url)
         self._connected = True
+        for pump in _AUDIO_PUMPS.values():  # services registered by an earlier session are gone
+            pump.stop()
+        _AUDIO_PUMPS.clear()
+        _SERVICES.clear()
 
     def isConnected(self):
         return self._connected
@@ -158,3 +233,17 @@ class Session(object):
         if name not in self._services:
             self._services[name] = _Service(name)
         return self._services[name]
+
+    def registerService(self, name, obj):
+        if name in _SERVICES:
+            raise RuntimeError("Service %s already registered" % name)
+        _SERVICES[name] = obj
+        LOG.info("fake qi registerService %s", name)
+        return len(_SERVICES)
+
+    def unregisterService(self, service_id):
+        for name, obj in list(_SERVICES.items()):
+            if service_id == list(_SERVICES).index(name) + 1:
+                del _SERVICES[name]
+                return None
+        return None

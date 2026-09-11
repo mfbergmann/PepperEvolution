@@ -29,6 +29,7 @@ class FakeService:
         self.name = name
         self.memory = memory
         self.calls = []
+        self.subscribers = []
         self.language = "English"
         self.awake = True
         self.life_state = "solitary"
@@ -45,6 +46,10 @@ class FakeService:
             return self.memory[args[0]]
         if method == "getListData":
             return [self.memory.get(k) for k in args[0]]
+        if method == "subscriber":
+            sub = FakeSubscriber(args[0])
+            self.subscribers.append(sub)
+            return sub
         if method == "getLanguage":
             return self.language
         if method == "setLanguage":
@@ -89,8 +94,26 @@ class FakeService:
         return None
 
 
+class FakeSubscriber:
+    """What ALMemory.subscriber(key) returns."""
+
+    def __init__(self, key):
+        self.key = key
+        self.callbacks = []
+        self.signal = self
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+        return len(self.callbacks)
+
+    def fire(self, value):
+        for cb in self.callbacks:
+            cb(value)
+
+
 class FakeSession:
     def __init__(self):
+        self.registered = {}
         self.memory = {
             "Device/SubDeviceList/Head/Touch/Front/Sensor/Value": 1.0,
             "Device/SubDeviceList/Head/Touch/Middle/Sensor/Value": 0.0,
@@ -119,6 +142,17 @@ class FakeSession:
         if name not in self.services:
             self.services[name] = FakeService(name, self.memory)
         return self.services[name]
+
+    def registerService(self, name, obj):
+        if name in self.registered:
+            raise RuntimeError("Service %s already registered" % name)
+        self.registered[name] = obj
+        return len(self.registered)
+
+    def unregisterService(self, service_id):
+        for name in list(self.registered):
+            if list(self.registered).index(name) + 1 == service_id:
+                del self.registered[name]
 
 
 @pytest.fixture(scope="module")
@@ -475,3 +509,270 @@ class TestApplication:
 
     def test_tablet_page_is_html(self, bridge):
         assert "<html" in bridge.TABLET_PAGE and "/tablet/state" in bridge.TABLET_PAGE
+
+
+# ---------------------------------------------------------------------------
+# Awareness options
+# ---------------------------------------------------------------------------
+
+
+class TestAwareness:
+    def test_head_tracking_and_stimuli(self, robot):
+        result = robot.set_awareness(True, tracking_mode="Head", stimuli=["People", "Sound"])
+        ba = calls(robot, "ALBasicAwareness")
+        assert ("setTrackingMode", ("Head",)) in ba
+        assert ("setStimulusDetectionEnabled", ("People", True)) in ba
+        assert ("setStimulusDetectionEnabled", ("Movement", False)) in ba
+        assert ba[-1] == ("setEnabled", (True,))
+        assert result == {"enabled": True, "tracking_mode": "Head", "stimuli": ["People", "Sound"]}
+
+    def test_stimuli_from_a_query_string(self, robot):
+        assert robot.set_awareness(True, stimuli="People, Touch")["stimuli"] == ["People", "Touch"]
+        assert robot.set_awareness(True, stimuli="People,Sound")["stimuli"] == ["People", "Sound"]
+        assert "stimuli" not in robot.set_awareness(True, stimuli=[])  # empty list: configuration untouched
+
+    def test_engagement_mode(self, robot):
+        result = robot.set_awareness(True, engagement_mode="SemiEngaged")
+        assert result["engagement_mode"] == "SemiEngaged"
+        assert ("setEngagementMode", ("SemiEngaged",)) in calls(robot, "ALBasicAwareness")
+
+    def test_rejects_unknown_options(self, robot):
+        with pytest.raises(ValueError):
+            robot.set_awareness(True, tracking_mode="Spin")
+        with pytest.raises(ValueError):
+            robot.set_awareness(True, engagement_mode="Clingy")
+        with pytest.raises(ValueError):
+            robot.set_awareness(True, stimuli=["People", "Ghosts"])
+        assert not any(c[0] == "setEnabled" for c in calls(robot, "ALBasicAwareness"))
+
+    def test_off_ignores_options(self, robot):
+        assert robot.set_awareness(False, tracking_mode="Head", stimuli=["People"]) == {"enabled": False}
+        ba = calls(robot, "ALBasicAwareness")
+        assert ba == [("setEnabled", (False,))]
+
+    def test_prepare_enables_head_tracking_only(self, robot):
+        result = robot.prepare("", False, None, True)
+        assert result["awareness"] == {
+            "enabled": True,
+            "tracking_mode": "Head",
+            "stimuli": ["People", "Sound", "Touch"],
+        }
+        assert ("setStimulusDetectionEnabled", ("Movement", False)) in calls(robot, "ALBasicAwareness")
+
+
+# ---------------------------------------------------------------------------
+# Microphone streaming
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def audio(bridge, robot):
+    bridge.AudioWebSocket.clients.clear()
+    tap = bridge.AudioTap(robot.session)
+    tap.register(robot.session._session)
+    yield tap
+    bridge.AudioWebSocket.clients.clear()
+    bridge.AUDIO.subscribed = False  # never leak a started global tap into the next test
+    bridge.AUDIO.host_muted = False
+
+
+class FakeClient:
+    """Stands in for a connected AudioWebSocket (only what broadcast/close_all touch)."""
+
+    def __init__(self, slow=False):
+        self.slow = slow
+        self.behind = 0
+        self.frames = []
+        self.messages = []
+        self.closed = False
+
+    def _still_writing(self):
+        return self.slow
+
+    def write_message(self, data, binary=False):
+        self.frames.append(data)
+
+    def send_json(self, payload):
+        self.messages.append(payload)
+
+    def close(self):
+        self.closed = True
+
+
+def connect_client(bridge, slow=False):
+    client = FakeClient(slow=slow)
+    bridge.AudioWebSocket.clients.add(client)
+    return client
+
+
+@pytest.fixture
+def sent(bridge, monkeypatch):
+    """Capture what the tap hands to the IOLoop instead of needing a running loop."""
+    frames = []
+
+    class Loop:
+        def add_callback(self, fn, *args):
+            frames.append((fn, args))
+
+    monkeypatch.setattr(bridge, "IOLOOP", Loop())
+    return frames
+
+
+class TestAudioTap:
+    def test_registers_a_service_and_the_tts_status_event(self, robot, audio):
+        session = robot.session._session
+        assert audio.service_id is not None
+        assert "PepperBridgeAudio" in session.registered
+        callback = session.registered["PepperBridgeAudio"]
+        assert hasattr(callback, "processRemote") and not hasattr(callback, "start")  # only the callback is exposed
+        memory = robot.session.service("ALMemory")
+        assert memory.subscribers[0].key == "ALTextToSpeech/Status"
+
+    def test_start_subscribes_front_mic_at_16k(self, bridge, robot, audio):
+        connect_client(bridge)
+        info = audio.start()
+        device = calls(robot, "ALAudioDevice")
+        assert ("setClientPreferences", ("PepperBridgeAudio", 16000, 3, 0)) in device
+        assert device[-1] == ("subscribe", ("PepperBridgeAudio",))
+        assert info["streaming"] is True and info["sample_rate"] == 16000 and info["format"] == "pcm_s16le"
+        audio.start()  # idempotent
+        assert device.count(("subscribe", ("PepperBridgeAudio",))) == 1
+
+    def test_start_requires_a_registered_service(self, bridge, robot):
+        bridge.AudioWebSocket.clients.clear()
+        connect_client(bridge)
+        tap = bridge.AudioTap(robot.session)  # never registered (NAOqi not connected)
+        with pytest.raises(RuntimeError):
+            tap.start()
+
+    def test_start_without_a_client_does_nothing(self, robot, audio):
+        assert audio.start()["streaming"] is False  # the client left while start() was queued
+        assert not any(c[0] == "subscribe" for c in calls(robot, "ALAudioDevice"))
+
+    def test_register_restarts_capture_for_connected_clients(self, bridge, robot, audio, monkeypatch):
+        monkeypatch.setattr(bridge, "_run_in_thread", lambda fn, *a: fn(*a))
+        monkeypatch.setattr(bridge, "AUDIO", audio)  # start_capture works on the module's tap
+        connect_client(bridge)
+        audio.host_muted = True
+        audio.tts_active = True
+        audio.speaking = 1
+        session = robot.session._session
+        session.registered.clear()  # NAOqi restarted: our service is gone
+        audio.register(session)
+        assert audio.subscribed is True and "PepperBridgeAudio" in session.registered
+        assert audio.host_muted is False and audio.tts_active is False and audio.speaking == 0
+
+    def test_failed_start_disconnects_clients_so_they_retry(self, bridge, robot, monkeypatch):
+        bridge.AudioWebSocket.clients.clear()
+        client = connect_client(bridge)
+        tap = bridge.AudioTap(robot.session)  # not registered -> start() raises
+        monkeypatch.setattr(bridge, "AUDIO", tap)
+        called = []
+        monkeypatch.setattr(
+            bridge, "IOLOOP", type("Loop", (), {"add_callback": lambda self, fn, *a: called.append((fn, a))})()
+        )
+        bridge.AudioWebSocket.start_capture()
+        fn, args = called[0]
+        fn(*args)
+        assert client.closed and client.messages[-1]["type"] == "error"
+        assert not bridge.AudioWebSocket.clients
+
+    def test_stop_keeps_capture_while_a_client_is_connected(self, bridge, robot, audio):
+        connect_client(bridge)
+        audio.start()
+        assert audio.stop()["streaming"] is True
+        bridge.AudioWebSocket.clients.clear()
+        assert audio.stop()["streaming"] is False
+        assert calls(robot, "ALAudioDevice")[-1] == ("unsubscribe", ("PepperBridgeAudio",))
+        audio.stop()  # idempotent
+        assert calls(robot, "ALAudioDevice").count(("unsubscribe", ("PepperBridgeAudio",))) == 1
+
+    def test_frames_are_forwarded_only_while_streaming_and_not_muted(self, bridge, audio, sent):
+        frame = b"\x01\x00" * 4
+        connect_client(bridge)
+        audio.on_buffer(1, 4, [0, 0], frame)  # not subscribed yet
+        assert sent == [] and audio.frames == 1
+        audio.start()
+        audio.on_buffer(1, 4, [0, 0], bytearray(frame))
+        assert sent == [(bridge.AudioWebSocket.broadcast, (frame,))]
+        audio.speaking_begin()
+        audio.on_buffer(1, 4, [0, 0], frame)
+        assert len(sent) == 1 and audio.dropped == 1
+        audio.speaking_end()  # still muted for the tail
+        audio.on_buffer(1, 4, [0, 0], frame)
+        assert len(sent) == 1 and audio.dropped == 2
+        audio.muted_until = 0.0
+        audio.on_buffer(1, 4, [0, 0], frame)
+        assert len(sent) == 2
+
+    def test_tts_status_events_mute_capture(self, robot, audio):
+        status = robot.session.service("ALMemory").subscribers[0]
+        status.fire([3, "started"])
+        assert audio.muted() is True
+        status.fire([3, "done"])
+        audio.muted_until = 0.0
+        assert audio.muted() is False
+        status.fire("garbage")  # ignored
+        status.fire([4, "thrown"])
+        assert audio.tts_active is False
+
+    def test_host_mute(self, audio):
+        audio.host_muted = True
+        assert audio.muted() is True
+        audio.host_muted = False
+        audio.muted_until = 0.0
+        assert audio.muted() is False
+
+    def test_a_lost_tts_done_event_stops_muting_eventually(self, bridge, audio):
+        audio._on_tts_status([1, "started"])
+        assert audio.muted() is True
+        audio.tts_started_at -= bridge.TTS_EVENT_TIMEOUT + 1
+        audio.muted_until = 0.0
+        assert audio.muted() is False and audio.tts_active is False
+
+    def test_broadcast_drops_clients_that_stop_reading(self, bridge):
+        bridge.AudioWebSocket.clients.clear()
+        fast, slow = connect_client(bridge), connect_client(bridge, slow=True)
+        for _ in range(bridge.AUDIO_MAX_BEHIND + 1):
+            bridge.AudioWebSocket.broadcast(b"\x00\x00")
+        assert len(fast.frames) == bridge.AUDIO_MAX_BEHIND + 1 and fast.behind == 0
+        assert len(slow.frames) == bridge.AUDIO_MAX_BEHIND and slow.closed
+        assert bridge.AudioWebSocket.clients == {fast}
+
+    def test_close_all_reports_the_error(self, bridge):
+        bridge.AudioWebSocket.clients.clear()
+        client = connect_client(bridge)
+        bridge.AudioWebSocket.close_all("NAOqi not connected")
+        assert client.closed and client.messages == [{"type": "error", "error": "NAOqi not connected"}]
+        assert not bridge.AudioWebSocket.clients
+
+    def test_speak_mutes_capture_while_talking(self, bridge, robot):
+        anim = robot.session.service("ALAnimatedSpeech")
+        muted_during = []
+        original = anim._respond
+
+        def respond(method, args):
+            if method == "say":
+                muted_during.append(bridge.AUDIO.muted())
+            return original(method, args)
+
+        anim._respond = respond
+        bridge.AUDIO.muted_until = 0.0
+        assert bridge.AUDIO.muted() is False
+        robot.speak("hello there", animated=True)
+        assert muted_during == [True]
+        assert bridge.AUDIO.speaking == 0 and bridge.AUDIO.muted() is True  # tail after speech
+        bridge.AUDIO.muted_until = 0.0
+
+    def test_unregister_drops_the_service(self, bridge, robot, audio):
+        connect_client(bridge)
+        audio.start()
+        audio.unregister()
+        assert audio.service_id is None
+        assert "PepperBridgeAudio" not in robot.session._session.registered
+        assert audio.subscribed is False
+
+    def test_health_reports_the_stream(self, robot, audio, bridge):
+        health = robot.health()
+        assert health["audio"]["streaming"] is False and health["audio"]["clients"] == 0
+        assert health["version"] == bridge.BRIDGE_VERSION

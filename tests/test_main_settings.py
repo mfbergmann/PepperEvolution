@@ -35,6 +35,64 @@ class TestSettings:
         assert s.speak_responses is True and s.fake_bridge is False
         assert s.api_port == 8000
 
+    def test_reactive_and_voice_defaults(self, monkeypatch):
+        for key in (
+            "STT_BACKEND",
+            "STT_MODEL",
+            "VOICE_INPUT",
+            "VOICE_RECORD_DIR",
+            "LED_STATE_SIGNALS",
+            "BACKCHANNEL_AFTER",
+            "PEPPER_AWARENESS",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        s = main.Settings.from_env()
+        assert s.stt_backend == "none" and s.stt_model == "" and s.stt_language == "en"
+        assert s.voice_input is False and s.voice_record_dir is None
+        assert s.led_state_signals is True and s.backchannel_after == 2.0
+        assert s.awareness_on_connect is False
+
+    def test_awareness_values(self, monkeypatch):
+        assert settings_with(monkeypatch, PEPPER_AWARENESS="true").awareness_on_connect is True
+        assert settings_with(monkeypatch, PEPPER_AWARENESS="off").awareness_on_connect is False
+        assert settings_with(monkeypatch, PEPPER_AWARENESS="").awareness_on_connect is None
+        with pytest.raises(ValueError):
+            settings_with(monkeypatch, PEPPER_AWARENESS="Head")
+        assert settings_with(monkeypatch, PEPPER_AWARENESS="true", BACKCHANNEL_AFTER="").backchannel_after == 2.0
+
+    def test_reactive_and_voice_settings(self, monkeypatch):
+        s = settings_with(
+            monkeypatch,
+            STT_BACKEND="Whisper",
+            STT_MODEL="small",
+            VOICE_INPUT="true",
+            VOICE_RECORD_DIR="/tmp/utt",
+            LED_STATE_SIGNALS="false",
+            BACKCHANNEL_AFTER="0",
+            PEPPER_AWARENESS="keep",
+        )
+        assert s.stt_backend == "whisper" and s.stt_model == "small" and s.voice_input is True
+        assert s.voice_record_dir == "/tmp/utt" and s.led_state_signals is False and s.backchannel_after == 0
+        assert s.awareness_on_connect is None
+        assert settings_with(monkeypatch, PEPPER_AWARENESS="false").awareness_on_connect is False
+
+    def test_build_voice(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from src.pepper import ConnectionConfig
+
+        app = main.PepperEvolution.__new__(main.PepperEvolution)
+        app.logger = MagicMock()
+        app.ai_manager = MagicMock()
+        app.settings = settings_with(monkeypatch, STT_BACKEND="fake", VOICE_INPUT="true", PEPPER_FAKE_BRIDGE="true")
+        voice = app.build_voice(ConnectionConfig(ip="1.2.3.4"))
+        assert voice.transcriber.name == "fake" and voice.source is None  # no robot microphone with the fake bridge
+        app.settings.fake_bridge = False
+        voice = app.build_voice(ConnectionConfig(ip="1.2.3.4", api_key="k"))
+        assert voice.source.ws_url == "ws://1.2.3.4:8888/ws/audio" and voice.source.api_key == "k"
+        app.settings.stt_backend = "none"
+        assert app.build_voice(ConnectionConfig(ip="1.2.3.4")) is None
+
     def test_keep_autonomous_life(self, monkeypatch):
         assert settings_with(monkeypatch, PEPPER_AUTONOMOUS_LIFE="keep").autonomous_life is None
         assert settings_with(monkeypatch, PEPPER_AUTONOMOUS_LIFE="solitary").autonomous_life == "solitary"

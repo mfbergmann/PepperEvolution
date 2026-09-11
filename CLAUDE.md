@@ -14,6 +14,7 @@ Built at TRiPL Lab, Toronto Metropolitan University. Robot is at `10.0.100.100` 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-voice.txt     # optional: speech recognition on the host (sherpa-onnx; or faster-whisper)
 ```
 
 ### Run
@@ -26,11 +27,12 @@ python main.py                            # host app: REST + WebSocket + web UI 
 ./scripts/start.sh --fake                 # no robot: FakeBridgeClient + real AI + web UI
 python examples/basic_chat.py             # terminal chat (PEPPER_FAKE_BRIDGE=true works here too)
 python examples/event_monitor.py          # print live touch/sonar/battery events
+python examples/mic_monitor.py --speak    # microphone level meter from /ws/audio; checks capture is muted while speaking
 ```
 
 ### Test
 ```bash
-pytest tests/ -q                                   # ~200 tests, no robot needed (~7 s)
+pytest tests/ -q                                   # ~380 tests, no robot needed (~20 s)
 pytest tests/test_bridge_server.py -q              # bridge Robot facade against a fake NAOqi
 pytest tests/test_bridge_integration.py -q         # starts the real bridge process with tests/fakenaoqi
 PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py   # under the robot's interpreter
@@ -65,9 +67,10 @@ Pepper Robot (NAOqi 2.5, Python 2.7)         Host (Python 3.12+)
 ### Source layout
 
 - **robot_bridge/** — `pepper_bridge.py` (runs on the robot; `Robot` facade + Tornado handlers) and `deploy.py` (paramiko upload/start/stop/status/logs).
-- **src/pepper/** — `BridgeClient` (async HTTP, one method per endpoint), `FakeBridgeClient` (in-memory double), `EventStream` (reconnecting WebSocket listener), `PepperConnection`, `PepperRobot` (high-level API; methods raise `BridgeError`), `Photo`, `PrepareOptions`.
-- **src/ai/** — `tools.py` (tool schemas + `KNOWN_ANIMATIONS`), `models.py` (`AnthropicProvider` with streaming/effort/caching, `OpenAIProvider`, `SYSTEM_PROMPT`), `speech.py` (sentence splitting, markdown/emoji cleanup, `SpeechStreamer`), `tool_executor.py` (`ToolOutcome` incl. image tool results), `manager.py` (`AIManager` turn loop, history trimming, touch reactions).
-- **src/communication/** — `api.py`: `create_app()` (FastAPI routes, `/ws`, `WebSocketHub`), `execute_command()` (direct commands), `APIServer` (uvicorn).
+- **src/pepper/** — `BridgeClient` (async HTTP, one method per endpoint), `FakeBridgeClient` (in-memory double), `EventStream` (reconnecting WebSocket listener), `AudioStream` (microphone PCM over `/ws/audio`), `PepperConnection`, `PepperRobot` (high-level API; methods raise `BridgeError`), `Photo`, `PrepareOptions`.
+- **src/ai/** — `tools.py` (tool schemas + `KNOWN_ANIMATIONS`), `models.py` (`AnthropicProvider` with streaming/effort/caching, `OpenAIProvider`, `SYSTEM_PROMPT`), `speech.py` (sentence splitting, markdown/emoji cleanup, `SpeechStreamer` with fillers), `tool_executor.py` (`ToolOutcome` incl. image tool results), `intents.py` (local control phrases, no model call), `manager.py` (`AIManager` turn loop, intents, LED state signals, backchannel, history trimming, touch reactions).
+- **src/audio/** — `pcm.py` (16-bit PCM helpers), `endpointer.py` (energy VAD + utterance cutting), `stt.py` (`Transcriber` interface: `SherpaTranscriber` streaming, `WhisperTranscriber` per utterance, `FakeTranscriber`; `make_transcriber()`), `voice.py` (`VoiceInput`: robot microphone or push-to-talk → transcript → `process_user_input(source="voice")`).
+- **src/communication/** — `api.py`: `create_app()` (FastAPI routes, `/ws`, `/voice/*`, `WebSocketHub`), `execute_command()` (direct commands), `APIServer` (uvicorn).
 - **src/sensors/**, **src/actuators/** — thin boolean-returning wrappers kept for convenience.
 - **web/index.html** — single-file control panel served at `/`.
 - **tests/fakenaoqi/qi.py** — fake `qi` module so the bridge can run off-robot.
@@ -83,6 +86,10 @@ Pepper Robot (NAOqi 2.5, Python 2.7)         Host (Python 3.12+)
 - **Prompt caching** — `SYSTEM_PROMPT` is the first system block with `cache_control`; the dynamic robot-state block comes after it.
 - **Effort** — `output_config.effort` is only sent for models that support it (`supports_effort()`); default `low` for snappy conversation.
 - **Events** — Bridge pushes edge-triggered events; `AIManager.handle_event()` turns head/hand touches and bumpers into a short spoken reaction (`REACT_TO_TOUCH`, 8 s cooldown, skipped while a turn is running).
+- **Local intents** — `process_user_input()` matches short control phrases (`src/ai/intents.py`: stop, emergency stop, quiet, wake up, rest, look at me, look ahead) *before* taking the turn lock and executes them directly, so "stop" works mid-turn: it sets `_abort` (remaining tool calls get `aborted_outcome()`, the turn ends with `ABORTED_TEXT`), cancels the model call in flight (`_chat_task`), records `_last_stop_at` so turns queued behind the lock are dropped, and sets `_hush` (the `SpeechStreamer` gate drops the rest of the turn's speech). A bare "halt" is an ordinary stop; only "emergency stop" / "e-stop" / "kill the motors" rest the robot. Keep the phrase list short and exact; anything longer than 40 characters is never an intent.
+- **State signals and fillers** — The eyes show listening (blue) / thinking (purple) / speaking (white) and go back to `robot.last_eye_color` at the end of a turn (`LED_STATE_SIGNALS`; disabled after the first LED error). `_backchannel()` says a filler after `BACKCHANNEL_AFTER` seconds without any model text (`speaker.first_text_at`), only for user turns.
+- **Voice input** — Optional. `VoiceInput` gets PCM from `AudioStream` (bridge `/ws/audio`, muted by the bridge while Pepper speaks) or from `POST /voice/utterance` (browser hold-to-talk, raw PCM). Streaming backends endpoint themselves; batch backends get utterances from `Endpointer`. Finals go to `process_user_input(source="voice")`; transcripts are broadcast on `/ws` as `transcript`. Backends are optional dependencies (`requirements-voice.txt`); `make_transcriber()` fails at startup with an install hint when one is missing.
+- **Awareness** — `/prepare` with `awareness: true` (`PEPPER_AWARENESS`, off by default until the live session shows how it interacts with `move_head`: NAOqi pauses tracking during a head move and resumes right after, so "look left" would not hold) enables ALBasicAwareness with `Head` tracking only and the `People`/`Sound`/`Touch` stimuli; `BodyRotation`/`MoveContextually` drive the base and are never set by default. The "look at me" / "look ahead" intents toggle it at runtime.
 - **Python 2.7 constraint** — `robot_bridge/pepper_bridge.py` runs on the robot under Python 2.7 / Tornado 3.1.1: no f-strings, no `async/await`, no type hints, no `pathlib`, `%`-formatting only. `tests/test_bridge_server.py` enforces this with an AST check and the module must also import under Python 3 for tests.
 - **pytest** — `asyncio_mode = "auto"`; fixtures in `tests/conftest.py`: `mock_connection`/`mock_robot` (AsyncMock bridge), `fake_robot` (real `PepperRobot` + `FakeBridgeClient`), `mock_ai_provider`, `mock_ai_manager`.
 
@@ -98,7 +105,7 @@ Copy `env.example` to `.env`. Key variables:
 | `BRIDGE_API_KEY` | (empty) | Optional bridge auth key (`X-API-Key` / `?api_key=`) |
 | `BRIDGE_ACTION_TIMEOUT` | `120` | Seconds to wait for speech/motion/animation calls |
 | `PEPPER_FAKE_BRIDGE` | `false` | Use `FakeBridgeClient` instead of a robot |
-| `PREPARE_ON_CONNECT` | `true` | On connect: set Autonomous Life, wake up |
+| `PREPARE_ON_CONNECT` | `true` | On connect: set Autonomous Life, wake up, set awareness |
 | `PEPPER_AUTONOMOUS_LIFE` | `disabled` | State to set on connect (`keep` = leave alone) |
 | `REST_ON_EXIT` | `false` | Put the robot to rest when the host exits |
 | `AI_MODEL` | `claude-opus-5` | `claude-*` (Anthropic) or `gpt-*` (OpenAI) |
@@ -108,13 +115,22 @@ Copy `env.example` to `.env`. Key variables:
 | `SPEAK_RESPONSES` | `true` | Speak replies aloud while streaming |
 | `TABLET_SUBTITLES` | `true` | Show spoken sentences on the chest tablet (auto-off after an error) |
 | `REACT_TO_TOUCH` | `true` | React aloud to touch/bumper events |
+| `LED_STATE_SIGNALS` | `true` | Eye colour shows listening / thinking / speaking |
+| `BACKCHANNEL_AFTER` | `2.0` | Seconds of model silence before a spoken filler (0 = off) |
+| `PEPPER_AWARENESS` | `false` | On connect: head-only people tracking on/off (`keep` = leave alone) |
+| `STT_BACKEND` | `none` | `sherpa` (streaming), `whisper` (per utterance), `fake`, `none` |
+| `STT_MODEL` | | sherpa: model directory; whisper: `base`, `small`, ... |
+| `STT_LANGUAGE` | `en` | Recognition language |
+| `VOICE_INPUT` | `false` | Stream the robot microphone from the bridge and answer speech |
+| `VOICE_RECORD_DIR` | | Save recognised utterances as WAV files for tuning |
 | `API_PORT` | `8000` | Host port (REST + WebSocket + web UI) |
 
 ## Reference Docs
 
 - `docs/BRIDGE_API.md` — Full HTTP/WebSocket endpoint reference for the bridge server
 - `docs/GETTING_STARTED.md` — Setup guide, first-test checklist and troubleshooting
-- `docs/ROADMAP.md` — Milestones (M0 first live session checklist, reactive layer, voice input, vision grounding, memory) and non-goals
+- `docs/ROADMAP.md` — Milestones (M0 first live session checklist, reactive layer, voice input, vision grounding, memory), testing without the robot, and non-goals
+- `docs/SAFETY.md` — Every numeric bound and safety behaviour in one table (bridge, host, model), with where it lives
 - `docs/RESEARCH_2026-09.md` — Why the off-board bridge architecture, what robot foundation models do and do not offer Pepper, prior Pepper/NAO LLM work with sources
 
 ## Code Standards

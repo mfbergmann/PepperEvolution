@@ -2,6 +2,7 @@
 Pepper robot interface module.
 """
 
+from .audio_stream import AudioStream
 from .bridge_client import BridgeClient, BridgeError
 from .connection import ConnectionConfig, PepperConnection
 from .event_stream import EventStream
@@ -19,4 +20,5 @@ __all__ = [
     "BridgeError",
     "FakeBridgeClient",
     "EventStream",
+    "AudioStream",
 ]

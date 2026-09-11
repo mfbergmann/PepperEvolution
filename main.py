@@ -23,8 +23,9 @@ from dotenv import load_dotenv  # noqa: E402
 from loguru import logger  # noqa: E402
 
 from src.ai import DEFAULT_ANTHROPIC_MODEL, AIManager, AIProvider, AnthropicProvider, OpenAIProvider  # noqa: E402
+from src.audio import VoiceInput, make_transcriber  # noqa: E402
 from src.communication import APIServer  # noqa: E402
-from src.pepper import ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
+from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -58,10 +59,21 @@ class Settings:
     rest_on_exit: bool
     log_level: str
     log_file: str
+    led_state_signals: bool
+    backchannel_after: float
+    awareness_on_connect: Optional[bool]
+    stt_backend: str
+    stt_model: str
+    stt_language: str
+    voice_input: bool
+    voice_record_dir: Optional[str]
 
     @classmethod
     def from_env(cls) -> "Settings":
         life = os.getenv("PEPPER_AUTONOMOUS_LIFE", "disabled").strip().lower()
+        awareness = os.getenv("PEPPER_AWARENESS", "false").strip().lower()
+        if awareness not in ("", "keep", "none", "1", "true", "yes", "on", "0", "false", "no", "off"):
+            raise ValueError(f"PEPPER_AWARENESS={awareness!r}: use true, false or keep")
         return cls(
             pepper_ip=os.getenv("PEPPER_IP", "10.0.100.100"),
             bridge_port=int(os.getenv("BRIDGE_PORT", "8888")),
@@ -85,6 +97,14 @@ class Settings:
             rest_on_exit=env_bool("REST_ON_EXIT", False),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "pepper_evolution.log"),
+            led_state_signals=env_bool("LED_STATE_SIGNALS", True),
+            backchannel_after=float(os.getenv("BACKCHANNEL_AFTER") or "2.0"),
+            awareness_on_connect=None if awareness in ("", "keep", "none") else awareness in ("1", "true", "yes", "on"),
+            stt_backend=(os.getenv("STT_BACKEND", "none").strip().lower() or "none"),
+            stt_model=os.getenv("STT_MODEL", "").strip(),
+            stt_language=(os.getenv("STT_LANGUAGE", "en").strip() or "en"),
+            voice_input=env_bool("VOICE_INPUT", False),
+            voice_record_dir=os.getenv("VOICE_RECORD_DIR") or None,
         )
 
 
@@ -122,6 +142,7 @@ class PepperEvolution:
         self.robot: Optional[PepperRobot] = None
         self.ai_manager: Optional[AIManager] = None
         self.api_server: Optional[APIServer] = None
+        self.voice: Optional[VoiceInput] = None
 
     async def initialize(self):
         s = self.settings
@@ -147,16 +168,28 @@ class PepperEvolution:
             speak_responses=s.speak_responses,
             tablet_subtitles=s.tablet_subtitles,
             react_to_touch=s.react_to_touch,
+            led_signals=s.led_state_signals,
+            backchannel_after=s.backchannel_after,
         )
+        self.voice = self.build_voice(config)
         self.api_server = APIServer(
-            host=s.api_host, port=s.api_port, ai_manager=self.ai_manager, robot=self.robot, web_dir=ROOT / "web"
+            host=s.api_host,
+            port=s.api_port,
+            ai_manager=self.ai_manager,
+            robot=self.robot,
+            web_dir=ROOT / "web",
+            voice=self.voice,
         )
+
+        if self.voice is not None:
+            await self.voice.load()  # a missing model fails here, before the robot is touched
 
         prepare = PrepareOptions(
             enabled=s.prepare_on_connect,
             autonomous_life=s.autonomous_life,
             wake_up=True,
             posture=s.posture_on_connect,
+            awareness=s.awareness_on_connect,
         )
         if not await self.robot.initialize(prepare=prepare):
             raise RuntimeError(
@@ -165,10 +198,29 @@ class PepperEvolution:
             )
         self.robot.on_event(self.ai_manager.handle_event)
         self.robot.start_state_loop(interval=10.0)
+        if self.voice is not None:
+            await self.voice.start()  # streams the robot microphone if VOICE_INPUT
         self.logger.success(
             f"PepperEvolution ready - web UI at http://localhost:{s.api_port}/  "
             f"(robot {self.robot.state.robot_name}, battery {self.robot.state.battery_level:.0f}%)"
         )
+
+    def build_voice(self, config: ConnectionConfig) -> Optional[VoiceInput]:
+        """Speech-to-text from settings: None when STT_BACKEND is ``none`` (typing only)."""
+        s = self.settings
+        transcriber = make_transcriber(s.stt_backend, model=s.stt_model, language=s.stt_language)
+        if transcriber is None:
+            return None
+        source = None
+        if s.voice_input:
+            if s.fake_bridge:
+                self.logger.warning("VOICE_INPUT ignored with the fake bridge (push-to-talk in the UI still works)")
+            else:
+                source = AudioStream(config.audio_ws_url, api_key=config.api_key)
+        self.logger.info(
+            f"Voice input: backend={transcriber.name} robot_microphone={'on' if source else 'off'} " f"push_to_talk=on"
+        )
+        return VoiceInput(self.ai_manager, transcriber, source=source, record_dir=s.voice_record_dir)
 
     async def run(self):
         try:
@@ -186,6 +238,8 @@ class PepperEvolution:
 
     async def shutdown(self):
         self.logger.info("Shutting down components...")
+        if self.voice:
+            await self.voice.stop()
         if self.api_server:
             await self.api_server.stop()
         if self.robot:
@@ -194,13 +248,16 @@ class PepperEvolution:
 
 
 async def main():
-    app = PepperEvolution()
+    try:
+        app = PepperEvolution()
+    except ValueError as exc:  # a bad .env value
+        logger.error(f"Configuration error: {exc}")
+        sys.exit(2)
     try:
         await app.initialize()
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Startup failed: {exc}")
-        if app.robot:
-            await app.robot.shutdown()
+        await app.shutdown()  # rests the robot if REST_ON_EXIT, stops what was started
         sys.exit(1)
     await app.run()
 

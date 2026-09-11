@@ -55,6 +55,19 @@ Design lessons applied or planned:
 | Explicit memory and relationship state | ARIS (2026), agent-architecture evaluation | Roadmap M4 |
 | Robot described as safety-bounded tools | Model Hardware Standard | Done in spirit; publish a descriptor when the spec is open |
 
+## Autonomous OS (autonomous.ai, June 2026)
+
+[autonomous-ai/autonomous-os](https://github.com/autonomous-ai/autonomous-os) is the open-source stack behind the Lamp and Intern desk robots: a Go daemon plus a Python 3.12 hardware layer that run on the robot's own arm64 Linux board, a robot declared in `ROBOT.md` / `SOUL.md` / `SAFETY.md`, swappable agent runtimes (Claude Code, Codex, OpenClaw and others), skills as `SKILL.md` files, a realtime speech-to-speech voice layer and a deterministic safety gate below the model. Reachy Mini was ported in two weeks by wrapping Pollen's SDK. Assessed 10 September 2026.
+
+**Not a platform for Pepper.** It must run on the robot (arm64, systemd, Python 3.12, 4 GB free); Pepper's head is an x86 Atom on NAOqi 2.5 with Python 2.7. Its motion contract is joint-space for a 5 or 6 degree-of-freedom articulated head, wheels are explicitly unsolved, and there is no notion of an animation library, animated speech or a tablet. Skills act by writing `[HW:/path:{json}]` markers into the model's text that the daemon regex-parses, the mechanism this project replaced with native tool calling. Voice, face and mood models default to their hosted gateway, and the hardware layer is GPL-3.0.
+
+**Borrowed from it** (see the roadmap):
+
+- The realtime voice design: a fast speech layer handles small talk and *delegates* turns that need tools to the main agent, with neural voice-activity detection, barge-in and echo handling documented in detail (`docs/realtime-voice.md`, `hal/drivers/voice/`). Their finding that energy-based VAD misses about half of real speech frames shaped our voice-input design.
+- `lifelike` and `presence` as routeless background loops (breathing, idle micro-movements, people tracking) rather than model-driven behaviour, which is our reactive layer.
+- `SAFETY.md` as machine-read numbers enforced below the model, with an explicit ledger of what is and is not gated yet.
+- A local `intent` table that answers fixed commands ("stop", "be quiet") in about 50 ms with no model call.
+
 ## What others have done on Pepper and NAO
 
 - **Low-latency multimodal Pepper (FHNW, HRI 2026)**: the most complete open Pepper system, on NAOqi 2.9 with a Kotlin tablet app streaming microphone audio to speech-to-speech models (OpenAI Realtime, Gemini Live) that drive the robot through function calling. Its ideas transfer; its code does not (2.9 hides raw audio and camera access that 2.5 gives us).
@@ -65,6 +78,29 @@ Design lessons applied or planned:
 - **Agent architectures on Pepper/NAO in simulation (Springer 2025/26)**: over 70 percent of multi-step tasks partially completed, only 14 percent end to end; explicit memory cut steps dramatically. Keep tool sets small and tasks short.
 - **Learned motion**: the only examples are a 2026 diffusion co-speech gesture generator retargeted to NAO on a GPU server and movement primitives learned from teleoperation on NAO. No VLA or visuomotor policy on either robot.
 - **Platform**: NAOqi 2.5 is the better research base (raw audio, cameras, all APIs, Python, ROS driver). NAOqi 2.9 exposes about twenty Kotlin APIs. Aldebaran filed for bankruptcy in February 2025; nothing new is coming from the vendor. Simulators exist (qiBullet, dormant; a ROS 2 Gazebo model from 2026) but no language-model work has used them.
+
+## Voice input on the host (September 2026)
+
+Surveyed for Milestone 2 (details in the roadmap). Findings that shaped the implementation:
+
+- The Anthropic API has no audio input as of September 2026 (the Messages API accepts text, images and documents; the OpenAI-compatibility layer strips `input_audio`). Speech has to be recognised on the host and sent as text.
+- **sherpa-onnx** (Apache 2.0, wheels for Python 3.10 to 3.14, bundles onnxruntime, no torch) is the one package that gives true streaming recognition with endpointing and partial results on a CPU: the 2023 English streaming zipformer (about 80 MB, real-time factor 0.06) or NVIDIA's Nemotron speech streaming model (2026, about 630 MB, word error rate around 7 %) through the same `OnlineRecognizer` API. It also wraps Silero and TEN VAD.
+- **faster-whisper** now installs on Python 3.12 to 3.14 (CTranslate2 4.8 wheels); it is per-utterance, so it needs an endpointer in front and adds 0.2 to 0.7 s per sentence on a laptop CPU. Whisper invents text for silence; segments with high `no_speech_prob` must be dropped.
+- Energy-based voice activity detection misses roughly half of quiet speech; Silero (torch-free `silero-vad-notorch`) or TEN VAD are the neural options. The implementation ships the energy detector for the whisper path and relies on sherpa-onnx's endpointing for the streaming path; a neural VAD is on the Milestone 2 list.
+- Hosted streaming recognisers (AssemblyAI at $0.15/h, Deepgram Nova-3 at about $0.46/h with turn-taking, ElevenLabs Scribe v2 at $0.39/h) are the upgrade path if local accuracy disappoints; the `Transcriber` interface was written so one can be added without touching the rest.
+- On the robot side, NAOqi 2.5 delivers microphone audio only to a qi service registered by the client (`registerService` then `ALAudioDevice.setClientPreferences(name, 16000, 3, 0)` and `subscribe(name)`); the callback runs on a libqi thread, single-threaded per service, and must return quickly. Pepper 1.8 has no echo cancellation; every project mutes capture while the robot speaks (`ALTextToSpeech/Status` events).
+
+## Simulating Pepper off-robot (September 2026)
+
+Asked whether Choregraphe's simulator could stand in for the robot before the live session. Summary (the roadmap's "Testing without the robot" section has the practical conclusion):
+
+- Choregraphe 2.5.10.7 for Linux 64 still downloads from Aldebaran's static bucket (`choregraphe-suite-2.5.10.7-linux64.tar.gz`, 347 MB) after the company's 2025 receivership; Maxvision now owns the assets and publishes the free licence key. Unpacked copies of the 2.5.5.5 / 2.5.7.1 SDKs (`naoqi-sdk`, `pynaoqi-python2.7`, `choregraphe-suite`) exist on GitHub under Michdo93.
+- The interesting part is not the GUI but `bin/naoqi-bin`: the desktop build of NAOqi itself, which runs headless and loads ALMotion, ALRobotPosture, ALTextToSpeech (events only, no audio), ALAnimatedSpeech, ALBasicAwareness, ALAutonomousLife, ALLeds (no-op), ALMemory, ALBehaviorManager and ALAnimationPlayer (without the animation package). Pepper is chosen in `etc/naoqi/ALRobotModel.xml` (`JULIETTEY20MP.xml`). Absent on the desktop: ALAudioDevice, ALAudioRecorder, ALSpeechRecognition, ALTabletService, the hardware layer (so no sonar, touch, bumper or battery keys) and camera frames.
+- The Python 2.7 SDK needs a shared, UCS4 Python 2.7 (`libpython2.7.so`, `PyUnicodeUCS4_*`), which a default self-built 2.7.18 is not; Arch's AUR `python2` qualifies.
+- Known breakage on modern Linux: the bundled `libz.so.1` shadows the system one (`ZLIB_1.2.9 not found`); delete it. `libpng12` is bundled. Qt 5.4 has no Wayland plugin (XWayland for the GUI; the headless binary does not care).
+- qiBullet (PyBullet Pepper, own API, last release 2022), Webots (no Pepper; `naoqisim` is NAO-only and dead) and the ROS 2 Gazebo Pepper packages do not speak NAOqi and would not exercise the bridge.
+
+Conclusion: a headless `naoqi-bin` is worth an hour before the live session to catch wrong NAOqi method names and signatures in the bridge; it cannot test sensors, audio, camera or tablet, which stay on the Milestone 0 checklist.
 
 ## Sources
 
@@ -101,3 +137,12 @@ Pepper and NAO:
 - Pepper audio and bridge utilities: https://github.com/leolani/cltl-backend-naoqi , https://github.com/JBramauer/pepperspeechrecognition , https://github.com/incognite-lab/Pepper-Controller
 - qiBullet: https://github.com/softbankrobotics-research/qibullet ; ROS 2 Gazebo Pepper (2026): https://github.com/tuncismail/pepper-robot-ros2-gazebo-simulation
 - NAOqi 2.5 vs 2.9: https://d9d4fpk5grhfv.cloudfront.net/developer-center/articles/OSComparison/index.html ; Aldebaran bankruptcy (2025): https://uk.finance.yahoo.com/news/universities-face-getting-stuck-thousands-131320950.html
+
+Voice input and simulation:
+
+- sherpa-onnx: https://github.com/k2-fsa/sherpa-onnx ; streaming zipformer models: https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html ; Nemotron streaming: https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b ; VAD wrappers: https://k2-fsa.github.io/sherpa/onnx/vad/index.html
+- faster-whisper: https://github.com/SYSTRAN/faster-whisper ; TEN VAD: https://github.com/TEN-framework/ten-vad ; Silero VAD: https://github.com/snakers4/silero-vad
+- Claude Messages API content types: https://platform.claude.com/docs/en/api/messages/create ; OpenAI-SDK compatibility (audio stripped): https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk
+- NAOqi 2.5 ALAudioDevice: http://doc.aldebaran.com/2-5/naoqi/audio/alaudiodevice-api.html ; sound processing example: http://doc.aldebaran.com/2-5/dev/python/examples/audio/audio_soundprocessing.html ; ALBasicAwareness: http://doc.aldebaran.com/2-5/naoqi/interaction/autonomousabilities/albasicawareness-api.html ; qi Python services: http://doc.aldebaran.com/2-5/dev/libqi/guide/py-service.html
+- Choregraphe 2.5 downloads (still live): https://community-static.aldebaran.com/resources/2.5.10/Choregraphe/ ; successor support pages: https://maxtronics.com/en/support/kb/softwares/downloads-softwares/pepper-2-5-downloads/ ; SDK mirrors: https://github.com/Michdo93/naoqi-sdk-2.5.7.1-linux64 , https://github.com/Michdo93/pynaoqi-python2.7-2.5.7.1-linux64 , https://github.com/Michdo93/choregraphe-suite-2.5.10.7-linux64
+- Virtual robot docs: http://doc.aldebaran.com/2-5/dev/tools/robot-simulation.html ; Python SDK install: http://doc.aldebaran.com/2-5/dev/python/install_guide.html ; Aldebaran receivership: https://www.therobotreport.com/aldebaran-pepper-nao-robots-receivership/

@@ -65,6 +65,10 @@ class ToolExecutor:
     def halted_outcome() -> ToolOutcome:
         return ToolOutcome.failure("Robot is halted by emergency stop; nothing runs until it is woken up.")
 
+    @staticmethod
+    def aborted_outcome() -> ToolOutcome:
+        return ToolOutcome.failure("Not executed: the person said stop.")
+
     async def execute(self, tool_name: str, tool_input: Dict[str, Any]) -> ToolOutcome:
         """Execute a tool call; never raises."""
         self.logger.info(f"Tool call: {tool_name}({json.dumps(tool_input, ensure_ascii=False)})")

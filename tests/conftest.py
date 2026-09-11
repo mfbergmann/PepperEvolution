@@ -130,6 +130,7 @@ def mock_robot(mock_connection):
     robot.direct_commands_running = 0
     robot.photo_resolution = 2
     robot.last_prepare = {}
+    robot.last_eye_color = None
     robot.logger = MagicMock()
     robot._event_callbacks = []
     robot._state_task = None

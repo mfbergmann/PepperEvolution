@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from src.pepper.audio_stream import AudioStream
 from src.pepper.bridge_client import BridgeClient, BridgeError
 from src.pepper.event_stream import EventStream
 
@@ -237,3 +238,50 @@ class TestBridgeEndToEnd:
             await stream.stop()
         states = [d["state"] for t, d in received if t == "speech"]
         assert states == ["start", "end"]
+
+    async def test_audio_stream_delivers_pcm_and_mutes_while_speaking(self, client, bridge_process):
+        stream = AudioStream(f"ws://127.0.0.1:{bridge_process['port']}/ws/audio", api_key="testkey")
+        frames = []
+
+        async def on_audio(pcm):
+            frames.append(pcm)
+
+        stream.on_audio(on_audio)
+        await stream.start()
+        try:
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline and len(frames) < 3:
+                await asyncio.sleep(0.05)
+            assert len(frames) >= 3, "no audio frames within 8s"
+            assert stream.sample_rate == 16000 and stream.channels == 1 and stream.streaming is True
+            assert all(len(f) == 2730 * 2 for f in frames)  # 170 ms of 16-bit mono at 16 kHz per frame
+            info = await client.audio_stream_info()
+            assert info["streaming"] is True and info["clients"] == 1
+            dropped_before = info["dropped"]
+            await client.speak("one two three four five six seven eight nine ten")  # fake say: 50 ms per word
+            info = await client.audio_stream_info()
+            assert info["dropped"] > dropped_before  # frames captured while talking were not forwarded
+        finally:
+            await stream.stop()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (await client.audio_stream_info())["streaming"]:
+            await asyncio.sleep(0.1)
+        info = await client.audio_stream_info()
+        assert info["streaming"] is False and info["clients"] == 0  # capture stops with the last client
+
+    async def test_audio_stream_requires_the_api_key(self, bridge_process):
+        stream = AudioStream(f"ws://127.0.0.1:{bridge_process['port']}/ws/audio", api_key="wrong")
+        await stream.start()
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and stream.last_error is None:
+                await asyncio.sleep(0.05)
+        finally:
+            await stream.stop()
+        assert stream.last_error == "unauthorized"
+
+    async def test_awareness_options_reach_naoqi(self, client):
+        result = await client.set_awareness(True, tracking_mode="Head", stimuli=["People", "Sound"])
+        assert result["tracking_mode"] == "Head" and result["stimuli"] == ["People", "Sound"]
+        with pytest.raises(BridgeError):
+            await client.set_awareness(True, tracking_mode="Spin")

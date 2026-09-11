@@ -1,4 +1,4 @@
-# Pepper Bridge API Reference (v2.1)
+# Pepper Bridge API Reference (v2.2)
 
 The bridge server runs on the Pepper robot (Python 2.7 + Tornado 3.1.1) and exposes NAOqi 2.5 services as JSON-over-HTTP endpoints plus a WebSocket event stream.
 
@@ -25,7 +25,7 @@ Optional. Start the bridge with `--api-key=SECRET`; clients must then send `X-AP
 
 | Method | Path | Returns |
 |--------|------|---------|
-| GET | `/health` | `bridge`, `version`, `naoqi` (system version), `robot_name`, `naoqi_connected`, `uptime`. While NAOqi is still booting the bridge answers **503** `{"ok": false, "error": "naoqi_connecting"}` (the server listens before NAOqi is up, so a deploy can watch it come alive). |
+| GET | `/health` | `bridge`, `version`, `naoqi` (system version), `robot_name`, `naoqi_connected`, `uptime`, `audio` (microphone stream state, see `/audio/stream`). While NAOqi is still booting the bridge answers **503** `{"ok": false, "error": "naoqi_connecting"}` (the server listens before NAOqi is up, so a deploy can watch it come alive). |
 | GET | `/status` | `battery` (%), `charging`, `posture`, `posture_family`, `robot_name`, `naoqi_version`, `autonomous_life`, `awake`, `halted` (after an emergency stop), `language`, `volume`, `awareness` |
 | GET | `/sensors` | see below |
 
@@ -43,11 +43,11 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 
 | Method | Path | Body | Description |
 |--------|------|------|-------------|
-| POST | `/prepare` | `{"autonomous_life": "disabled", "wake_up": true, "posture": "Stand", "awareness": false}` | Put the robot in a known state for external control. All fields optional; `autonomous_life: ""` leaves it alone. Every step is attempted; failures are listed in `errors`. |
+| POST | `/prepare` | `{"autonomous_life": "disabled", "wake_up": true, "posture": "Stand", "awareness": true}` | Put the robot in a known state for external control. All fields optional; `autonomous_life: ""` leaves it alone. `awareness: true` turns on head-only people tracking with the `People`, `Sound` and `Touch` stimuli. Every step is attempted; failures are listed in `errors`. |
 | POST | `/wake_up` | | `ALMotion.wakeUp()` (motors on, StandInit); also clears the `halted` flag set by `/emergency_stop` |
 | POST | `/rest` | | `ALMotion.rest()` (safe posture, motors off) |
 | POST | `/autonomous_life` | `{"state": "disabled"}` | `solitary`, `interactive`, `safeguard`, `disabled` |
-| POST | `/awareness` | `{"enabled": false}` | ALBasicAwareness on/off |
+| POST | `/awareness` | `{"enabled": true, "tracking_mode": "Head", "engagement_mode": "SemiEngaged", "stimuli": ["People", "Sound", "Touch"]}` | ALBasicAwareness on/off. Optional: `tracking_mode` `Head` (recommended; the others rotate or drive the base) / `BodyRotation` / `WholeBody` / `MoveContextually`; `engagement_mode` `Unengaged` / `SemiEngaged` / `FullyEngaged`; `stimuli` from `People`, `Touch`, `TabletTouch`, `Sound`, `Movement`, `NavigationMotion` (a list, or a comma-separated string in the query). Awareness pauses by itself while `/move/head` uses the head and resumes afterwards. |
 
 ### Speech
 
@@ -75,6 +75,7 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 |--------|------|-------------|-------------|
 | GET | `/picture` | `?camera=0&resolution=2` | Snapshot. camera 0 = forehead, 1 = mouth; resolution 0=QQVGA 1=QVGA 2=VGA 3=4VGA. Returns `image` (base64), `width`, `height`, `format` (`jpeg` when PIL is on the robot, else raw `rgb`). |
 | POST | `/audio/record` | `{"duration": 3.0}` | Record from the front microphone; returns base64 16 kHz mono WAV |
+| GET | `/audio/stream` | | State of the live microphone stream (see `/ws/audio`): `streaming`, `clients`, `muted`, `frames`, `dropped`, `sample_rate`, `last_frame_age`. Also included in `/health` as `audio`. |
 
 ### LEDs & animations
 
@@ -105,7 +106,7 @@ The tablet reaches the robot head at `198.18.0.1`; change with `--tablet-host` i
 On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events are edge-triggered:
 
 ```json
-{"type": "hello",   "data": {"version": "2.1.0"}, "timestamp": ...}
+{"type": "hello",   "data": {"version": "2.2.0"}, "timestamp": ...}
 {"type": "sensors", "data": {...same as GET /sensors...}, "timestamp": ...}
 {"type": "touch",   "data": {"sensor": "head_front", "touched": true}, "timestamp": ...}
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
@@ -116,6 +117,26 @@ On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events 
 ```
 
 Clients may send `{"type": "ping"}` and get `{"type": "pong"}`. Sensors are polled every 250 ms.
+
+## WebSocket microphone stream
+
+**Endpoint:** `ws://<PEPPER_IP>:8888/ws/audio` (`?api_key=SECRET` if configured)
+
+The bridge registers a small qi service (`PepperBridgeAudio`) with NAOqi and subscribes it to `ALAudioDevice` (front microphone, 16 kHz, mono) while at least one client is connected; the subscription is dropped when the last client leaves, so an idle bridge costs the robot nothing.
+
+On connect the client gets one JSON text frame, then binary frames:
+
+```json
+{"type": "hello", "version": "2.2.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
+{"type": "state", "streaming": true}
+<binary> 5460 bytes = 2730 samples of signed 16-bit little-endian PCM (about 170 ms), repeated
+```
+
+Frames are **not sent while the robot is speaking** (Pepper has no echo cancellation): the bridge mutes capture around every `/speak`, on `ALTextToSpeech/Status` events from any other source, and for 0.4 s after speech ends. `{"type": "error", "error": "..."}` reports a failed subscription (for example NAOqi not connected yet).
+
+Clients may send `{"type": "ping"}` (answered with `pong`) and `{"type": "mute", "muted": true|false}` to pause the stream from the host side; the reply is `{"type": "state", "streaming": ..., "muted": ...}`.
+
+The host side is `src/pepper/audio_stream.py` (`AudioStream`), consumed by `src/audio/voice.py`.
 
 ---
 

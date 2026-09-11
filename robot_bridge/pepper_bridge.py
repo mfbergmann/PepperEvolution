@@ -77,13 +77,12 @@ except ImportError:  # pragma: no cover - very old Tornado
 define("port", default=8888, type=int, help="HTTP port")
 define("api_key", default="", type=str, help="Optional API key for auth")
 define("naoqi", default="tcp://127.0.0.1:9559", type=str, help="NAOqi session URL")
-define("tablet_host", default="198.18.0.1", type=str,
-       help="IP of the robot head as seen from the tablet")
+define("tablet_host", default="198.18.0.1", type=str, help="IP of the robot head as seen from the tablet")
 define("log_level", default="INFO", type=str, help="Logging level")
 define("pip", default="", type=str, help="ignored (passed by NAOqi autoload)")
 define("pport", default=0, type=int, help="ignored (passed by NAOqi autoload)")
 
-BRIDGE_VERSION = "2.1.0"
+BRIDGE_VERSION = "2.2.0"
 LOGGER = logging.getLogger("pepper_bridge")
 START_TIME = time.time()
 IOLOOP = None  # the main IOLoop, captured in main(); worker threads must only touch this one
@@ -116,22 +115,50 @@ OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstac
 
 # ISO codes -> NAOqi language names. Full names pass through unchanged.
 LANGUAGE_NAMES = {
-    "en": "English", "fr": "French", "de": "German", "es": "Spanish", "it": "Italian",
-    "ja": "Japanese", "zh": "Chinese", "pt": "Portuguese", "nl": "Dutch", "ko": "Korean",
-    "ar": "Arabic", "ru": "Russian", "sv": "Swedish", "da": "Danish", "fi": "Finnish",
-    "no": "Norwegian", "pl": "Polish", "cs": "Czech", "tr": "Turkish", "el": "Greek",
+    "en": "English",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "it": "Italian",
+    "ja": "Japanese",
+    "zh": "Chinese",
+    "pt": "Portuguese",
+    "nl": "Dutch",
+    "ko": "Korean",
+    "ar": "Arabic",
+    "ru": "Russian",
+    "sv": "Swedish",
+    "da": "Danish",
+    "fi": "Finnish",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "cs": "Czech",
+    "tr": "Turkish",
+    "el": "Greek",
     "br": "Brazilian",
 }
 
 COLOR_MAP = {
-    "red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0, 1), "yellow": (1, 1, 0),
-    "purple": (1, 0, 1), "magenta": (1, 0, 1), "cyan": (0, 1, 1), "white": (1, 1, 1),
-    "orange": (1, 0.5, 0), "pink": (1, 0.4, 0.7), "off": (0, 0, 0),
+    "red": (1, 0, 0),
+    "green": (0, 1, 0),
+    "blue": (0, 0, 1),
+    "yellow": (1, 1, 0),
+    "purple": (1, 0, 1),
+    "magenta": (1, 0, 1),
+    "cyan": (0, 1, 1),
+    "white": (1, 1, 1),
+    "orange": (1, 0.5, 0),
+    "pink": (1, 0.4, 0.7),
+    "off": (0, 0, 0),
 }
 LED_GROUPS = {"eyes": "FaceLeds", "chest": "ChestLeds", "ears": "EarLeds", "shoulders": "ShoulderLeds"}
 
 POSTURES = ("Stand", "StandInit", "StandZero", "Crouch")
 LIFE_STATES = ("solitary", "interactive", "safeguard", "disabled")
+TRACKING_MODES = ("Head", "BodyRotation", "WholeBody", "MoveContextually")  # ALBasicAwareness.setTrackingMode
+ENGAGEMENT_MODES = ("Unengaged", "SemiEngaged", "FullyEngaged")
+STIMULI = ("People", "Touch", "TabletTouch", "Sound", "Movement", "NavigationMotion")
+DEFAULT_STIMULI = ("People", "Sound", "Touch")  # what turns Pepper's head when /prepare enables awareness
 
 # Pepper head limits in degrees (NAOqi 2.5 joints_pep.html). HeadPitch range shrinks
 # as |HeadYaw| grows because the head would hit the casing/tablet.
@@ -161,6 +188,7 @@ MAX_VEL_THETA = 2.0
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
 
 def to_native_str(value):
     """Return a value NAOqi accepts as a string (UTF-8 bytes on Python 2)."""
@@ -209,6 +237,7 @@ def rgb_to_int(r, g, b):
 # ---------------------------------------------------------------------------
 # NAOqi session with lazy reconnect
 # ---------------------------------------------------------------------------
+
 
 class NaoqiSession(object):
     """Thread-safe holder for the qi.Session and cached service proxies."""
@@ -279,6 +308,7 @@ NAOQI = NaoqiSession("tcp://127.0.0.1:9559")
 # thread. Methods return JSON-serialisable dicts or raise.
 # ---------------------------------------------------------------------------
 
+
 class Robot(object):
 
     EXTRACTORS = ("ALSonar", "ALPeoplePerception")  # publish to ALMemory only while subscribed
@@ -347,6 +377,7 @@ class Robot(object):
             "naoqi_connected": self.session.is_connected(),
             "uptime": round(time.time() - START_TIME, 1),
             "timestamp": time.time(),
+            "audio": AUDIO.info(),
         }
 
     def status(self):
@@ -390,7 +421,6 @@ class Robot(object):
         return out
 
     def sensors(self):
-        names = [k for k, _ in TOUCH_KEYS] + [k for k, _ in BUMPER_KEYS] + [k for k, _ in SONAR_KEYS]
         keys = [v for _, v in TOUCH_KEYS] + [v for _, v in BUMPER_KEYS] + [v for _, v in SONAR_KEYS]
         keys += [BATTERY_KEY, BATTERY_CURRENT_KEY]
         values = self._memory_values(keys)
@@ -449,8 +479,7 @@ class Robot(object):
             return None
         available = self._try(lambda: list(tts.getAvailableLanguages()), None)
         if available is not None and name not in available:
-            raise ValueError("language %r not installed on this robot (available: %s)"
-                             % (name, ", ".join(available)))
+            raise ValueError("language %r not installed on this robot (available: %s)" % (name, ", ".join(available)))
         tts.setLanguage(name)
         return previous
 
@@ -462,6 +491,7 @@ class Robot(object):
         previous_language = self._ensure_language(tts, language)
         started = time.time()
         broadcast_from_thread("speech", {"state": "start", "text": text})
+        AUDIO.speaking_begin()
         try:
             if animated:
                 anim = self.svc("ALAnimatedSpeech")
@@ -472,11 +502,16 @@ class Robot(object):
             else:
                 tts.say(text)
         finally:
+            AUDIO.speaking_end()
             broadcast_from_thread("speech", {"state": "end", "text": text})
             if previous_language:
                 self._try(lambda: tts.setLanguage(previous_language))
-        return {"spoken": text, "duration": round(time.time() - started, 2), "animated": bool(animated),
-                "language": language or previous_language or None}
+        return {
+            "spoken": text,
+            "duration": round(time.time() - started, 2),
+            "animated": bool(animated),
+            "language": language or previous_language or None,
+        }
 
     def stop_speaking(self):
         self._try(lambda: self.svc("ALTextToSpeech").stopAll())
@@ -503,8 +538,9 @@ class Robot(object):
         reading = self._obstacle_ahead(distance)
         if reading is not None:
             side = "front" if distance >= 0 else "back"
-            raise ValueError("not moving: %s sonar shows an obstacle at %.2f m (pass force=true to override)"
-                             % (side, reading))
+            raise ValueError(
+                "not moving: %s sonar shows an obstacle at %.2f m (pass force=true to override)" % (side, reading)
+            )
 
     @staticmethod
     def _completed(result):
@@ -614,9 +650,43 @@ class Robot(object):
             life.setState(state)
         return {"state": state, "previous": current}
 
-    def set_awareness(self, enabled):
+    def set_awareness(self, enabled, tracking_mode=None, engagement_mode=None, stimuli=None):
+        """ALBasicAwareness on/off, optionally configuring how it tracks people.
+
+        Only ``Head`` tracking is safe near furniture: ``BodyRotation`` and
+        ``MoveContextually`` drive the base. Awareness pauses by itself while
+        another activity (our /move/head) uses the head motors and resumes after.
+        """
         ba = self.svc("ALBasicAwareness")
         enabled = as_bool(enabled, True)
+        result = {"enabled": enabled}
+        if enabled:
+            if tracking_mode is not None:
+                tracking_mode = to_native_str(tracking_mode)
+                if tracking_mode not in TRACKING_MODES:
+                    raise ValueError(
+                        "unknown tracking mode %r (use one of %s)" % (tracking_mode, ", ".join(TRACKING_MODES))
+                    )
+                ba.setTrackingMode(tracking_mode)
+                result["tracking_mode"] = tracking_mode
+            if engagement_mode is not None:
+                engagement_mode = to_native_str(engagement_mode)
+                if engagement_mode not in ENGAGEMENT_MODES:
+                    raise ValueError(
+                        "unknown engagement mode %r (use one of %s)" % (engagement_mode, ", ".join(ENGAGEMENT_MODES))
+                    )
+                ba.setEngagementMode(engagement_mode)
+                result["engagement_mode"] = engagement_mode
+            if not isinstance(stimuli, (list, tuple, set)) and stimuli is not None:
+                stimuli = [part.strip() for part in to_native_str(stimuli).split(",") if part.strip()]
+            if stimuli:  # an empty list leaves the stimulus configuration alone
+                wanted = set(to_native_str(name) for name in stimuli)
+                unknown = sorted(wanted - set(STIMULI))
+                if unknown:
+                    raise ValueError("unknown stimuli %s (use %s)" % (", ".join(unknown), ", ".join(STIMULI)))
+                for name in STIMULI:
+                    ba.setStimulusDetectionEnabled(name, name in wanted)
+                result["stimuli"] = sorted(wanted)
         try:
             ba.setEnabled(enabled)
         except AttributeError:  # older API
@@ -624,7 +694,7 @@ class Robot(object):
                 ba.startAwareness()
             else:
                 ba.stopAwareness()
-        return {"enabled": enabled}
+        return result
 
     def prepare(self, life_state="disabled", wake_up=True, posture=None, awareness=None):
         """Put the robot into a known state for external control.
@@ -645,17 +715,22 @@ class Robot(object):
         if life_state:
             step("autonomous_life", lambda: self.set_autonomous_life(life_state))
         if wake_up:
+
             def do_wake():
                 motion = self.svc("ALMotion")
                 if not self._try(motion.robotIsWakeUp, False):
                     motion.wakeUp()
                 self.halted = False
                 return True
+
             step("awake", do_wake)
         if posture:
             step("posture", lambda: self.set_posture(posture, 0.6))
         if awareness is not None:
-            step("awareness", lambda: self.set_awareness(awareness))
+            if as_bool(awareness, False):
+                step("awareness", lambda: self.set_awareness(True, tracking_mode="Head", stimuli=DEFAULT_STIMULI))
+            else:
+                step("awareness", lambda: self.set_awareness(False))
         return result
 
     # -- camera ---------------------------------------------------------------
@@ -665,8 +740,9 @@ class Robot(object):
         resolution = clamp(as_int(resolution, 2), 0, 3)  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
         color_space = 11  # RGB
         video = self.svc("ALVideoDevice")
-        handle = video.subscribeCamera("pepper_bridge_%d" % int(time.time() * 1000 % 100000),
-                                       camera, resolution, color_space, 5)
+        handle = video.subscribeCamera(
+            "pepper_bridge_%d" % int(time.time() * 1000 % 100000), camera, resolution, color_space, 5
+        )
         if not handle:
             raise RuntimeError("ALVideoDevice refused the camera subscription (too many subscribers?)")
         try:
@@ -734,8 +810,13 @@ class Robot(object):
             recorder.stopMicrophonesRecording()
         with open(filename, "rb") as fh:
             audio = fh.read()
-        return {"audio": base64.b64encode(audio).decode("ascii"), "format": "wav",
-                "sample_rate": 16000, "channels": 1, "duration": duration}
+        return {
+            "audio": base64.b64encode(audio).decode("ascii"),
+            "format": "wav",
+            "sample_rate": 16000,
+            "channels": 1,
+            "duration": duration,
+        }
 
     # -- tablet ---------------------------------------------------------------
 
@@ -743,8 +824,7 @@ class Robot(object):
         return "http://%s:%d/tablet/page" % (options.tablet_host, options.port)
 
     def tablet_text(self, text, title=None):
-        self.tablet_state = {"text": to_native_str(text), "title": to_native_str(title or ""),
-                             "updated": time.time()}
+        self.tablet_state = {"text": to_native_str(text), "title": to_native_str(title or ""), "updated": time.time()}
         tablet = self.svc("ALTabletService")
         if not self._tablet_shown:
             tablet.showWebview(self._tablet_page_url())
@@ -773,12 +853,190 @@ class Robot(object):
         return {}
 
 
+# ---------------------------------------------------------------------------
+# Microphone streaming. ALAudioDevice pushes 16 kHz mono PCM into
+# processRemote() on a NAOqi thread; frames are forwarded to /ws/audio clients
+# as binary WebSocket messages. Capture runs only while a client is connected
+# and is muted while the robot itself speaks (Pepper has no echo cancellation).
+# ---------------------------------------------------------------------------
+
+AUDIO_SERVICE_NAME = "PepperBridgeAudio"
+AUDIO_SAMPLE_RATE = 16000
+AUDIO_CHANNEL = 3  # ALAudioDevice channel: 0=all four (48 kHz only), 1=left, 2=right, 3=front, 4=rear
+AUDIO_MUTE_TAIL = 0.4  # seconds of capture still dropped after speech ends (room reverb, TTS tail)
+TTS_EVENT_TIMEOUT = 60.0  # a TTS "started" event older than this without a "done" no longer mutes
+AUDIO_MAX_BEHIND = 30  # frames (~5 s) a slow client may lag before it is disconnected
+
+
+class _AudioCallback(object):
+    """The object registered with qi: only processRemote is exposed to NAOqi."""
+
+    def __init__(self, tap):
+        self._tap = tap
+
+    def processRemote(self, nbOfChannels, nbOfSamplesByChannel, timeStamp, buffer):
+        self._tap.on_buffer(nbOfChannels, nbOfSamplesByChannel, timeStamp, buffer)
+
+
+class AudioTap(object):
+    """Owns the ALAudioDevice subscription and the speaking/muted state."""
+
+    def __init__(self, session):
+        self.session = session
+        self.qi_session = None
+        self.service_id = None
+        self.subscribed = False
+        self.speaking = 0  # nesting count of /speak calls in progress
+        self.tts_active = False  # ALTextToSpeech/Status says a sentence is being said (any source)
+        self.muted_until = 0.0
+        self.host_muted = False  # set by the host over /ws/audio ({"type": "mute", "muted": true})
+        self.frames = 0
+        self.dropped = 0
+        self.last_frame_at = 0.0
+        self.tts_started_at = 0.0
+        self._callback = _AudioCallback(self)
+        self._tts_subscriber = None
+        self._lock = threading.Lock()  # subscribe/unsubscribe
+        self._mute_lock = threading.Lock()  # the speaking counter
+        session.on_connect.append(self.register)
+
+    # -- NAOqi side (worker threads) -----------------------------------------
+
+    def register(self, session):
+        """Expose the callback as a qi service so ALAudioDevice can reach it (runs on every (re)connect).
+
+        A new NAOqi session has forgotten our subscription and any speech that was in
+        progress, so the mute state is reset and capture is restarted for connected clients.
+        """
+        self.subscribed = False
+        self.tts_active = False
+        self.host_muted = False
+        self.speaking = 0
+        self.qi_session = session
+        try:
+            self.service_id = session.registerService(AUDIO_SERVICE_NAME, self._callback)
+        except Exception as exc:
+            LOGGER.warning("could not register the audio service: %s", exc)
+            self.service_id = None
+            return
+        try:  # speech from any source (not only /speak) mutes capture
+            subscriber = session.service("ALMemory").subscriber("ALTextToSpeech/Status")
+            subscriber.signal.connect(self._on_tts_status)
+            self._tts_subscriber = subscriber  # keep a reference: the subscription dies with the object
+        except Exception as exc:
+            LOGGER.debug("ALTextToSpeech/Status events unavailable: %s", exc)
+        if AudioWebSocket.clients:
+            # Not inline: this hook may run under NaoqiSession's lock, which start() needs too.
+            _run_in_thread(AudioWebSocket.start_capture)
+
+    def start(self):
+        """Subscribe to ALAudioDevice (front microphone, 16 kHz) while a client is connected. Idempotent."""
+        with self._lock:
+            if self.subscribed or not AudioWebSocket.clients:
+                return self.info()
+            if self.service_id is None:
+                raise RuntimeError("audio service is not registered (NAOqi not connected?)")
+            audio = self.session.service("ALAudioDevice")
+            audio.setClientPreferences(AUDIO_SERVICE_NAME, AUDIO_SAMPLE_RATE, AUDIO_CHANNEL, 0)
+            audio.subscribe(AUDIO_SERVICE_NAME)
+            self.subscribed = True
+            LOGGER.info("Microphone streaming started")
+            return self.info()
+
+    def stop(self):
+        """Unsubscribe unless a client is still connected. Idempotent."""
+        with self._lock:
+            if not self.subscribed or AudioWebSocket.clients:
+                return self.info()
+            self.subscribed = False
+            try:
+                self.session.service("ALAudioDevice").unsubscribe(AUDIO_SERVICE_NAME)
+            except Exception as exc:
+                LOGGER.warning("audio unsubscribe failed: %s", exc)
+            LOGGER.info("Microphone streaming stopped")
+            return self.info()
+
+    def unregister(self):
+        """Shutdown: unsubscribe and drop the qi service so a restart can register the same name."""
+        AudioWebSocket.clients.clear()
+        self.stop()
+        if self.service_id is not None and self.qi_session is not None:
+            try:
+                self.qi_session.unregisterService(self.service_id)
+            except Exception as exc:
+                LOGGER.debug("unregisterService failed: %s", exc)
+        self.service_id = None
+
+    # -- mute bookkeeping (called from /speak worker threads and qi event threads) ----
+
+    def speaking_begin(self):
+        with self._mute_lock:
+            self.speaking += 1
+
+    def speaking_end(self):
+        with self._mute_lock:
+            self.speaking = max(0, self.speaking - 1)
+            self.muted_until = time.time() + AUDIO_MUTE_TAIL
+
+    def _on_tts_status(self, value):
+        try:
+            status = value[1]
+        except (TypeError, IndexError, KeyError):
+            return
+        if status == "started":
+            self.tts_active = True
+            self.tts_started_at = time.time()
+        elif status in ("done", "stopped", "thrown"):
+            self.tts_active = False
+            self.muted_until = time.time() + AUDIO_MUTE_TAIL
+
+    def muted(self):
+        if self.tts_active and time.time() - self.tts_started_at > TTS_EVENT_TIMEOUT:
+            self.tts_active = False  # a "started" whose "done" never came (NAOqi hiccup) must not mute forever
+        return self.speaking > 0 or self.tts_active or self.host_muted or time.time() < self.muted_until
+
+    def info(self):
+        return {
+            "streaming": self.subscribed,
+            "clients": len(AudioWebSocket.clients),
+            "sample_rate": AUDIO_SAMPLE_RATE,
+            "channels": 1,
+            "format": "pcm_s16le",
+            "muted": self.muted(),
+            "frames": self.frames,
+            "dropped": self.dropped,
+            "last_frame_age": round(time.time() - self.last_frame_at, 2) if self.last_frame_at else None,
+        }
+
+    # -- called by NAOqi on its own thread; must return quickly ---------------
+
+    def on_buffer(self, nb_channels, nb_samples, timestamp, buffer):
+        try:
+            self.frames += 1
+            self.last_frame_at = time.time()
+            if not self.subscribed or not AudioWebSocket.clients:
+                return
+            if self.muted():
+                self.dropped += 1
+                return
+            try:
+                data = bytes(buffer)
+            except Exception:
+                data = str(buffer)
+            main_ioloop().add_callback(AudioWebSocket.broadcast, data)
+        except Exception as exc:  # never let an error escape into libqi's thread
+            self.dropped += 1
+            LOGGER.debug("audio frame dropped: %s", exc)
+
+
 ROBOT = Robot(NAOQI)
+AUDIO = AudioTap(NAOQI)
 
 
 # ---------------------------------------------------------------------------
 # Base handlers
 # ---------------------------------------------------------------------------
+
 
 class JSONHandler(tornado.web.RequestHandler):
     """Parses a JSON body, checks the API key and runs NAOqi work off-loop."""
@@ -863,6 +1121,7 @@ class JSONHandler(tornado.web.RequestHandler):
 # Endpoint handlers (thin: parse args, delegate to ROBOT on a thread)
 # ---------------------------------------------------------------------------
 
+
 class HealthHandler(JSONHandler):
     @async_handler
     def get(self):
@@ -870,11 +1129,18 @@ class HealthHandler(JSONHandler):
             # Answer without touching NAOqi so deploy can tell "booting" from "dead".
             self.set_status(503)
             self.set_header("Content-Type", "application/json")
-            self.write(json.dumps({
-                "ok": False, "error": "naoqi_connecting", "naoqi_connected": False,
-                "bridge": "pepper_bridge", "version": BRIDGE_VERSION,
-                "uptime": round(time.time() - START_TIME, 1),
-            }))
+            self.write(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "naoqi_connecting",
+                        "naoqi_connected": False,
+                        "bridge": "pepper_bridge",
+                        "version": BRIDGE_VERSION,
+                        "uptime": round(time.time() - START_TIME, 1),
+                    }
+                )
+            )
             return self.finish()
         return self.run_in_thread(ROBOT.health)
 
@@ -926,8 +1192,9 @@ class VolumeHandler(JSONHandler):
 class MoveForwardHandler(JSONHandler):
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.move_forward, self.arg("distance", 0.5), self.arg("speed", 0.3),
-                                  as_bool(self.arg("force"), False))
+        return self.run_in_thread(
+            ROBOT.move_forward, self.arg("distance", 0.5), self.arg("speed", 0.3), as_bool(self.arg("force"), False)
+        )
 
 
 class MoveTurnHandler(JSONHandler):
@@ -939,15 +1206,20 @@ class MoveTurnHandler(JSONHandler):
 class MoveHeadHandler(JSONHandler):
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.move_head, self.arg("yaw", 0), self.arg("pitch", 0),
-                                  self.arg("speed", 0.2))
+        return self.run_in_thread(ROBOT.move_head, self.arg("yaw", 0), self.arg("pitch", 0), self.arg("speed", 0.2))
 
 
 class MoveToHandler(JSONHandler):
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.move_to, self.arg("x", 0), self.arg("y", 0),
-                                  self.arg("theta", 0), self.arg("speed"), as_bool(self.arg("force"), False))
+        return self.run_in_thread(
+            ROBOT.move_to,
+            self.arg("x", 0),
+            self.arg("y", 0),
+            self.arg("theta", 0),
+            self.arg("speed"),
+            as_bool(self.arg("force"), False),
+        )
 
 
 class StopHandler(JSONHandler):
@@ -996,8 +1268,7 @@ class PrepareHandler(JSONHandler):
 class PictureHandler(JSONHandler):
     @async_handler
     def get(self):
-        return self.run_in_thread(ROBOT.picture, self.get_argument("camera", "0"),
-                                  self.get_argument("resolution", "2"))
+        return self.run_in_thread(ROBOT.picture, self.get_argument("camera", "0"), self.get_argument("resolution", "2"))
 
 
 class LEDHandler(JSONHandler):
@@ -1005,8 +1276,15 @@ class LEDHandler(JSONHandler):
 
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.set_leds, self.group, self.arg("color"), self.arg("r", 0),
-                                  self.arg("g", 0), self.arg("b", 0), self.arg("duration", 0.5))
+        return self.run_in_thread(
+            ROBOT.set_leds,
+            self.group,
+            self.arg("color"),
+            self.arg("r", 0),
+            self.arg("g", 0),
+            self.arg("b", 0),
+            self.arg("duration", 0.5),
+        )
 
 
 class LEDEyesHandler(LEDHandler):
@@ -1032,7 +1310,14 @@ class AnimationListHandler(JSONHandler):
 class AwarenessHandler(JSONHandler):
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.set_awareness, self.arg("enabled", True))
+        stimuli = self.json_body.get("stimuli", self.get_arguments("stimuli") or None)
+        return self.run_in_thread(
+            ROBOT.set_awareness,
+            self.arg("enabled", True),
+            self.arg("tracking_mode"),
+            self.arg("engagement_mode"),
+            stimuli,
+        )
 
 
 class AutonomousLifeHandler(JSONHandler):
@@ -1045,6 +1330,13 @@ class AudioRecordHandler(JSONHandler):
     @async_handler
     def post(self):
         return self.run_in_thread(ROBOT.record_audio, self.arg("duration", 3.0))
+
+
+class AudioStreamHandler(JSONHandler):
+    """State of the microphone stream (see /ws/audio)."""
+
+    def get(self):
+        self.ok(AUDIO.info())
 
 
 class TabletTextHandler(JSONHandler):
@@ -1132,6 +1424,7 @@ def _safe(fn, *args):
 # WebSocket event push
 # ---------------------------------------------------------------------------
 
+
 class EventWebSocket(tornado.websocket.WebSocketHandler):
     """Push robot events (touch, bumper, sonar, battery, people, speech)."""
 
@@ -1146,8 +1439,9 @@ class EventWebSocket(tornado.websocket.WebSocketHandler):
             if key != options.api_key:
                 LOGGER.warning("WS client rejected: bad api key")
                 try:
-                    self.write_message(json.dumps({"type": "error", "data": {"error": "unauthorized"},
-                                                   "timestamp": time.time()}))
+                    self.write_message(
+                        json.dumps({"type": "error", "data": {"error": "unauthorized"}, "timestamp": time.time()})
+                    )
                 except Exception:
                     pass
                 self.close()
@@ -1155,11 +1449,11 @@ class EventWebSocket(tornado.websocket.WebSocketHandler):
         EventWebSocket.clients.add(self)
         LOGGER.info("WS client connected (%d total)", len(EventWebSocket.clients))
         try:
-            self.write_message(json.dumps({"type": "hello", "data": {"version": BRIDGE_VERSION},
-                                           "timestamp": time.time()}))
+            self.write_message(
+                json.dumps({"type": "hello", "data": {"version": BRIDGE_VERSION}, "timestamp": time.time()})
+            )
             if POLLER is not None and POLLER.last is not None:
-                self.write_message(json.dumps({"type": "sensors", "data": POLLER.last,
-                                               "timestamp": time.time()}))
+                self.write_message(json.dumps({"type": "sensors", "data": POLLER.last, "timestamp": time.time()}))
         except Exception:
             pass
 
@@ -1194,6 +1488,133 @@ class EventWebSocket(tornado.websocket.WebSocketHandler):
             cls.clients.discard(client)
 
 
+class AudioWebSocket(tornado.websocket.WebSocketHandler):
+    """Microphone stream: a JSON ``hello`` text frame, then binary frames of 16-bit PCM."""
+
+    clients = set()
+
+    def check_origin(self, origin):
+        return True
+
+    def open(self):
+        if options.api_key:
+            key = self.get_argument("api_key", "") or self.request.headers.get("X-API-Key", "")
+            if key != options.api_key:
+                LOGGER.warning("audio WS client rejected: bad api key")
+                self.send_json({"type": "error", "error": "unauthorized"})
+                self.close()
+                return
+        AudioWebSocket.clients.add(self)
+        LOGGER.info("audio WS client connected (%d total)", len(AudioWebSocket.clients))
+        self.behind = 0  # frames queued while the socket was still writing the previous ones
+        self.send_json(
+            {
+                "type": "hello",
+                "version": BRIDGE_VERSION,
+                "sample_rate": AUDIO_SAMPLE_RATE,
+                "channels": 1,
+                "format": "pcm_s16le",
+            }
+        )
+        _run_in_thread(AudioWebSocket.start_capture)
+
+    @staticmethod
+    def start_capture():
+        """Worker thread: subscribe and tell the clients; on failure drop them so they reconnect and retry."""
+        try:
+            info = AUDIO.start()
+            if info["streaming"]:
+                main_ioloop().add_callback(AudioWebSocket.broadcast_json, {"type": "state", "streaming": True})
+        except Exception as exc:
+            LOGGER.warning("microphone streaming failed to start: %s", exc)
+            main_ioloop().add_callback(AudioWebSocket.close_all, "%s" % exc)
+
+    def on_close(self):
+        AudioWebSocket.clients.discard(self)
+        LOGGER.info("audio WS client disconnected (%d total)", len(AudioWebSocket.clients))
+        if not AudioWebSocket.clients:
+            AUDIO.host_muted = False  # a host-side mute must not outlive the host
+            _run_in_thread(AUDIO.stop)
+
+    def on_message(self, message):
+        try:
+            data = json.loads(message)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(data, dict):
+            return
+        if data.get("type") == "ping":
+            self.send_json({"type": "pong", "timestamp": time.time()})
+        elif data.get("type") == "mute":
+            AUDIO.host_muted = bool(data.get("muted", True))
+            self.send_json({"type": "state", "streaming": AUDIO.subscribed, "muted": AUDIO.muted()})
+
+    def send_json(self, payload):
+        try:
+            self.write_message(json.dumps(payload))
+        except Exception:
+            pass
+
+    def _still_writing(self):
+        """True when the previous frames have not left the socket yet (slow or stalled host)."""
+        try:
+            return self.ws_connection.stream.writing()
+        except Exception:
+            return False
+
+    @classmethod
+    def broadcast(cls, data):
+        """Send one binary PCM frame to every client (IOLoop thread only).
+
+        Tornado 3.1 has no write-buffer limit, so a host that stops reading would make
+        the robot buffer audio without bound; clients that fall AUDIO_MAX_BEHIND frames
+        behind are disconnected instead (they reconnect and get a fresh stream).
+        """
+        dead = []
+        for client in list(cls.clients):
+            if client._still_writing():
+                client.behind += 1
+                if client.behind > AUDIO_MAX_BEHIND:
+                    LOGGER.warning("audio WS client too slow (%d frames behind); disconnecting", client.behind)
+                    dead.append(client)
+                    continue
+            else:
+                client.behind = 0
+            try:
+                client.write_message(data, binary=True)
+            except Exception:
+                dead.append(client)
+        for client in dead:
+            cls.clients.discard(client)
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    @classmethod
+    def broadcast_json(cls, payload):
+        for client in list(cls.clients):
+            client.send_json(payload)
+
+    @classmethod
+    def close_all(cls, error):
+        """IOLoop thread: report an error to every client and disconnect them."""
+        for client in list(cls.clients):
+            client.send_json({"type": "error", "error": error})
+            cls.clients.discard(client)
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+def _run_in_thread(fn, *args):
+    """Fire-and-forget NAOqi work from the IOLoop thread (errors are logged, never raised)."""
+    thread = threading.Thread(target=_safe, args=(fn,) + args)
+    thread.daemon = True
+    thread.start()
+
+
 def main_ioloop():
     """The IOLoop that serves requests (safe to reference from any thread)."""
     return IOLOOP if IOLOOP is not None else tornado.ioloop.IOLoop.instance()
@@ -1210,6 +1631,7 @@ def broadcast_from_thread(event_type, payload):
 # ---------------------------------------------------------------------------
 # Sensor poller (worker thread) -> edge-triggered events
 # ---------------------------------------------------------------------------
+
 
 class SensorPoller(object):
     POLL_INTERVAL = 0.25
@@ -1268,48 +1690,52 @@ class SensorPoller(object):
 # Application
 # ---------------------------------------------------------------------------
 
+
 def make_app():
-    return tornado.web.Application([
-        (r"/health", HealthHandler),
-        (r"/status", StatusHandler),
-        (r"/sensors", SensorsHandler),
-        (r"/speak", SpeakHandler),
-        (r"/speak/stop", StopSpeakingHandler),
-        (r"/volume", VolumeHandler),
-        (r"/move/forward", MoveForwardHandler),
-        (r"/move/turn", MoveTurnHandler),
-        (r"/move/head", MoveHeadHandler),
-        (r"/move/to", MoveToHandler),
-        (r"/stop", StopHandler),
-        (r"/emergency_stop", EmergencyStopHandler),
-        (r"/posture", PostureHandler),
-        (r"/wake_up", WakeUpHandler),
-        (r"/rest", RestHandler),
-        (r"/prepare", PrepareHandler),
-        (r"/picture", PictureHandler),
-        (r"/leds/eyes", LEDEyesHandler),
-        (r"/leds/chest", LEDChestHandler),
-        (r"/animation", AnimationHandler),
-        (r"/animations", AnimationListHandler),
-        (r"/awareness", AwarenessHandler),
-        (r"/autonomous_life", AutonomousLifeHandler),
-        (r"/audio/record", AudioRecordHandler),
-        (r"/tablet/text", TabletTextHandler),
-        (r"/tablet/web", TabletWebHandler),
-        (r"/tablet/image", TabletImageHandler),
-        (r"/tablet/hide", TabletHideHandler),
-        (r"/tablet/page", TabletPageHandler),
-        (r"/tablet/state", TabletStateHandler),
-        (r"/ws/events", EventWebSocket),
-    ])
+    return tornado.web.Application(
+        [
+            (r"/health", HealthHandler),
+            (r"/status", StatusHandler),
+            (r"/sensors", SensorsHandler),
+            (r"/speak", SpeakHandler),
+            (r"/speak/stop", StopSpeakingHandler),
+            (r"/volume", VolumeHandler),
+            (r"/move/forward", MoveForwardHandler),
+            (r"/move/turn", MoveTurnHandler),
+            (r"/move/head", MoveHeadHandler),
+            (r"/move/to", MoveToHandler),
+            (r"/stop", StopHandler),
+            (r"/emergency_stop", EmergencyStopHandler),
+            (r"/posture", PostureHandler),
+            (r"/wake_up", WakeUpHandler),
+            (r"/rest", RestHandler),
+            (r"/prepare", PrepareHandler),
+            (r"/picture", PictureHandler),
+            (r"/leds/eyes", LEDEyesHandler),
+            (r"/leds/chest", LEDChestHandler),
+            (r"/animation", AnimationHandler),
+            (r"/animations", AnimationListHandler),
+            (r"/awareness", AwarenessHandler),
+            (r"/autonomous_life", AutonomousLifeHandler),
+            (r"/audio/record", AudioRecordHandler),
+            (r"/audio/stream", AudioStreamHandler),
+            (r"/tablet/text", TabletTextHandler),
+            (r"/tablet/web", TabletWebHandler),
+            (r"/tablet/image", TabletImageHandler),
+            (r"/tablet/hide", TabletHideHandler),
+            (r"/tablet/page", TabletPageHandler),
+            (r"/tablet/state", TabletStateHandler),
+            (r"/ws/events", EventWebSocket),
+            (r"/ws/audio", AudioWebSocket),
+        ]
+    )
 
 
 def _connect_naoqi_in_background():
     """Connect to NAOqi with retries; start the sensor poller once connected."""
     if NAOQI.connect_with_retry():
         try:
-            LOGGER.info("Robot: %s, NAOqi %s", ROBOT.svc("ALSystem").robotName(),
-                        ROBOT.svc("ALSystem").systemVersion())
+            LOGGER.info("Robot: %s, NAOqi %s", ROBOT.svc("ALSystem").robotName(), ROBOT.svc("ALSystem").systemVersion())
         except Exception as exc:
             LOGGER.warning("Could not read robot identity: %s", exc)
         POLLER.start()
@@ -1322,7 +1748,7 @@ def _on_signal(signum, frame):
     """SIGTERM/SIGINT: halt the robot before the process disappears (deploy restarts do this)."""
     LOGGER.info("Signal %d received: halting robot and shutting down", signum)
     if NAOQI.is_connected():
-        _safe(ROBOT.halt)
+        _safe(ROBOT.halt)  # quick and safety-critical; the audio service is dropped after the loop stops
     if POLLER is not None:
         POLLER.stop()
     try:
@@ -1345,8 +1771,13 @@ def main():
     # answers 500 "not connected yet" until the background connect succeeds.
     app = make_app()
     app.listen(options.port)
-    LOGGER.info("Bridge listening on http://0.0.0.0:%d (events: ws://0.0.0.0:%d/ws/events)",
-                options.port, options.port)
+    LOGGER.info(
+        "Bridge listening on http://0.0.0.0:%d (events: ws://0.0.0.0:%d/ws/events, "
+        "microphone: ws://0.0.0.0:%d/ws/audio)",
+        options.port,
+        options.port,
+        options.port,
+    )
 
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
@@ -1359,6 +1790,7 @@ def main():
     LOGGER.info("Shutting down")
     POLLER.stop()
     if NAOQI.is_connected():
+        _safe(AUDIO.unregister)
         _safe(ROBOT.unsubscribe_extractors)
 
 

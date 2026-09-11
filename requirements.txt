@@ -23,6 +23,8 @@ pydantic>=2.9.0
 # Deploy script
 paramiko>=3.5.0
 
+# Voice input (optional): see requirements-voice.txt (sherpa-onnx or faster-whisper + numpy)
+
 # Testing
 pytest>=8.3.0
 pytest-asyncio>=0.24.0

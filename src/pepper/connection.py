@@ -33,6 +33,10 @@ class ConnectionConfig:
     def ws_url(self) -> str:
         return f"ws://{self.ip}:{self.bridge_port}/ws/events"
 
+    @property
+    def audio_ws_url(self) -> str:
+        return f"ws://{self.ip}:{self.bridge_port}/ws/audio"
+
 
 class PepperConnection:
     """Manages the connection to Pepper via the bridge server."""

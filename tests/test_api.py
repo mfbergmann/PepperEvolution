@@ -10,6 +10,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from src.ai.tools import TOOLS
+from src.audio import FakeTranscriber, VoiceInput, tone
 from src.communication.api import APIServer, execute_command
 from src.pepper.bridge_client import BridgeError
 from src.pepper.robot import Photo
@@ -102,6 +103,51 @@ class TestAPIServer:
         assert resp.status_code == 200 and len(resp.json()["history"]) == 2
         assert (await client.delete("/conversation/history")).json()["success"] is True
         assert (await client.get("/conversation/history")).json()["history"] == []
+
+    async def test_voice_endpoints_without_a_backend(self, client):
+        assert (await client.get("/voice/status")).json()["enabled"] is False
+        resp = await client.post("/voice/utterance", content=b"\x00" * 6400)
+        assert resp.status_code == 503
+
+    async def test_voice_utterance(self, mock_robot, mock_ai_manager, tmp_path):
+        voice = VoiceInput(mock_ai_manager, FakeTranscriber(["wave"]))
+        server = APIServer(
+            host="127.0.0.1", port=8000, ai_manager=mock_ai_manager, robot=mock_robot, web_dir=tmp_path, voice=voice
+        )
+        seen = []
+
+        async def cb(payload):
+            seen.append(payload)
+
+        voice.on_transcript(cb)
+        async with AsyncClient(transport=ASGITransport(app=server.app), base_url="http://test") as c:
+            status = (await c.get("/voice/status")).json()
+            assert status["enabled"] is True and status["backend"] == "fake"
+            resp = await c.post(
+                "/voice/utterance?client_id=abc", content=tone(0.5), headers={"Content-Type": "audio/pcm"}
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["text"] == "wave" and data["response"]["text"] == "Hello! I'm Pepper."
+            assert data["response"]["source"] == "voice" and data["response"]["client_id"] == "abc"
+            assert seen[-1]["delivered"] is True and seen[-1]["client_id"] == "abc" and seen[-1]["source"] == "ptt"
+            resp = await c.post("/voice/utterance", content=b"\x00" * 10)
+            assert resp.status_code == 400
+            resp = await c.post("/voice/utterance?sample_rate=0", content=tone(0.5))
+            assert resp.status_code == 422
+            resp = await c.post("/voice/utterance", content=b"\x00" * (16000 * 2 * 61))
+            assert resp.status_code == 413
+
+    async def test_voice_utterance_recognition_failure_is_an_error(self, mock_robot, mock_ai_manager, tmp_path):
+        transcriber = FakeTranscriber()
+        transcriber.transcribe = AsyncMock(side_effect=RuntimeError("model missing"))
+        voice = VoiceInput(mock_ai_manager, transcriber)
+        server = APIServer(
+            host="127.0.0.1", port=8000, ai_manager=mock_ai_manager, robot=mock_robot, web_dir=tmp_path, voice=voice
+        )
+        async with AsyncClient(transport=ASGITransport(app=server.app), base_url="http://test") as c:
+            resp = await c.post("/voice/utterance", content=tone(0.5))
+            assert resp.status_code == 502 and "model missing" in resp.json()["detail"]
 
     async def test_hub_broadcasts_responses(self, api_server, mock_ai_manager):
         sent = []
