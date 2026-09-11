@@ -37,6 +37,8 @@ pytest tests/test_bridge_server.py -q              # bridge Robot facade against
 pytest tests/test_bridge_integration.py -q         # starts the real bridge process with tests/fakenaoqi
 PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py   # under the robot's interpreter
 PEPPER_SKIP_INTEGRATION=1 pytest tests/            # unit tests only
+scripts/virtual_pepper.sh start && scripts/virtual_pepper.sh bridge                 # headless real NAOqi (setup in the script header)
+PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v   # the bridge against real NAOqi calls
 ```
 A Python 2.7.18 with Tornado 3.1.1 for the last command can be built with `mise install python@2.7.18` then `pip install tornado==3.1.1 "pillow<7"` into it.
 
@@ -74,6 +76,7 @@ Pepper Robot (NAOqi 2.5, Python 2.7)         Host (Python 3.12+)
 - **src/sensors/**, **src/actuators/** — thin boolean-returning wrappers kept for convenience.
 - **web/index.html** — single-file control panel served at `/`.
 - **tests/fakenaoqi/qi.py** — fake `qi` module so the bridge can run off-robot.
+- **scripts/virtual_pepper.sh** — headless virtual Pepper on NAOqi's desktop binary plus the bridge against it; **tests/test_virtual_naoqi.py** runs opt-in against any bridge URL (virtual or the robot).
 
 ### Key patterns
 

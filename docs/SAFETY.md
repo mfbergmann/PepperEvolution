@@ -8,7 +8,7 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 
 | What | Bound | Where | Why |
 |------|-------|-------|-----|
-| Obstacle guard | refuse `/move/forward`, `/move/to` when the sonar in the direction of travel reads under **0.45 m** (`force: true` overrides for direct commands only) | `OBSTACLE_DISTANCE`, `Robot._check_obstacle` | Pepper's sonars see 0.25 to 2.5 m; 0.45 m leaves stopping room at 0.3 m/s |
+| Obstacle guard | refuse `/move/forward`, `/move/to` when the sonar in the direction of travel reads under **0.45 m** (`force: true` overrides for direct commands only); a raw reading of exactly 0.0 means "no measurement" and does not block (NAOqi's own collision protection still applies) | `OBSTACLE_DISTANCE`, `Robot._check_obstacle`, `_obstacle_ahead` | Pepper's sonars see 0.25 to 2.5 m; 0.45 m leaves stopping room at 0.3 m/s |
 | Drive distance | **-2.0 to 2.0 m** per call | `Robot.move_forward` | one call never crosses a room |
 | Drive speed | **0.1 to 0.55 m/s** (`MAX_VEL_XY`); default 0.3 | `Robot.move_forward`, `move_to` | 0.55 is NAOqi's own maximum |
 | Turn | **-180 to 180°** per call; angular speed capped at 2.0 rad/s (`MAX_VEL_THETA`) | `Robot.turn` | |
@@ -19,7 +19,7 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 | Posture speed | **0.1 to 1.0** | `Robot.set_posture` | |
 | NAOqi collision protection | never disabled | (not touched) | NAOqi's own arm/base reflexes stay on; `completed: false` reports a cut-short move |
 | Motion while resting or halted | refused with a clear error; the bridge never wakes the robot implicitly | `Robot._ensure_awake` | a robot that stands up by itself surprises people |
-| Awareness tracking | off unless `PEPPER_AWARENESS=true` or "look at me"; then **Head** tracking only. `BodyRotation`/`MoveContextually` (which rotate or drive the base) must be asked for explicitly | `Robot.prepare`, `set_awareness` | the base must not move because someone walked past |
+| Awareness tracking | off unless `PEPPER_AWARENESS=true` or "look at me"; then **Head** tracking only. `BodyRotation`/`MoveContextually` (which rotate or drive the base) must be asked for explicitly. `/move/head` pauses tracking for **8 s** (`AWARENESS_RESUME_AFTER`) so the tracker and the model do not fight over the head | `Robot.prepare`, `set_awareness`, `_pause_awareness_for_head_move` | the base must not move because someone walked past |
 
 ## Stopping (bridge)
 
@@ -65,4 +65,4 @@ The model only sees the tools in `src/ai/tools.py`: speak, animations from a fix
 
 ## Not yet verified on the physical robot
 
-Every number above was chosen from the NAOqi 2.5 documentation and tested against a fake NAOqi. Milestone 0 in [ROADMAP.md](ROADMAP.md) walks through checking them on the robot: the obstacle threshold, the head envelope, speech volume and the microphone mute tail are the ones most likely to need tuning.
+Every number above was chosen from the NAOqi 2.5 documentation and tested against a fake NAOqi and against NAOqi's own desktop build (`scripts/virtual_pepper.sh`), which confirmed the method names, the head envelope clamping, the refusals while resting or halted, and the emergency-stop and wake-up sequence. Milestone 0 in [ROADMAP.md](ROADMAP.md) walks through checking the rest on the robot: the obstacle threshold, speech volume and the microphone mute tail are the ones most likely to need tuning.

@@ -24,6 +24,20 @@ cp env.example .env      # then edit: PEPPER_IP, ANTHROPIC_API_KEY
 
 Open http://localhost:8000. Everything works (chat, streaming speech, photos, events) except that the robot actions are only logged. This is the quickest way to check the API key and the model, and to get a feel for the tools. `python examples/basic_chat.py` gives the same in a terminal.
 
+## Testing against a virtual Pepper (no robot)
+
+NAOqi's own desktop build runs a headless Pepper on Linux; the bridge can be run against it under the robot's Python 2.7 and every NAOqi call it makes is checked for real (method names, argument shapes, refusals). What it cannot do: sonar, touch, battery and camera values, `ALAudioDevice` (so no microphone stream), `ALTabletService`, the animation package, audible speech. Setup and usage are in the header of `scripts/virtual_pepper.sh` (about 500 MB of downloads, once):
+
+```bash
+scripts/virtual_pepper.sh start      # NAOqi 2.5.10 desktop binary, Pepper model, tcp://127.0.0.1:9559
+scripts/virtual_pepper.sh bridge     # robot_bridge/pepper_bridge.py under Python 2.7 on http://127.0.0.1:8899
+PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v -s
+PEPPER_IP=127.0.0.1 BRIDGE_PORT=8899 python main.py       # the whole host stack, real model, virtual robot
+scripts/virtual_pepper.sh stop
+```
+
+Things the virtual robot taught us (September 2026): `wakeUp()` takes about 15 s there; putting Autonomous Life to `disabled` rests the robot, so wake it afterwards; the desktop build has no `Sound` stimulus for awareness (the bridge reports it as unavailable and carries on); `ALBasicAwareness` does not pause itself for raw head moves, so the bridge pauses it around `/move/head`; `ALAnimationPlayer` explains a missing package as "Wrong path format ... package/path".
+
 ## First test with the real robot
 
 The fuller, ordered checklist for the first session (what to verify endpoint by endpoint and what is most likely to need tuning) is Milestone 0 in [ROADMAP.md](ROADMAP.md).

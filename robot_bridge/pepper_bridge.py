@@ -112,6 +112,7 @@ BATTERY_CURRENT_KEY = "Device/SubDeviceList/Battery/Current/Sensor/Value"
 PEOPLE_KEY = "PeoplePerception/VisiblePeopleList"
 
 OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstacle
+AWARENESS_RESUME_AFTER = 8.0  # seconds a /move/head holds before people tracking takes the head back
 
 # ISO codes -> NAOqi language names. Full names pass through unchanged.
 LANGUAGE_NAMES = {
@@ -319,6 +320,7 @@ class Robot(object):
         self._tablet_shown = False
         self.halted = False  # set by emergency_stop; motion is refused until wake_up/prepare
         self.extractors = {}  # service name -> subscribed?
+        self._awareness_resume = None  # threading.Timer that resumes people tracking after a head move
         session.on_connect.append(self.subscribe_extractors)
 
     # -- extractors --------------------------------------------------------
@@ -436,7 +438,7 @@ class Robot(object):
             idx += 1
         for name, _ in SONAR_KEYS:
             v = values[idx]
-            sonar[name] = round(float(v), 3) if v is not None else None
+            sonar[name] = round(float(v), 3) if v is not None and v > 0.0 else None  # 0.0 = no measurement
             idx += 1
         battery_frac = values[idx]
         current = values[idx + 1]
@@ -460,10 +462,15 @@ class Robot(object):
         }
 
     def _obstacle_ahead(self, direction):
-        """Return the sonar reading (m) if something is closer than OBSTACLE_DISTANCE in that direction."""
+        """Return the sonar reading (m) if something is closer than OBSTACLE_DISTANCE in that direction.
+
+        A reading of 0.0 is "no measurement yet" (the extractor has not published; the sonars
+        cannot see closer than 0.25 m), not an obstacle: NAOqi's own collision protection still
+        guards the move.
+        """
         key = SONAR_KEYS[0][1] if direction >= 0 else SONAR_KEYS[1][1]
         reading = self._try(lambda: self.svc("ALMemory").getData(key))
-        if isinstance(reading, (int, float)) and reading < OBSTACLE_DISTANCE:
+        if isinstance(reading, (int, float)) and 0.0 < reading < OBSTACLE_DISTANCE:
             return reading
         return None
 
@@ -583,9 +590,47 @@ class Robot(object):
         speed = clamp(as_float(speed, 0.2), 0.05, 0.6)
         motion = self.svc("ALMotion")
         self._ensure_awake(motion)
+        paused = self._pause_awareness_for_head_move()
         motion.setStiffnesses("Head", 1.0)
         motion.setAngles(["HeadYaw", "HeadPitch"], [math.radians(yaw_deg), math.radians(pitch_deg)], speed)
-        return {"yaw": round(yaw_deg, 1), "pitch": round(pitch_deg, 1)}
+        return {"yaw": round(yaw_deg, 1), "pitch": round(pitch_deg, 1), "awareness_paused": paused}
+
+    # -- awareness vs. explicit head moves --------------------------------------
+    # ALBasicAwareness only pauses itself for Autonomous Life activities, not for raw
+    # setAngles calls (checked on the NAOqi 2.5.10 desktop build), so an enabled
+    # tracker would fight every /move/head. The bridge pauses it and resumes later.
+
+    def _pause_awareness_for_head_move(self):
+        ba = self.svc("ALBasicAwareness")
+        if not self._try(ba.isEnabled, False):
+            return False
+        if not self._try(ba.isAwarenessPaused, False):
+            self._try(ba.pauseAwareness)
+        self._schedule_awareness_resume()
+        return True
+
+    def _schedule_awareness_resume(self):
+        self._cancel_awareness_resume()
+        timer = threading.Timer(AWARENESS_RESUME_AFTER, self._resume_awareness)
+        timer.daemon = True
+        timer.start()
+        self._awareness_resume = timer
+
+    def _cancel_awareness_resume(self):
+        timer = self._awareness_resume
+        self._awareness_resume = None
+        if timer is not None:
+            timer.cancel()
+
+    def _resume_awareness(self):
+        self._awareness_resume = None
+        try:
+            ba = self.svc("ALBasicAwareness")
+            if ba.isEnabled() and ba.isAwarenessPaused():
+                ba.resumeAwareness()
+                LOGGER.info("people tracking resumed after the head move")
+        except Exception as exc:
+            LOGGER.debug("could not resume awareness: %s", exc)
 
     def stop(self):
         """Stop base motion and any running animation (animations are behaviours)."""
@@ -611,6 +656,7 @@ class Robot(object):
         refused until /wake_up or /prepare clears the halt.
         """
         self.halted = True
+        self._cancel_awareness_resume()
         motion = self.svc("ALMotion")
         self._try(lambda: self.svc("ALBehaviorManager").stopAllBehaviors())
         self._try(lambda: self.svc("ALTextToSpeech").stopAll())
@@ -660,6 +706,7 @@ class Robot(object):
         ba = self.svc("ALBasicAwareness")
         enabled = as_bool(enabled, True)
         result = {"enabled": enabled}
+        self._cancel_awareness_resume()
         if enabled:
             if tracking_mode is not None:
                 tracking_mode = to_native_str(tracking_mode)
@@ -684,9 +731,16 @@ class Robot(object):
                 unknown = sorted(wanted - set(STIMULI))
                 if unknown:
                     raise ValueError("unknown stimuli %s (use %s)" % (", ".join(unknown), ", ".join(STIMULI)))
+                unavailable = []
                 for name in STIMULI:
-                    ba.setStimulusDetectionEnabled(name, name in wanted)
-                result["stimuli"] = sorted(wanted)
+                    try:
+                        ba.setStimulusDetectionEnabled(name, name in wanted)
+                    except RuntimeError as exc:  # this NAOqi build lacks the detector (e.g. no sound localisation)
+                        LOGGER.warning("awareness stimulus %s not available: %s", name, str(exc).strip())
+                        unavailable.append(name)
+                result["stimuli"] = sorted(wanted - set(unavailable))
+                if unavailable:
+                    result["stimuli_unavailable"] = unavailable
         try:
             ba.setEnabled(enabled)
         except AttributeError:  # older API
@@ -694,6 +748,8 @@ class Robot(object):
                 ba.startAwareness()
             else:
                 ba.stopAwareness()
+        if enabled and self._try(ba.isAwarenessPaused, False):
+            self._try(ba.resumeAwareness)  # a head move may have paused it; "look at me" means now
         return result
 
     def prepare(self, life_state="disabled", wake_up=True, posture=None, awareness=None):

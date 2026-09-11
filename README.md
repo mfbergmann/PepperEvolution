@@ -121,7 +121,7 @@ PepperEvolution/
 | `OPENAI_API_KEY` | | Required for GPT |
 | `SPEAK_RESPONSES` / `TABLET_SUBTITLES` / `REACT_TO_TOUCH` | `true` | Behaviour switches |
 | `LED_STATE_SIGNALS` / `BACKCHANNEL_AFTER` | `true` / `2.0` | Eye colour state signals; seconds before a spoken filler |
-| `PEPPER_AWARENESS` | `false` | Head follows people and sounds (`true`; `keep` leaves it alone) |
+| `PEPPER_AWARENESS` | `false` | Head follows people and sounds (`true`; `keep` leaves it alone); head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |
 | `VOICE_INPUT` | `false` | Also stream the robot's microphone (hold-to-talk in the UI works without it) |
 | `API_PORT` | `8000` | Host port (REST + WebSocket + UI) |
@@ -130,6 +130,8 @@ PepperEvolution/
 
 ```bash
 pytest tests/ -q    # no robot needed; starts the real bridge process with a fake NAOqi
+scripts/virtual_pepper.sh start && scripts/virtual_pepper.sh bridge   # optional: NAOqi's own desktop build as a headless Pepper
+PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v
 ```
 
 ## Credits

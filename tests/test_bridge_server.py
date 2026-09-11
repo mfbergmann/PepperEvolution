@@ -299,6 +299,12 @@ class TestRobotFacade:
         turn = [c for c in calls(robot, "ALMotion") if c[0] == "moveTo"][0]
         assert abs(turn[1][2] - 1.5708) < 0.01 and result["completed"] is True
 
+    def test_zero_sonar_means_no_measurement_not_obstacle(self, robot):
+        clear_path(robot, front=0.0, back=0.0)
+        sensors = robot.sensors()
+        assert sensors["sonar"] == {"front": None, "back": None} and sensors["obstacle"] is False
+        assert robot.move_forward(0.3, 0.3)["completed"] is True  # NAOqi's own protection still applies
+
     def test_move_forward_refused_when_obstacle_ahead(self, robot):
         # FakeSession memory: front sonar 0.3 m, back 1.8 m
         with pytest.raises(ValueError, match="front sonar shows an obstacle at 0.30"):
@@ -325,13 +331,17 @@ class TestRobotFacade:
         set_angles = [c for c in motion if c[0] == "setAngles"][0]
         names, angles, speed = set_angles[1]
         assert names == ["HeadYaw", "HeadPitch"]
-        assert result == {"yaw": 119.5, "pitch": -35.0}  # pitch range shrinks when the head is turned
+        assert result == {
+            "yaw": 119.5,
+            "pitch": -35.0,
+            "awareness_paused": False,
+        }  # pitch range shrinks when the head is turned
         assert abs(angles[0] - 2.0857) < 1e-3 and abs(angles[1] + 0.6109) < 1e-3
         assert speed == 0.6
 
     def test_move_head_pitch_limit_straight_ahead(self, robot, bridge):
-        assert robot.move_head(0, 90, 0.2) == {"yaw": 0.0, "pitch": 25.5}
-        assert robot.move_head(0, -90, 0.2) == {"yaw": 0.0, "pitch": -40.5}
+        assert robot.move_head(0, 90, 0.2) == {"yaw": 0.0, "pitch": 25.5, "awareness_paused": False}
+        assert robot.move_head(0, -90, 0.2) == {"yaw": 0.0, "pitch": -40.5, "awareness_paused": False}
         assert bridge.head_pitch_limits(50) == (-35.2, 20.9)
 
     def test_emergency_stop_kills_behaviours_motion_and_rests(self, robot):
@@ -523,8 +533,24 @@ class TestAwareness:
         assert ("setTrackingMode", ("Head",)) in ba
         assert ("setStimulusDetectionEnabled", ("People", True)) in ba
         assert ("setStimulusDetectionEnabled", ("Movement", False)) in ba
-        assert ba[-1] == ("setEnabled", (True,))
+        assert ("setEnabled", (True,)) in ba and ba.index(("setEnabled", (True,))) > ba.index(
+            ("setTrackingMode", ("Head",))
+        )
         assert result == {"enabled": True, "tracking_mode": "Head", "stimuli": ["People", "Sound"]}
+
+    def test_a_stimulus_this_naoqi_lacks_is_reported_not_fatal(self, robot):
+        ba = robot.session.service("ALBasicAwareness")
+        original = ba._respond
+
+        def respond(method, args):
+            if method == "setStimulusDetectionEnabled" and args[0] == "Sound":
+                raise RuntimeError("ALBasicAwareness::setStimulusDetectionEnabled Wrong stimulus name, got: Sound")
+            return original(method, args)
+
+        ba._respond = respond
+        result = robot.set_awareness(True, stimuli=["People", "Sound"])
+        assert result["stimuli"] == ["People"] and result["stimuli_unavailable"] == ["Sound"]
+        assert ("setEnabled", (True,)) in ba.calls
 
     def test_stimuli_from_a_query_string(self, robot):
         assert robot.set_awareness(True, stimuli="People, Touch")["stimuli"] == ["People", "Touch"]
@@ -549,6 +575,50 @@ class TestAwareness:
         assert robot.set_awareness(False, tracking_mode="Head", stimuli=["People"]) == {"enabled": False}
         ba = calls(robot, "ALBasicAwareness")
         assert ba == [("setEnabled", (False,))]
+
+    def test_head_move_pauses_tracking_and_resumes_later(self, bridge, robot, monkeypatch):
+        import time as _time
+
+        monkeypatch.setattr(bridge, "AWARENESS_RESUME_AFTER", 0.05)
+        ba = robot.session.service("ALBasicAwareness")
+        state = {"enabled": True, "paused": False}
+        original = ba._respond
+
+        def respond(method, args):
+            if method == "isEnabled":
+                return state["enabled"]
+            if method == "isAwarenessPaused":
+                return state["paused"]
+            if method == "pauseAwareness":
+                state["paused"] = True
+                return None
+            if method == "resumeAwareness":
+                state["paused"] = False
+                return None
+            return original(method, args)
+
+        ba._respond = respond
+        result = robot.move_head(30, 0, 0.2)
+        assert result["awareness_paused"] is True and state["paused"] is True
+        robot.move_head(-30, 0, 0.2)  # a second move restarts the timer, no second pause call
+        assert ba.calls.count(("pauseAwareness", ())) == 1
+        for _ in range(50):
+            if not state["paused"]:
+                break
+            _time.sleep(0.01)
+        assert state["paused"] is False and ("resumeAwareness", ()) in ba.calls
+
+    def test_head_move_leaves_disabled_tracking_alone(self, robot):
+        result = robot.move_head(10, 0, 0.2)
+        assert result["awareness_paused"] is False
+        assert not any(c[0] == "pauseAwareness" for c in calls(robot, "ALBasicAwareness"))
+
+    def test_enabling_awareness_resumes_a_paused_tracker(self, robot):
+        ba = robot.session.service("ALBasicAwareness")
+        original = ba._respond
+        ba._respond = lambda m, a: True if m == "isAwarenessPaused" else original(m, a)
+        robot.set_awareness(True)
+        assert ba.calls[-1] == ("resumeAwareness", ())
 
     def test_prepare_enables_head_tracking_only(self, robot):
         result = robot.prepare("", False, None, True)

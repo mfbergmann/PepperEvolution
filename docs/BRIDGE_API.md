@@ -37,7 +37,7 @@ Optional. Start the bridge with `--api-key=SECRET`; clients must then send `X-AP
  "sonar": {"front": 1.23, "back": 2.01}, "obstacle": false,
  "people_count": 1, "people_ids": [7], "sonar_ok": true, "people_ok": true, "timestamp": 1757000000.0}
 ```
-Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/SubDeviceList/Platform/{Front,Back}/Sonar/Sensor/Value`). `obstacle` is true when either is under 0.45 m. The bridge subscribes to `ALSonar` and `ALPeoplePerception` itself (they only publish while subscribed, and Autonomous Life stops them when disabled); `sonar_ok`/`people_ok` report whether those subscriptions are in place, and they are renewed on every NAOqi reconnect.
+Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/SubDeviceList/Platform/{Front,Back}/Sonar/Sensor/Value`); a raw 0.0 (no measurement published yet, or no hardware) is reported as `null` and never counts as an obstacle. `obstacle` is true when either is under 0.45 m. The bridge subscribes to `ALSonar` and `ALPeoplePerception` itself (they only publish while subscribed, and Autonomous Life stops them when disabled); `sonar_ok`/`people_ok` report whether those subscriptions are in place, and they are renewed on every NAOqi reconnect.
 
 ### Preparing the robot
 
@@ -46,8 +46,8 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 | POST | `/prepare` | `{"autonomous_life": "disabled", "wake_up": true, "posture": "Stand", "awareness": true}` | Put the robot in a known state for external control. All fields optional; `autonomous_life: ""` leaves it alone. `awareness: true` turns on head-only people tracking with the `People`, `Sound` and `Touch` stimuli. Every step is attempted; failures are listed in `errors`. |
 | POST | `/wake_up` | | `ALMotion.wakeUp()` (motors on, StandInit); also clears the `halted` flag set by `/emergency_stop` |
 | POST | `/rest` | | `ALMotion.rest()` (safe posture, motors off) |
-| POST | `/autonomous_life` | `{"state": "disabled"}` | `solitary`, `interactive`, `safeguard`, `disabled` |
-| POST | `/awareness` | `{"enabled": true, "tracking_mode": "Head", "engagement_mode": "SemiEngaged", "stimuli": ["People", "Sound", "Touch"]}` | ALBasicAwareness on/off. Optional: `tracking_mode` `Head` (recommended; the others rotate or drive the base) / `BodyRotation` / `WholeBody` / `MoveContextually`; `engagement_mode` `Unengaged` / `SemiEngaged` / `FullyEngaged`; `stimuli` from `People`, `Touch`, `TabletTouch`, `Sound`, `Movement`, `NavigationMotion` (a list, or a comma-separated string in the query). Awareness pauses by itself while `/move/head` uses the head and resumes afterwards. |
+| POST | `/autonomous_life` | `{"state": "disabled"}` | `solitary`, `interactive`, `safeguard`, `disabled`. Leaving `solitary`/`interactive` for `disabled` puts the robot to rest (motors off); `/prepare` therefore sets the state first and wakes the robot afterwards, and a standalone call should be followed by `/wake_up`. |
+| POST | `/awareness` | `{"enabled": true, "tracking_mode": "Head", "engagement_mode": "SemiEngaged", "stimuli": ["People", "Sound", "Touch"]}` | ALBasicAwareness on/off. Optional: `tracking_mode` `Head` (recommended; the others rotate or drive the base) / `BodyRotation` / `WholeBody` / `MoveContextually`; `engagement_mode` `Unengaged` / `SemiEngaged` / `FullyEngaged`; `stimuli` from `People`, `Touch`, `TabletTouch`, `Sound`, `Movement`, `NavigationMotion` (a list, or a comma-separated string in the query). A stimulus this NAOqi cannot detect (the desktop build has no `Sound`) is skipped and listed in `stimuli_unavailable`. `/move/head` pauses tracking and resumes it 8 s after the last head move; enabling awareness resumes it at once. |
 
 ### Speech
 
@@ -63,7 +63,7 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 |--------|------|------|-------------|
 | POST | `/move/forward` | `{"distance": 0.5, "speed": 0.3, "force": false}` | Drive forward/backward (−2 to 2 m). `speed` is m/s (0.1–0.55, sets `MaxVelXY`). Refused (HTTP 500, `not moving: front sonar shows an obstacle at 0.31 m`) when the sonar in the direction of travel reads under 0.45 m, unless `force` is true. Refused while the robot is resting or halted (wake it first; motion never wakes the robot implicitly). `completed` is false when collision avoidance or `/stop` cut the move short. |
 | POST | `/move/turn` | `{"angle": 90}` | Turn in place (−180 to 180°, positive = left) |
-| POST | `/move/head` | `{"yaw": 0, "pitch": 0, "speed": 0.2}` | Head angles in degrees (yaw ±119.5, pitch −40.5..25.5 straight ahead, narrower when turned), non-blocking |
+| POST | `/move/head` | `{"yaw": 0, "pitch": 0, "speed": 0.2}` | Head angles in degrees (yaw ±119.5, pitch −40.5..25.5 straight ahead, narrower when turned), non-blocking Returns the clamped angles and `awareness_paused` (true when people tracking was paused for this move; it resumes 8 s after the last head move). |
 | POST | `/move/to` | `{"x": 0.5, "y": 0, "theta": 0, "speed": 0.3, "force": false}` | Move to a relative pose (theta in degrees); same sonar and awake checks as `/move/forward` |
 | POST | `/stop` | | Stops any running animation (`ALBehaviorManager.stopAllBehaviors`) and the base (`stopMove()` + `killMove()`) |
 | POST | `/emergency_stop` | | Stops all behaviours (animations, animated speech gestures) and speech, kills all motion tasks, then `rest()` (Pepper does not allow manual body stiffness control). Sets `halted`: every motion/animation call is refused until `/wake_up` or `/prepare`. |
