@@ -132,7 +132,10 @@ PepperEvolution/
 pytest tests/ -q    # no robot needed; starts the real bridge process with a fake NAOqi
 scripts/virtual_pepper.sh start && scripts/virtual_pepper.sh bridge   # optional: NAOqi's own desktop build as a headless Pepper
 PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v
+python scripts/smoke_host.py --fake            # the whole host stack with the real model, no robot
 ```
+
+Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md).
 
 ## Credits
 

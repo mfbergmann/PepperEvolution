@@ -39,6 +39,7 @@ PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py 
 PEPPER_SKIP_INTEGRATION=1 pytest tests/            # unit tests only
 scripts/virtual_pepper.sh start && scripts/virtual_pepper.sh bridge                 # headless real NAOqi (setup in the script header)
 PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v   # the bridge against real NAOqi calls
+python scripts/smoke_host.py --fake            # host stack + real model end to end (a few model calls); --bridge URL for a robot
 ```
 A Python 2.7.18 with Tornado 3.1.1 for the last command can be built with `mise install python@2.7.18` then `pip install tornado==3.1.1 "pillow<7"` into it.
 
@@ -130,6 +131,7 @@ Copy `env.example` to `.env`. Key variables:
 
 ## Reference Docs
 
+- `docs/HANDOFF.md` — **read first in a new session**: where the last session stopped, what is verified on which target (fake NAOqi, virtual Pepper, physical robot), and the exact commands to resume testing
 - `docs/BRIDGE_API.md` — Full HTTP/WebSocket endpoint reference for the bridge server
 - `docs/GETTING_STARTED.md` — Setup guide, first-test checklist and troubleshooting
 - `docs/ROADMAP.md` — Milestones (M0 first live session checklist, reactive layer, voice input, vision grounding, memory), testing without the robot, and non-goals
