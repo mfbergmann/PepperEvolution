@@ -35,8 +35,12 @@ class FakeService:
         self.life_state = "solitary"
 
     def __getattr__(self, method):
-        def call(*args):
+        def call(*args, **kwargs):
             self.calls.append((method, args))
+            if kwargs.get("_async"):
+                looping = method == "run" and "LED/" in str(args[0])  # like the robot's CircleEyes
+                self.last_future = FakeFuture(lambda: self._respond(method, args), finished=not looping)
+                return self.last_future
             return self._respond(method, args)
 
         return call
@@ -61,6 +65,9 @@ class FakeService:
             return self.awake
         if method == "wakeUp":
             self.awake = True
+            return None
+        if method == "rest":
+            self.awake = False
             return None
         if method == "getState":
             return self.life_state
@@ -92,6 +99,31 @@ class FakeService:
         if method == "getImageRemote":
             return [2, 1, 3, 11, 0, 0, bytearray([255, 0, 0, 0, 255, 0]), 0]
         return None
+
+
+class FakeFuture(object):
+    """Enough of qi.Future for the bridge: wait, isFinished, hasError, error, cancel."""
+
+    def __init__(self, fn=None, finished=True, error=None):
+        self.value = fn() if (fn is not None and finished and error is None) else None
+        self.finished = finished
+        self._error = error
+        self.cancelled = False
+
+    def wait(self, timeout_ms=None):
+        return None
+
+    def isFinished(self):
+        return self.finished
+
+    def hasError(self):
+        return self._error is not None
+
+    def error(self):
+        return self._error or ""
+
+    def cancel(self):
+        self.cancelled = True
 
 
 class FakeSubscriber:
@@ -351,8 +383,79 @@ class TestRobotFacade:
         assert not any(c[0] == "setStiffnesses" for c in motion)  # not allowed on Pepper's body
         assert ("stopAllBehaviors", ()) in calls(robot, "ALBehaviorManager")  # animations are behaviours
         assert ("stopAll", ()) in calls(robot, "ALTextToSpeech")
+        assert motion.index(("stopMove", ())) < motion.index(("rest", ()))  # rest right after killAll is a no-op
         assert result == {"resting": True, "awake": False, "halted": True}
         assert robot.status()["halted"] is True
+
+    def test_stop_speaking_ends_a_sentence_still_in_flight(self, robot):
+        class Pending(FakeFuture):
+            def __init__(self):
+                super(Pending, self).__init__(finished=False)
+                self.stops = 0
+
+            def cancel(self):
+                self.cancelled = True
+
+        pending = Pending()
+        robot._speech.add(pending)
+        tts = robot.session.service("ALTextToSpeech")
+        original = tts._respond
+
+        def respond(method, args):
+            if method == "stopAll":
+                pending.stops += 1
+                if pending.stops == 2:  # the second stopAll lands once the sentence has started
+                    robot._speech.discard(pending)
+            return original(method, args)
+
+        tts._respond = respond
+        assert robot.stop_speaking() == {}
+        assert pending.cancelled and pending.stops == 3 and not robot._speech  # one last stopAll after it ends
+
+    def test_a_stopped_sentence_is_not_an_error(self, robot):
+        anim = robot.session.service("ALAnimatedSpeech")
+        robot._speech_cancelled_at = __import__("time").time()
+        anim.say = lambda *a, **k: FakeFuture(error="say cancelled")
+        assert robot.speak("hello", animated=True)["spoken"] == "hello"
+
+    def test_animation_completes(self, robot):
+        result = robot.play_animation("animations/Stand/Gestures/Hey_1")
+        assert result["completed"] is True and result["animation"] == "animations/Stand/Gestures/Hey_1"
+        assert ("run", ("animations/Stand/Gestures/Hey_1",)) in calls(robot, "ALAnimationPlayer")
+
+    def test_looping_animation_is_stopped_at_the_time_limit(self, robot):
+        result = robot.play_animation("animations/LED/CircleEyes")
+        assert result["completed"] is False
+        assert ("stopAllBehaviors", ()) in calls(robot, "ALBehaviorManager")
+        assert robot.session.service("ALAnimationPlayer").last_future.cancelled is True
+
+    def test_emergency_stop_retries_rest_and_reports_the_truth(self, bridge, robot, monkeypatch):
+        monkeypatch.setattr(bridge, "REST_RETRY_DELAY", 0)
+        motion = robot.session.service("ALMotion")
+        original = motion._respond
+        rests = []
+
+        def respond(method, args):
+            if method == "rest":
+                rests.append(1)
+                if len(rests) < 3:
+                    return None  # the robot ignores it, like right after killAll()
+            return original(method, args)
+
+        motion._respond = respond
+        motion.awake = True
+        assert robot.emergency_stop() == {"resting": True, "awake": False, "halted": True}
+        assert len(rests) == 3
+
+    def test_emergency_stop_says_so_when_the_motors_stay_on(self, bridge, robot, monkeypatch):
+        monkeypatch.setattr(bridge, "REST_RETRY_DELAY", 0)
+        motion = robot.session.service("ALMotion")
+        original = motion._respond
+        motion._respond = lambda m, a: None if m == "rest" else original(m, a)
+        motion.awake = True
+        result = robot.emergency_stop()
+        assert result == {"resting": False, "awake": True, "halted": True}
+        assert calls(robot, "ALMotion").count(("rest", ())) == bridge.REST_ATTEMPTS
 
     def test_stop_also_stops_behaviours(self, robot):
         robot.stop()

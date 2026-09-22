@@ -112,6 +112,10 @@ BATTERY_CURRENT_KEY = "Device/SubDeviceList/Battery/Current/Sensor/Value"
 PEOPLE_KEY = "PeoplePerception/VisiblePeopleList"
 
 OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstacle
+MAX_ANIMATION_SECONDS = 20.0  # looping animations are stopped after this
+SPEECH_STOP_TIMEOUT = 3.0  # /speak/stop keeps stopping for at most this long
+REST_ATTEMPTS = 4  # emergency stop: rest() calls before reporting that the motors are still on
+REST_RETRY_DELAY = 0.3  # seconds between them
 AWARENESS_RESUME_AFTER = 8.0  # seconds a /move/head holds before people tracking takes the head back
 
 # ISO codes -> NAOqi language names. Full names pass through unchanged.
@@ -321,6 +325,9 @@ class Robot(object):
         self.halted = False  # set by emergency_stop; motion is refused until wake_up/prepare
         self.extractors = {}  # service name -> subscribed?
         self._awareness_resume = None  # threading.Timer that resumes people tracking after a head move
+        self._speech = set()  # qi futures of say() calls in progress, so /speak/stop can end them
+        self._speech_lock = threading.Lock()
+        self._speech_cancelled_at = 0.0
         session.on_connect.append(self.subscribe_extractors)
 
     # -- extractors --------------------------------------------------------
@@ -502,12 +509,10 @@ class Robot(object):
         try:
             if animated:
                 anim = self.svc("ALAnimatedSpeech")
-                try:
-                    anim.say(text, {"bodyLanguageMode": body_language})
-                except (TypeError, RuntimeError):
-                    anim.say(text)
+                if not self._say(lambda: anim.say(text, {"bodyLanguageMode": body_language}, _async=True)):
+                    self._say(lambda: anim.say(text, _async=True))  # older API without the config
             else:
-                tts.say(text)
+                self._say(lambda: tts.say(text, _async=True))
         finally:
             AUDIO.speaking_end()
             broadcast_from_thread("speech", {"state": "end", "text": text})
@@ -520,8 +525,43 @@ class Robot(object):
             "language": language or previous_language or None,
         }
 
+    def _say(self, start):
+        """Run a say() as a qi future that stop_speaking() can end. False if the call was rejected."""
+        future = start()
+        with self._speech_lock:
+            self._speech.add(future)
+        try:
+            future.wait()
+        finally:
+            with self._speech_lock:
+                self._speech.discard(future)
+        if future.hasError():
+            error = future.error()
+            if "bodyLanguageMode" in error or "argument" in error.lower():
+                return False
+            if time.time() - self._speech_cancelled_at > 1.0:  # a stopped say is not an error
+                raise RuntimeError(error)
+        return True
+
     def stop_speaking(self):
-        self._try(lambda: self.svc("ALTextToSpeech").stopAll())
+        """Silence the robot now, including a sentence ALAnimatedSpeech is still preparing.
+
+        On the robot, ALTextToSpeech.stopAll() arriving while animated speech is still being
+        prepared stops nothing and the sentence then plays in full. So cancel the futures and
+        keep stopping until every say() in progress has returned (bounded).
+        """
+        self._speech_cancelled_at = time.time()
+        tts = self.svc("ALTextToSpeech")
+        deadline = time.time() + SPEECH_STOP_TIMEOUT
+        while True:
+            with self._speech_lock:
+                pending = list(self._speech)
+            for future in pending:
+                self._try(future.cancel)
+            self._try(tts.stopAll)
+            if not pending or time.time() > deadline:
+                break
+            time.sleep(0.1)
         return {}
 
     def set_volume(self, level):
@@ -662,8 +702,23 @@ class Robot(object):
         self._try(lambda: self.svc("ALTextToSpeech").stopAll())
         self._try(motion.killMove)
         self._try(motion.killAll)
-        motion.rest()
-        return {"resting": True, "awake": False, "halted": True}
+        # On the robot (NAOqi 2.5.10, Pepper 1.8A) rest() issued right after killAll() returns at
+        # once and does nothing; after a moment, or after stopMove(), it works. So: stopMove, then
+        # rest, and check that the motors are really off, retrying briefly.
+        self._try(motion.stopMove)
+        resting = False
+        for attempt in range(REST_ATTEMPTS):
+            motion.rest()
+            if not self._try(motion.robotIsWakeUp, True):
+                resting = True
+                break
+            LOGGER.warning("emergency stop: rest() did not take (attempt %d), retrying", attempt + 1)
+            time.sleep(REST_RETRY_DELAY)
+        if not resting:
+            LOGGER.error(
+                "emergency stop: motion killed but the robot is still awake after %d rest() calls", REST_ATTEMPTS
+            )
+        return {"resting": resting, "awake": not resting, "halted": True}
 
     def set_posture(self, posture, speed):
         posture = str(posture or "Stand")
@@ -844,8 +899,18 @@ class Robot(object):
         motion = self.svc("ALMotion")
         self._ensure_awake(motion)
         started = time.time()
-        self.svc("ALAnimationPlayer").run(name)
-        return {"animation": name, "duration": round(time.time() - started, 2)}
+        # Some installed "animations" loop until stopped (animations/LED/CircleEyes, the Waiting
+        # set), so run() may never return. Run it as a qi future and stop it at a time limit.
+        future = self.svc("ALAnimationPlayer").run(name, _async=True)
+        future.wait(int(MAX_ANIMATION_SECONDS * 1000))
+        completed = future.isFinished()
+        if not completed:
+            LOGGER.warning("animation %s still running after %.0f s; stopping it", name, MAX_ANIMATION_SECONDS)
+            self._try(lambda: self.svc("ALBehaviorManager").stopAllBehaviors())
+            self._try(future.cancel)
+        elif future.hasError():
+            raise RuntimeError(future.error())
+        return {"animation": name, "duration": round(time.time() - started, 2), "completed": completed}
 
     def list_animations(self):
         behaviors = self.svc("ALBehaviorManager").getInstalledBehaviors()

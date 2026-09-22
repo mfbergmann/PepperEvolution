@@ -38,6 +38,8 @@ except ImportError:
 
 BRIDGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pepper_bridge.py")
 REMOTE_DIR = "/home/nao/pepper_bridge"
+# NAOqi's Python bindings are only on the path in a login shell; a plain ssh exec does not source it.
+NAOQI_ENV = "PYTHONPATH=/opt/aldebaran/lib/python2.7/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 REMOTE_SCRIPT = REMOTE_DIR + "/pepper_bridge.py"
 REMOTE_LOG = REMOTE_DIR + "/bridge.log"
 PID_FILE = REMOTE_DIR + "/bridge.pid"
@@ -72,6 +74,8 @@ def stop_bridge(client):
 
 def upload(client):
     run_cmd(client, f"mkdir -p {REMOTE_DIR}")
+    # Keep one copy of whatever bridge was there before (e.g. an earlier version) instead of losing it.
+    run_cmd(client, f"test -f {REMOTE_SCRIPT} && cp -p {REMOTE_SCRIPT} {REMOTE_SCRIPT}.previous || true")
     print(f"Uploading {os.path.basename(BRIDGE_FILE)} -> {REMOTE_SCRIPT}")
     sftp = client.open_sftp()
     try:
@@ -85,7 +89,7 @@ def start_bridge(client, port, api_key):
     # "cd DIR; cmd &" (not "cd && cmd &"): with && the job is a subshell and $! is not python's PID.
     cmd = (
         f"cd {REMOTE_DIR}; "
-        f"nohup python pepper_bridge.py --port={port} {api_key_arg} "
+        f"{NAOQI_ENV} nohup python pepper_bridge.py --port={port} {api_key_arg} "
         f"> {REMOTE_LOG} 2>&1 < /dev/null & echo $!"
     )
     print(f"Starting bridge on port {port}...")

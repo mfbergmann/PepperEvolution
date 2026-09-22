@@ -62,8 +62,12 @@ class TestAgainstRealNaoqi:
         assert plain["spoken"] == "Hello from the test" and plain["duration"] >= 0
         animated = await client.speak("Nice to meet you", animated=True)
         assert animated["animated"] is True
-        french = await client.speak("Bonjour", language="fr", animated=False)
-        assert french["language"] == "fr"
+        try:
+            french = await client.speak("Bonjour", language="fr", animated=False)
+            assert french["language"] == "fr"
+        except BridgeError as exc:  # the physical robot here only has English and Chinese voices
+            assert "not installed" in str(exc)
+            print("no French voice:", exc)
         assert (await client.status())["language"] == "English"
         await client.stop_speaking()
         assert (await client.set_volume(50))["level"] == 50
@@ -114,8 +118,10 @@ class TestAgainstRealNaoqi:
                 await client.play_animation("animations/Stand/Gestures/Hey_1")
             print("animation error:", info.value)
         else:
-            result = await client.play_animation(installed[0])
-            assert result["animation"] == installed[0]
+            wave = "animations/Stand/Gestures/Hey_1"
+            name = wave if wave in installed else next(a for a in installed if "/Gestures/" in a)
+            result = await client.play_animation(name)
+            assert result["animation"] == name and result["completed"] is True
 
     async def test_camera(self, client):
         try:
@@ -159,16 +165,27 @@ class TestAgainstRealNaoqi:
 
     async def test_audio_stream_starts_or_fails_cleanly(self, client):
         stream = AudioStream(ws_url("/ws/audio"), api_key=API_KEY)
+        frames = []
+
+        async def on_audio(pcm):
+            frames.append(len(pcm))
+
+        stream.on_audio(on_audio)
         await stream.start()
         try:
             for _ in range(80):
-                if stream.streaming or stream.last_error:
+                if (stream.streaming and frames) or stream.last_error:
                     break
                 await asyncio.sleep(0.1)
+            streaming, error = stream.streaming, stream.last_error  # stop() resets both
         finally:
             await stream.stop()
-        assert stream.streaming or stream.last_error, "neither frames nor an error within 8 s"
-        print("audio:", "streaming" if stream.streaming else stream.last_error)
+        assert streaming or error, "neither frames nor an error within 8 s"
+        if streaming:
+            assert frames and all(n % 2 == 0 for n in frames)  # whole 16-bit samples
+            print("audio: streaming, frame sizes", sorted(set(frames)))
+        else:
+            print("audio:", error)
         await asyncio.sleep(0.5)
         info = await client.audio_stream_info()
         assert info["clients"] == 0

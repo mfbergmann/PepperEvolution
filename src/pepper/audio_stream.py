@@ -5,7 +5,7 @@ The bridge sends one JSON text frame first::
 
     {"type": "hello", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le", "version": "2.2.0"}
 
-and then binary frames of 16-bit little-endian PCM (about 170 ms each) while
+and then binary frames of 16-bit little-endian PCM (85 ms each on the robot) while
 the robot is not speaking. ``{"type": "state", ...}`` and ``{"type": "error", ...}``
 text frames may follow. Reconnects automatically like :class:`EventStream`.
 """

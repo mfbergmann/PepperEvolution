@@ -25,7 +25,7 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 
 | What | Behaviour | Where |
 |------|-----------|-------|
-| `/emergency_stop` | `stopAllBehaviors` + `ALTextToSpeech.stopAll` + `killMove`/`killAll` + `rest()`; sets `halted` so every motion call is refused until `/wake_up` or `/prepare` | `Robot.emergency_stop`, `_ensure_awake` |
+| `/emergency_stop` | `stopAllBehaviors` + `ALTextToSpeech.stopAll` + `killMove`/`killAll` + `stopMove` + `rest()` retried up to **4** times until the motors are confirmed off (a `rest()` straight after `killAll()` is silently ignored on the robot); sets `halted` first so every motion call is refused until `/wake_up` or `/prepare`; reports `resting: false` if the motors stay on. Verified on Pepper 2026-09-22 | `Robot.emergency_stop`, `REST_ATTEMPTS`, `_ensure_awake` |
 | `/stop` | stops the base and running animations, keeps motors on | `Robot.stop` |
 | Never blocked | every NAOqi call runs on a worker thread; `/emergency_stop` and `/sensors` answer while the robot talks or drives | `JSONHandler.run_in_thread` |
 | Bridge exit | SIGTERM/SIGINT (a redeploy, a crash of the parent) halts the robot before the process disappears | `_on_signal` |
@@ -36,6 +36,8 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 | What | Bound | Where |
 |------|-------|-------|
 | Volume | **0 to 100** | `Robot.set_volume` |
+| Stop speaking | cancels the sentence in flight and keeps stopping for up to **3 s** until it has ended (a stop that arrives while animated speech is being prepared would otherwise be ignored) | `Robot.stop_speaking`, `SPEECH_STOP_TIMEOUT` |
+| Animations | stopped after **20 s** (some installed animations loop forever) | `Robot.play_animation`, `MAX_ANIMATION_SECONDS` |
 | Microphone stream | 16 kHz mono, front microphone, only while a `/ws/audio` client is connected; a client more than **30** frames (about 5 s) behind is disconnected so the robot never buffers audio without bound | `AudioTap`, `AudioWebSocket.broadcast` |
 | Self-hearing | capture muted during every `/speak`, on `ALTextToSpeech/Status` events, and for **0.4 s** after speech ends (`AUDIO_MUTE_TAIL`) | `AudioTap.muted` |
 | Audio recording | **0.5 to 15 s** per `/audio/record` | `Robot.record_audio` |

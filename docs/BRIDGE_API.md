@@ -129,7 +129,7 @@ On connect the client gets one JSON text frame, then binary frames:
 ```json
 {"type": "hello", "version": "2.2.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
 {"type": "state", "streaming": true}
-<binary> 5460 bytes = 2730 samples of signed 16-bit little-endian PCM (about 170 ms), repeated
+<binary> 2730 bytes = 1365 samples of signed 16-bit little-endian PCM (85 ms, measured on Pepper 1.8A), repeated
 ```
 
 Frames are **not sent while the robot is speaking** (Pepper has no echo cancellation): the bridge mutes capture around every `/speak`, on `ALTextToSpeech/Status` events from any other source, and for 0.4 s after speech ends. `{"type": "error", "error": "..."}` reports a failed subscription (for example NAOqi not connected yet).

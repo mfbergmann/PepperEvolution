@@ -37,8 +37,8 @@ _SUBSCRIBERS = {}  # service -> set of subscriber names
 _SERVICES = {}  # name -> object registered with Session.registerService
 _AUDIO_PUMPS = {}  # subscriber name -> _AudioPump thread (ALAudioDevice.subscribe)
 
-AUDIO_FRAME_SAMPLES = 2730  # ~170 ms at 16 kHz, like the robot
-AUDIO_FRAME_PERIOD = 0.17
+AUDIO_FRAME_SAMPLES = 1365  # 85 ms at 16 kHz, measured on the robot (NAOqi 2.5.10)
+AUDIO_FRAME_PERIOD = 0.085
 
 
 def _tone_frame(n, phase):
@@ -74,6 +74,31 @@ class _AudioPump(object):
 
     def stop(self):
         self.running = False
+
+
+class _Future(object):
+    """What a qi call with _async=True returns (already finished here)."""
+
+    def __init__(self, value):
+        self.value_ = value
+
+    def wait(self, timeout_ms=None):
+        return None
+
+    def isFinished(self):
+        return True
+
+    def hasError(self):
+        return False
+
+    def error(self):
+        return ""
+
+    def value(self):
+        return self.value_
+
+    def cancel(self):
+        return None
 
 
 class _Signal(object):
@@ -113,8 +138,10 @@ class _Service(object):
         self.name = name
 
     def __getattr__(self, method):
-        def call(*args):
+        def call(*args, **kwargs):
             LOG.info("%s.%s%s", self.name, method, args)
+            if kwargs.get("_async"):
+                return _Future(self._respond(method, args))
             return self._respond(method, args)
 
         return call

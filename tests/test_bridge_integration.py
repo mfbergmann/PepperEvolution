@@ -254,7 +254,7 @@ class TestBridgeEndToEnd:
                 await asyncio.sleep(0.05)
             assert len(frames) >= 3, "no audio frames within 8s"
             assert stream.sample_rate == 16000 and stream.channels == 1 and stream.streaming is True
-            assert all(len(f) == 2730 * 2 for f in frames)  # 170 ms of 16-bit mono at 16 kHz per frame
+            assert all(len(f) == 1365 * 2 for f in frames)  # 85 ms of 16-bit mono at 16 kHz, as on the robot
             info = await client.audio_stream_info()
             assert info["streaming"] is True and info["clients"] == 1
             dropped_before = info["dropped"]

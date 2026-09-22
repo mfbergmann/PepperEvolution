@@ -1,10 +1,10 @@
 # Handoff: where the work stopped and how to pick it up
 
-Written 2026-09-13 at the end of a long session. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ROADMAP.md` has the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
+Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ROADMAP.md` has the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
 
 ## State of the code
 
-- `main` at commit `070bd5d` (pushed, CI green on Python 3.12 and 3.13). The two big commits are `0e9ff49` (v2.2: reactive layer + voice input) and `070bd5d` (bridge tested against NAOqi's desktop build, three fixes).
+- `main` is pushed with CI green on Python 3.12 and 3.13. Milestones: `0e9ff49` (v2.2: reactive layer + voice input), `070bd5d` (bridge tested against NAOqi's desktop build), and the 2026-09-22 commit with the fixes from the first session on the robot. The robot runs that bridge now.
 - Host: FastAPI app on one port (REST, `/ws`, web UI with hold-to-talk), Claude Opus 5 with streaming tool calls, replies spoken sentence by sentence, local intents ("stop" cancels the model call and remaining tools in milliseconds), eye-LED state signals, backchannel fillers, optional voice input (`src/audio/`, sherpa-onnx or faster-whisper).
 - Bridge (`robot_bridge/pepper_bridge.py`, Python 2.7 + Tornado 3.1.1, runs on the robot): every NAOqi call on a worker thread, `/ws/events`, `/ws/audio` microphone stream muted while the robot speaks, awareness options, sonar guard, emergency stop that rests the robot and blocks motion until wake-up.
 - 415 tests (`pytest tests/`), plus the bridge suite under the robot's interpreter, plus opt-in tests against a real NAOqi.
@@ -13,14 +13,30 @@ Written 2026-09-13 at the end of a long session. Read this first in a new sessio
 
 | Layer | Fake NAOqi (`tests/fakenaoqi`) | Virtual Pepper (NAOqi 2.5.10 desktop build) | Physical robot |
 |-------|-------------------------------|---------------------------------------------|----------------|
-| Bridge HTTP/WebSocket behaviour, threading, auth, shutdown | yes (also under Python 2.7.18 + Tornado 3.1.1) | yes | **no** |
-| NAOqi method names and argument shapes (motion, posture, speech, animated speech, awareness, autonomous life, LEDs, memory, video, qi service registration) | n/a (fake answers everything) | yes, all 12 opt-in tests pass, every endpoint swept | **no** |
-| Microphone stream (`/ws/audio`) | yes (fake pumps frames) | no (`ALAudioDevice` absent on the desktop build; the error path is clean) | **no** |
-| Sonar / touch / bumpers / battery values, camera content, tablet, installed animations | fake values only | no hardware layer (values are 0, no packages) | **no** |
-| Host stack with the real model (tool calls, streaming speech, "stop" mid-turn, LED sequence, fillers) | yes (`scripts/smoke_host.py --fake`) | yes (`scripts/smoke_host.py --bridge http://127.0.0.1:8899`) | **no** |
+| Bridge HTTP/WebSocket behaviour, threading, auth, shutdown | yes (also under Python 2.7.18 + Tornado 3.1.1) | yes | yes |
+| NAOqi method names and argument shapes (motion, posture, speech, animated speech, awareness, autonomous life, LEDs, memory, video, qi service registration) | n/a (fake answers everything) | yes, all 12 opt-in tests pass, every endpoint swept | yes, 11 of 11 (base moves not run) |
+| Microphone stream (`/ws/audio`) | yes (fake pumps frames) | no (`ALAudioDevice` absent on the desktop build; the error path is clean) | yes, 85 ms frames, muted while speaking |
+| Sonar / touch / bumpers / battery values, camera content, tablet, installed animations | fake values only | no hardware layer (values are 0, no packages) | sonar, battery, camera, tablet, 396 animations yes; touch and bumpers not yet |
+| Host stack with the real model (tool calls, streaming speech, "stop" mid-turn, LED sequence, fillers) | yes (`scripts/smoke_host.py --fake`) | yes (`scripts/smoke_host.py --bridge http://127.0.0.1:8899`) | yes (`--no-move`) |
 | Voice input with a real recogniser (sherpa-onnx / faster-whisper) | fake transcriber only | no | **no** |
 
-**Nothing has run on the physical robot yet.** Milestone 0 in `ROADMAP.md` is the 15-step first-contact checklist.
+**First contact with the physical robot happened on 2026-09-22** (see "First session with the robot" below). Everything except base moves, touch events and voice recognition has now been checked on Pepper itself.
+
+## First session with the robot (2026-09-22)
+
+Pepper 1.8A ("Juliette" body), NAOqi 2.5.10.7, Python 2.7.6, Tornado 3.1.1, Pillow 3.1.1, Atom E3845. Voices installed: **English and Chinese only**. 396 animations (Hey_1…10, Bow, Explain, Thinking, ShowSky, Please, No, …; `GET /animations`). A v1 bridge from February 2026 was on the robot; deploy now keeps it as `pepper_bridge.py.previous`.
+
+Passed on the robot: deploy and health, status, sensors (sonar front 0.57 m to the desk, back 0.35 m to the wall, so `obstacle` true), `/prepare` (solitary → disabled did not rest the robot here, unlike the desktop build), plain and animated speech, the language check (French refused with the installed list), eye and chest LEDs, head moves with clamping, Hey_1, camera at QVGA and VGA (good exposure), microphone stream with self-muting (0 frames delivered during speech), tablet text, awareness with all three stimuli (`Sound` exists on the robot) and the pause around head moves, emergency stop mid-speech and wake-up, `tests/test_virtual_naoqi.py` (11 of 11, base moves deselected), and `scripts/smoke_host.py --no-move` with the real model (it looked left, handled the missing French voice, turned its eyes green, waved, and stopped a story on "stop").
+
+Bugs that only the hardware showed, all fixed and redeployed:
+
+- `import qi` fails in a non-login ssh shell; `deploy.py` now sets `PYTHONPATH=/opt/aldebaran/lib/python2.7/site-packages`. Without this the bridge dies at import.
+- **Emergency stop did not rest the robot**: `ALMotion.rest()` right after `killAll()` returns at once and does nothing. The bridge now calls `stopMove()` in between, retries `rest()` until `robotIsWakeUp()` is false, and reports the real state.
+- Some "animations" loop forever (`animations/LED/CircleEyes`, the first entry in the list); `/animation` now runs as a qi future and stops it after 20 s (`completed: false`).
+- `ALTextToSpeech.stopAll()` arriving while animated speech is still being prepared stops nothing, so "stop" took about 8 s to land. Speech now runs as qi futures and `/speak/stop` keeps stopping until the sentence has ended; the whole stop path takes about 1.2 s.
+- Microphone frames are 85 ms (1365 samples), not the 170 ms the docs implied; docs and the fake now match.
+
+Still to do on the robot: base moves (needs a clear floor and someone watching; the robot was parked half a metre from a desk), touch and bumper events (need a person), `people` events, voice recognition with a real backend (`STT_BACKEND=sherpa`), `VOICE_INPUT=true`, and deciding the defaults listed below. Idea for the model: put the installed voices into the system prompt's robot state so it does not try French first.
 
 ## Things learned that are not obvious from the docs
 
