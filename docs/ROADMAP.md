@@ -41,7 +41,19 @@ Checklist (in order; stop and fix before moving on):
 
 Things most likely to need adjusting on the day: `bodyLanguageMode` config on `ALAnimatedSpeech.say`, head-pitch comfort limits, the 0.45 m obstacle threshold, speech volume, the microphone mute tail (0.4 s) and the energy-detector thresholds, and which animations are actually installed. [SAFETY.md](SAFETY.md) lists every bound.
 
-## Milestone 1: reactive layer (implemented in v2.2, unverified on the robot)
+**Status after the first session on the robot (2026-09-22):** steps 1 to 6, 8 to 11 and 13 passed; 7, 12, 14 and 15 are partly done. Open items:
+
+- Step 3: hold a hand in front of the sonar and watch the value change (values were read, `sonar_ok` true, but not checked against a moving hand).
+- Step 7: head moves done; `turn 30` and `forward 0.3` with and without an obstacle deferred until there is a bigger, clear space.
+- Step 8: the emergency stop was tested during speech, not during an animation.
+- Step 11: the tablet fetched the page, but nobody looked at the tablet to confirm the text appeared.
+- Step 12: tracking on/off and the pause around head moves work; not yet watched following a person walking past.
+- Step 14: the host ran end to end with the model (`scripts/smoke_host.py`), but the web UI was not opened on the robot and `examples/basic_chat.py` was not run.
+- Step 15: the robot microphone path works; hold-to-talk from the browser is untested.
+
+Five bugs only the hardware showed were fixed on the day (deploy path, emergency-stop rest, looping animations, speech stop, microphone frame size); see HANDOFF.md.
+
+## Milestone 1: reactive layer (implemented in v2.2, verified on the robot 2026-09-22)
 
 Goal: Pepper looks alive while Claude is thinking, without any model call.
 
@@ -52,11 +64,12 @@ Goal: Pepper looks alive while Claude is thinking, without any model call.
 - [x] Reflexes stay on the bridge: collision protection, sonar guard, halt on emergency stop, microphone mute while speaking.
 - [ ] Chest LED for errors; an idle "thinking" gesture (animation) instead of, or in addition to, the filler.
 - [x] `move_head` pauses awareness and a bridge-side timer resumes it 8 s later, so the model's gaze commands hold (found on the virtual robot: NAOqi only pauses tracking for its own activities).
+- [x] Spoken touch reactions on the robot: one short reply per touch, gestures chosen by the model, a double touch gives one reply.
 - [ ] Tune on the robot: filler delay, LED colours in daylight, whether the `Sound` stimulus makes the head twitch during conversation, the 8 s resume delay.
 
 Acceptance: perceived latency in a conversation drops; no model calls are made by this layer.
 
-## Milestone 2: voice input (implemented in v2.2, unverified on the robot)
+## Milestone 2: voice input (implemented in v2.2, verified on the robot 2026-09-22)
 
 Goal: people talk to Pepper instead of typing.
 
@@ -64,7 +77,8 @@ Goal: people talk to Pepper instead of typing.
 - [x] Host: `src/audio/` with two backends behind one interface: `sherpa-onnx` streaming transducer with its own endpointing (recommended; partial transcripts, ~80 MB zipformer or the 2026 Nemotron streaming model), and `faster-whisper` per utterance behind an energy endpointer. Finals go to `process_user_input(source="voice")`; control phrases are intents.
 - [x] Turn taking: hold-to-talk in the web UI (browser microphone, raw PCM to `POST /voice/utterance`); the robot microphone path is opt-in with `VOICE_INPUT`.
 - [x] Transcript logging (`VOICE_RECORD_DIR`) for tuning on real audio.
-- [ ] Measure end-of-speech to first spoken word on the robot; target under 2 s (the literature reports 4 to 9 s for naive cascades, 1.35 s for a well-engineered one).
+- [x] Measured on the robot: 7-12.5 s from the final transcript to the first sound at first; after the "speak first" prompt and filler changes, 2.6-3.9 s, plus about 1 s of end-of-speech silence before the transcript. Target is still under 2 s from end of speech; the model comparison below is the next step.
+- [x] Acceptance met: a five-turn spoken conversation with tool use (head turns, photos, gestures, the quiet intent) through Pepper's own microphone, twice.
 - [ ] Barge-in: let a spoken "stop" interrupt while Pepper is speaking. Today the bridge mutes the microphone for the whole reply (sentences follow each other with a 0.4 s tail), so a spoken "stop" only lands between turns; typed, button and hold-to-talk stops work at any time. Needs either echo cancellation on the host (the bridge would have to stream during speech) or keyword spotting on the muted-out audio; not planned before M0 shows how much Pepper hears of itself.
 - [ ] A neural VAD (Silero/TEN through sherpa-onnx) in front of the whisper path if the energy detector proves too crude in the lab.
 
@@ -90,7 +104,25 @@ Goal: Claude can act on what it sees, not just describe it.
 
 Acceptance: "look at the person on the left", "is the door open?", "go towards the chair" work reliably.
 
-## Milestone 4: memory and people
+## Milestone 4: world model (continuous perception)
+
+Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Today the camera is used only when the model calls `take_photo`, people events reach the web UI but not the AI, and the model's state block does not include who is present.
+
+Two layers feeding one host-side world model:
+
+1. **Always-on, on the robot, free.** NAOqi's own people perception (count and IDs, already polled by the bridge), face detection, engagement zones (distance bands), gaze analysis (is the person looking at Pepper), sound localisation. First step: debounce the people events on the bridge (a count is reported only once it has held for about a second; the first live session showed it flickering between 1 and 2, and 0 and 1, several times a second), and add `person_arrived` / `person_left` / `looking_at_me` edge events.
+2. **Periodic scene understanding, on the host.** A background task grabs a frame every 10-20 s, and at once when layer 1 reports a change, and asks a fast vision model for a short structured description (people and rough positions, what they are doing, notable objects, changes since last time). A VGA photo costs about 0.6 s through the bridge; continuous video would load the robot's Atom CPU and cost per frame, so this stays event-driven and low-rate. The vision model is chosen with the same method as the spoken-turn comparison.
+
+The world model (host, in memory): people with first-seen / last-seen, zone and engagement; the latest scene summary with its timestamp; a short log of recent events. It is read in two places:
+
+- a compact "around you" line in the dynamic system block on every turn, so the model knows who is present and that someone has just joined a conversation;
+- arrival and departure events routed through the same rate-limited reaction path as touches, so Pepper can greet a newcomer without interrupting a running reply.
+
+Constraints: frames are kept in memory only, never written to disk, and Pepper shows that it is looking (for example an eye or chest LED state) while the camera is in use; the scene summaries in the world model are text. Knowing *who* someone is (face or voice identity) is Milestone 5 and builds on this.
+
+Acceptance: someone walks up and Pepper greets them within a few seconds, unprompted; "who's here?" and "what's on the desk?" are answered from the world model without a new photo when the last look is recent; no frame is stored.
+
+## Milestone 5: memory and people
 
 Goal: Pepper remembers who it talked to and what was said.
 
@@ -98,7 +130,7 @@ Goal: Pepper remembers who it talked to and what was said.
 - Face or voice identity through an external service; NAOqi's people IDs are session-local.
 - Keep tool count small; multi-step task completion on social robots is still fragile in the literature.
 
-## Milestone 5: robustness and operations
+## Milestone 6: robustness and operations
 
 - Bridge autostart on robot boot (`autoload.ini`) and a watchdog.
 - Latency budget per turn in the log; per-sentence speech timing.

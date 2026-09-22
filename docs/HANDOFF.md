@@ -103,4 +103,4 @@ The previous session's standing instruction from the user: once Pepper is on the
 
 ## Next milestones after M0
 
-M3 vision grounding (`look_at(x, y)` from a point in the last photo, verify-after-act), M4 memory and people identity, M5 operations (bridge autostart, latency budget, session recording). Small reactive-layer leftovers: chest LED for errors, an idle "thinking" gesture, queue policy for speech that arrives while a turn runs.
+the spoken-turn model comparison (roadmap, next test session), M3 vision grounding (`look_at(x, y)` from a point in the last photo, verify-after-act), M4 world model (debounced people events, periodic scene understanding, an "around you" line in the model's context, greeting newcomers), M5 memory and people identity, M6 operations (bridge autostart, latency budget, session recording). Small reactive-layer leftovers: chest LED for errors, an idle "thinking" gesture, queue policy for speech that arrives while a turn runs.

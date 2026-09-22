@@ -52,7 +52,7 @@ Design lessons applied or planned:
 | Event-driven vision, never streamed video to the model | Measured +0.4 to +1.6 s per image in a 2026 Pepper study | Done: photos on demand as tool results |
 | Gestures as discrete intents mapped to an animation library | Gesture-heads paper; RLHF gesture paper found generated motion "stiff and unnatural" | Done: animation tags and `play_animation` with the installed list |
 | Action chunking: batch several primitives per model turn | Every VLA | Done: multiple tool calls per round, speech streamed by sentence |
-| Explicit memory and relationship state | ARIS (2026), agent-architecture evaluation | Roadmap M4 |
+| Explicit memory and relationship state | ARIS (2026), agent-architecture evaluation | Roadmap M5 |
 | Robot described as safety-bounded tools | Model Hardware Standard | Done in spirit; publish a descriptor when the spec is open |
 
 ## Autonomous OS (autonomous.ai, June 2026)
