@@ -87,3 +87,6 @@ dmypy.json
 
 # Saved voice utterances for tuning recognition
 recordings/
+
+# Model and speech-to-text comparison outputs
+results/

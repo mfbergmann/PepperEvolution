@@ -92,6 +92,18 @@ Goal: pick the model (and effort) that gives the best spoken conversation on Pep
 - Also try the recogniser's end-of-speech silence at 0.6 s instead of 1.0 s (`rule2_min_trailing_silence`), checking that people are not cut off mid-sentence.
 - Speech-to-text comparison, alongside: run the spoken part with `VOICE_RECORD_DIR=recordings` (each utterance is saved as a WAV with the live transcript beside it), correct a copy of each transcript into a `.ref.txt`, and compare offline with `scripts/compare_stt.py recordings --sherpa <zipformer dir> --sherpa <nemotron dir> --whisper small`. Candidates: today's 2023 streaming zipformer (about 80 MB of weights), NVIDIA's Nemotron speech streaming 0.6B int8 (2026, about 630 MB, same library and API, more accurate), faster-whisper `small` per utterance, and, if local accuracy disappoints, a hosted recogniser with its own end-of-turn detection (Deepgram, AssemblyAI; needs an account and sends audio off the machine). Judge word error rate on your own voice in that room, recognition time, and end-of-turn delay.
 
+### Results, typed phase (2026-09-22, `scripts/compare_models.py`, seven prompts per configuration on the robot)
+
+| Configuration | First words (median) | Answered in words first | Total turn (median) | Cost for 7 turns |
+|---------------|---------------------:|------------------------:|--------------------:|-----------------:|
+| Opus 5, effort low | 3.0 s | 7 of 7 | 17.9 s | $0.104 |
+| Opus 5.5, effort low | 3.1 s | 4 of 7 | 25.8 s | $0.074 |
+| Sonnet 5, effort low | 3.1 s | 4 of 7 | 18.9 s | $0.043 |
+| Sonnet 5, effort medium | 2.8 s | 6 of 7 | 16.4 s | $0.043 |
+| Haiku 4.5 | 1.9 s | 6 of 7 | 21.9 s | $0.033 |
+
+Times are from sending the text to Pepper's first spoken sentence, so the spoken latency adds about 1 s of end-of-speech detection. Every configuration described the photos accurately (checked against the images), waved with an inline gesture tag, and got the factual answer right. Differences: Opus 5 was the most consistent at speaking first but costs two to three times more; Opus 5.5 at low effort was slower, used fillers more often and gave the longest replies; Sonnet 5 at medium effort was as fast as at low, spoke first more often and cost the same; Haiku 4.5 was clearly fastest and cheapest but its descriptions were vaguer and it sometimes narrated its own steps aloud ("Now let me take a photo…"). One run of seven prompts, so single turns are noisy (the multi-step prompt produced 8-9 s outliers for Sonnet). Finalists for the spoken phase: **Sonnet 5 at medium** (best balance) and **Haiku 4.5** (fastest), with Opus 5 as the reference.
+
 ## Milestone 3: vision grounding
 
 Goal: Claude can act on what it sees, not just describe it.
