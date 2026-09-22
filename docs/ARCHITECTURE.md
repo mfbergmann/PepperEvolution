@@ -66,7 +66,7 @@ One structure on the host that holds what Pepper currently believes about its su
 
 A single conversational model holds the dialogue, decides what to do, calls tools and speaks. One model rather than several keeps one personality and one line of context: the person is talking to one Pepper. Its reply streams sentence by sentence to the robot's voice, gestures go inline in the speech, and it is told to start answering in words before acting.
 
-**Status:** built (Claude, configurable with `AI_MODEL` / `AI_EFFORT`). The next test session compares candidate models for spoken turns.
+**Status:** built (Claude, configurable with `AI_MODEL` / `AI_EFFORT`). Five configurations were compared on the robot on 2026-09-22; Sonnet 5 at medium effort is the working choice.
 
 ### Beyond the four layers
 
@@ -79,9 +79,9 @@ A single conversational model holds the dialogue, decides what to do, calls tool
 |-----|---------------|-------|-------|
 | Control phrases, safety, state signals | host and bridge | milliseconds | none |
 | People and face detection, tracking | on the robot (NAOqi) | continuous | NAOqi's own |
-| Speech to text | host CPU | about 0.07 s of compute per audio second | sherpa-onnx streaming zipformer today; alternatives compared in the roadmap |
+| Speech to text | host CPU | about 0.3 s of compute per audio second, final about 0.2 s after you stop | NVIDIA Nemotron speech streaming via sherpa-onnx (chosen 2026-09-22: 6 % word errors in the open room vs 37 % for the older zipformer) |
 | Scene description for the world model | cloud | every 10-20 s | a fast vision model, chosen by comparison |
-| Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model, chosen by comparison |
+| Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model: Sonnet 5 at medium effort, chosen by comparison on 2026-09-22 |
 | Reflection (should I act?) | cloud | every tens of seconds | a small, cheap model, or the mind at low effort |
 
 The rule behind the table: specialised models may observe and summarise, but only the mind speaks and acts. That keeps speed where it matters without splitting Pepper into several personalities.

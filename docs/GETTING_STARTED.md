@@ -80,10 +80,10 @@ Typing always works. To let people *talk* to Pepper:
 1. Install a recogniser on the host (CPU only, no extra API key):
    ```bash
    pip install -r requirements-voice.txt        # sherpa-onnx + numpy
-   wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
-   tar xf sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
+   wget https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2
+   tar xf sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2
    ```
-   and in `.env`: `STT_BACKEND=sherpa` and `STT_MODEL=/path/to/sherpa-onnx-streaming-zipformer-en-2023-06-26`.
+   and in `.env`: `STT_BACKEND=sherpa` and `STT_MODEL=/path/to/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25`. In a noisy open room this model got 6 % of words wrong where the smaller 2023 zipformer (`sherpa-onnx-streaming-zipformer-en-2023-06-26`, 80 MB of weights) got 37 % wrong; the zipformer is still fine for a quiet room or a slow machine (see the comparison in ROADMAP.md).
    Alternative: `pip install faster-whisper`, `STT_BACKEND=whisper`, `STT_MODEL=base` (or `small` for better accuracy; both run per utterance, so replies start a little later).
 2. **Hold-to-talk in the browser** now works: press and hold the microphone button, speak, release. The browser needs a secure context for the microphone, so open the UI at `http://localhost:8000` on the machine running `main.py` (or put it behind https); on a plain `http://<ip>:8000` page the button explains why it cannot record.
 3. **Robot microphone**: set `VOICE_INPUT=true` and the host streams Pepper's front microphone from the bridge (`/ws/audio`), cuts it into utterances and answers what people say near the robot. The bridge mutes the stream while Pepper talks, so Pepper does not answer itself. Check `curl http://10.0.100.100:8888/audio/stream` to see frames flowing (`streaming`, `frames`, `dropped`).

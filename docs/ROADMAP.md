@@ -116,6 +116,23 @@ Three blind rounds of the same five spoken prompts, one model per round:
 
 The recogniser struggled in the open room: "I pepper", "Looked here left", "Hydropper", "What is to day state", "Glowed up bernoia". Recognition, not the model, is now the weak point of the spoken loop; the utterances of all three rounds are saved in `recordings/round*` for the speech-to-text comparison. All three models said they did not know the date: the state line only gave weekday and time, now fixed to include the full date.
 
+### Decision (2026-09-22)
+
+The user judged Sonnet 5 at medium effort best in the spoken rounds; one caveat noted: it described glasses the user does not wear. `.env` now uses `AI_MODEL=claude-sonnet-5`, `AI_EFFORT=medium`. Opus 5 remains the code default in `main.py` for anyone without a `.env`.
+
+### Results, speech-to-text comparison (2026-09-22, `scripts/compare_stt.py`, offline on the 15 recordings from the spoken rounds)
+
+References were drafted from the prompts given in each round (the uncertain ones are listed in `recordings/REFERENCES.md` for correction). One clip holds only the word "Look" (2.1 s; every recogniser missed the rest), so it was probably cut short by the live recogniser's end-of-speech detection; it is excluded from the second column.
+
+| Recogniser | Word error rate, all 15 | Without the cut clip | Compute per audio second | Delay after end of speech |
+|------------|------------------------:|---------------------:|-------------------------:|--------------------------|
+| sherpa-onnx streaming zipformer (2023, today's) | 40.3 % | 36.5 % | 0.07 s | streams; final at the endpoint |
+| NVIDIA Nemotron speech streaming 0.6B int8, 560 ms chunks (2026) | 11.9 % | 6.3 % | 0.31 s | streams; final about 0.2 s later than the zipformer (max 1 s) |
+| faster-whisper base | 16.4 % | 12.7 % | 0.19 s | per utterance, about 0.5 s after the endpoint |
+| faster-whisper small | 6.0 % | 0.0 % | 0.42 s | per utterance, about 1.4 s after the endpoint |
+
+The zipformer's mistakes are exactly the ones that derailed the spoken rounds ("Hydropper", "Looked here left", "What is to day state", "Blow numbernorium" for "Hello Pepper how are you"). Nemotron fixes almost all of them while staying a streaming recogniser with its own endpointing and partial results, at a small latency cost; Whisper small is the most accurate but adds about 1.4 s to every turn and would need the energy endpointer, which is weak in a noisy room. **Nemotron is now the default** (`STT_MODEL` in `.env`; 633 MB in `~/.local/share/pepper-models/`, loads in 2.6 s). Whisper small stays an option as a second, more accurate pass on the final transcript if Nemotron's errors matter in practice. Next live check: whether the "Look" clip was the person pausing or the recogniser cutting off early, and whether 1.0 s of end-of-speech silence is right with Nemotron.
+
 ## Milestone 3: vision grounding
 
 Goal: Claude can act on what it sees, not just describe it.

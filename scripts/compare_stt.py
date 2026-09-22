@@ -60,7 +60,7 @@ def reference(path: Path) -> Optional[str]:
 
 
 async def run(args) -> int:
-    clips = sorted(Path(args.recordings).glob("utterance_*.wav"))
+    clips = sorted(Path(args.recordings).rglob("utterance_*.wav"))  # subfolders too (one per session or round)
     if not clips:
         print(f"no utterance_*.wav in {args.recordings} (record with VOICE_RECORD_DIR)")
         return 1
@@ -82,7 +82,9 @@ async def run(args) -> int:
     }
     for clip in clips:
         pcm, ref = load(clip), reference(clip)
-        print(f"\n{clip.name} ({duration(pcm):.1f}s)" + (f"  ref: {ref}" if ref else "  (no .ref.txt)"))
+        print(
+            f"\n{clip.parent.name}/{clip.name} ({duration(pcm):.1f}s)" + (f"  ref: {ref}" if ref else "  (no .ref.txt)")
+        )
         for name, t in backends:
             result = await t.transcribe(pcm)
             tot = totals[name]
