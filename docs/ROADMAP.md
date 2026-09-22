@@ -41,15 +41,7 @@ Checklist (in order; stop and fix before moving on):
 
 Things most likely to need adjusting on the day: `bodyLanguageMode` config on `ALAnimatedSpeech.say`, head-pitch comfort limits, the 0.45 m obstacle threshold, speech volume, the microphone mute tail (0.4 s) and the energy-detector thresholds, and which animations are actually installed. [SAFETY.md](SAFETY.md) lists every bound.
 
-**Status after the first session on the robot (2026-09-22):** steps 1 to 6, 8 to 11 and 13 passed; 7, 12, 14 and 15 are partly done. Open items:
-
-- Step 3: hold a hand in front of the sonar and watch the value change (values were read, `sonar_ok` true, but not checked against a moving hand).
-- Step 7: head moves done; `turn 30` and `forward 0.3` with and without an obstacle deferred until there is a bigger, clear space.
-- Step 8: the emergency stop was tested during speech, not during an animation.
-- Step 11: the tablet fetched the page, but nobody looked at the tablet to confirm the text appeared.
-- Step 12: tracking on/off and the pause around head moves work; not yet watched following a person walking past.
-- Step 14: the host ran end to end with the model (`scripts/smoke_host.py`), but the web UI was not opened on the robot and `examples/basic_chat.py` was not run.
-- Step 15: the robot microphone path works; hold-to-talk from the browser is untested.
+**Status after the first session on the robot (2026-09-22):** every step passed except the base moves in step 7 (turn and drive), which wait for a bigger, clear space. Checked with a person present: the front sonar reads 0.32 m with a hand in front of the base and 0.7 m without (the sonars are in the base, near the floor); the emergency stop during a gesture stops it and rests the robot in 4.5 s; the tablet showed the test text; head tracking locked on to a person in 59 of 60 samples and followed them from -48 to +83 degrees; the web UI with typed chat and hold-to-talk worked.
 
 Five bugs only the hardware showed were fixed on the day (deploy path, emergency-stop rest, looping animations, speech stop, microphone frame size); see HANDOFF.md.
 
