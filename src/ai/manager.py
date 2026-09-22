@@ -212,7 +212,7 @@ class AIManager:
         )
         await self._signal("thinking")
         backchannel: Optional[asyncio.Task] = None
-        if speak and source == "user" and self.backchannel_after > 0:
+        if speak and source in ("user", "voice") and self.backchannel_after > 0:
             backchannel = asyncio.create_task(self._backchannel(speaker), name="backchannel")
         all_tool_calls: List[Dict[str, Any]] = []
         photo: Optional[Photo] = None
@@ -255,9 +255,16 @@ class AIManager:
                 finally:
                     self._chat_task = None
                 await speaker.flush()  # each model message ends a sentence, even mid-tool-loop
-                if backchannel is not None:
-                    backchannel.cancel()  # the model has answered; a filler now would talk over a tool
+                if backchannel is not None and (response.text or speaker.first_text_at is not None):
+                    backchannel.cancel()  # words are coming; no filler needed
                     backchannel = None
+                elif backchannel is not None and response.tool_calls:
+                    # The model wants to act before saying anything: say the filler now, before the robot
+                    # goes quiet for the tool (an animation alone can take four seconds), not later over it.
+                    backchannel.cancel()
+                    backchannel = None
+                    if not self._hush and not self.robot.halted:
+                        await speaker.say_filler(random.choice(FILLERS))
 
                 if response.is_error:
                     self._drop_dangling_user_message()

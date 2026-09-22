@@ -302,7 +302,7 @@ class TestBackchannel:
         result = await manager.process_user_input("hi")
         assert result["spoken"] == ["Hi."]
 
-    async def test_no_filler_once_the_model_has_answered_with_a_tool_call(self, mock_robot, mock_ai_provider):
+    async def test_filler_before_a_silent_tool_call(self, mock_robot, mock_ai_provider):
         manager = manager_for(mock_robot, mock_ai_provider, backchannel_after=0.02)
         order = []
         first = tools(("move_forward", {"distance": 0.3}))
@@ -321,9 +321,44 @@ class TestBackchannel:
 
         mock_robot.connection.bridge.move_forward = AsyncMock(side_effect=slow_move)
         mock_ai_provider.chat = AsyncMock(side_effect=chat)
+        spoken_at_move = []
+        mock_robot.connection.bridge.speak.side_effect = lambda text, **kw: spoken_at_move.append((text, list(order)))
         result = await manager.process_user_input("come here")
-        assert result["spoken"] == ["Arrived."]  # no "One moment." while the robot is already moving
+        assert len(result["spoken"]) == 2 and result["spoken"][0] in FILLERS and result["spoken"][1] == "Arrived."
+        assert spoken_at_move[0][1] == []  # the filler is said before the robot starts moving, not over it
         assert order == ["move-start", "move-end"]
+
+    async def test_no_filler_when_the_model_speaks_before_its_tool(self, mock_robot, mock_ai_provider):
+        manager = manager_for(mock_robot, mock_ai_provider, backchannel_after=0.02)
+        first = AIResponse(
+            text="Let me look.",
+            tool_calls=[ToolCall(id="t0", name="take_photo", input={})],
+            stop_reason="tool_use",
+            model="claude-opus-5",
+        )
+
+        async def chat(messages, tools=None, system=None, on_text=None):
+            if len(messages) == 1:
+                await on_text("Let me look.")
+                return first
+            await on_text("A desk.")
+            return text("A desk.")
+
+        mock_ai_provider.chat = AsyncMock(side_effect=chat)
+        result = await manager.process_user_input("what do you see?")
+        assert result["spoken"] == ["Let me look.", "A desk."]
+
+    async def test_voice_turns_get_fillers_too(self, mock_robot, mock_ai_provider):
+        manager = manager_for(mock_robot, mock_ai_provider, backchannel_after=0.02)
+
+        async def chat(messages, tools=None, system=None, on_text=None):
+            await asyncio.sleep(0.1)
+            await on_text("Here you go.")
+            return text("Here you go.")
+
+        mock_ai_provider.chat = AsyncMock(side_effect=chat)
+        result = await manager.process_user_input("think about it", source="voice")
+        assert result["spoken"][0] in FILLERS
 
     async def test_no_filler_for_event_turns(self, mock_robot, mock_ai_provider):
         manager = manager_for(mock_robot, mock_ai_provider, backchannel_after=0.02)

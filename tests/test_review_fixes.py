@@ -168,7 +168,9 @@ class TestSpeechAndTools:
         assert result["spoken"] == ["Sure, let me look.", "Nice room!"]
 
     async def test_halt_mid_turn_ends_the_turn(self, mock_robot, mock_ai_provider):
-        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=False)
+        manager = AIManager(
+            mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=False, backchannel_after=0
+        )  # fillers have their own tests
         both = AIResponse(
             text="",
             stop_reason="tool_use",
