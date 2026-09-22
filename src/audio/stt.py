@@ -190,6 +190,16 @@ class WhisperTranscriber(Transcriber):
         return " ".join(p for p in parts if p).strip()
 
 
+def sentence_case(text: str) -> str:
+    """The English zipformer writes in capitals ("HELLO PEPPER"); make it read like a sentence."""
+    text = " ".join(text.split())
+    if text and text.isupper():
+        text = text.lower()
+        text = text[0].upper() + text[1:]
+        text = " ".join("I" if w == "i" else ("I'" + w[2:] if w.startswith("i'") else w) for w in text.split(" "))
+    return text
+
+
 SHERPA_TAIL_SECONDS = 0.66  # what sherpa-onnx's own examples feed before input_finished()
 
 
@@ -269,7 +279,7 @@ class SherpaTranscriber(Transcriber):
     def _result_text(self, stream: Any) -> str:
         result = self._recognizer.get_result(stream)
         text = result if isinstance(result, str) else getattr(result, "text", str(result))
-        return text.strip()
+        return sentence_case(text)
 
     def _decode(self, stream: Any):
         while self._recognizer.is_ready(stream):

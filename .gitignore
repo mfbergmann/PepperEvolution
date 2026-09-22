@@ -84,3 +84,6 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Saved voice utterances for tuning recognition
+recordings/

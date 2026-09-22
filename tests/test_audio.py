@@ -210,3 +210,12 @@ class TestWhisperFiltering:
         result = await t.transcribe(tone(0.5))
         assert result.text == "hi" and result.final and result.duration == 0.5 and result.backend == "whisper"
         await t.close()
+
+
+class TestSentenceCase:
+    def test_capitals_become_a_sentence(self):
+        from src.audio.stt import sentence_case
+
+        assert sentence_case("HELLO PEPPER I'M HERE AND I SEE YOU") == "Hello pepper I'm here and I see you"
+        assert sentence_case("  Already  fine ") == "Already fine"
+        assert sentence_case("") == ""
