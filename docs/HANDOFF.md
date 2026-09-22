@@ -36,7 +36,9 @@ Bugs that only the hardware showed, all fixed and redeployed:
 - `ALTextToSpeech.stopAll()` arriving while animated speech is still being prepared stops nothing, so "stop" took about 8 s to land. Speech now runs as qi futures and `/speak/stop` keeps stopping until the sentence has ended; the whole stop path takes about 1.2 s.
 - Microphone frames are 85 ms (1365 samples), not the 170 ms the docs implied; docs and the fake now match.
 
-Still to do on the robot: base moves (needs a clear floor and someone watching; the robot was parked half a metre from a desk), touch and bumper events (need a person), `people` events, voice recognition with a real backend (`STT_BACKEND=sherpa`), `VOICE_INPUT=true`, and deciding the defaults listed below. Idea for the model: put the installed voices into the system prompt's robot state so it does not try French first.
+Touch, bumper and people events (guided check, 2026-09-22): all seven passed. Head touches arrive as all three head sensors (front, middle, rear) within 0.4 s, hands and front-right and back bumpers as single press/release pairs, people-count changes within about 1 s. Finding: people detection flickers, alternating between 1 and 2 people (and 0 and 1) several times a second, with a phantom second person at the desk, so `people` events need debouncing before anything reacts to them (nothing does yet; touch and bumper reactions are unaffected).
+
+Still to do on the robot: base moves (deferred until there is a bigger space; the robot was parked half a metre from a desk), the host's spoken touch reactions (`REACT_TO_TOUCH`), voice recognition with a real backend (`STT_BACKEND=sherpa`), `VOICE_INPUT=true`, and deciding the defaults listed below. Idea for the model: put the installed voices into the system prompt's robot state so it does not try French first.
 
 ## Things learned that are not obvious from the docs
 
