@@ -80,7 +80,12 @@ Acceptance: a five-turn spoken conversation with tool use, end to end.
 
 Goal: pick the model (and effort) that gives the best spoken conversation on Pepper, now that the recogniser and the "speak first" prompt have taken latency from 7-12.5 s to 2.6-3.9 s after the transcript (2026-09-22). The remaining time is mostly the model's first round.
 
-- Candidates: `claude-opus-5` at `effort=low` (today's default), `claude-sonnet-5` at low and medium, `claude-haiku-4-5` (no effort parameter), each through `AI_MODEL` / `AI_EFFORT` with nothing else changed. Check current model ids and prices with the API docs before the session.
+- Candidates, each through `AI_MODEL` / `AI_EFFORT` with nothing else changed:
+  - `claude-opus-5` at `effort=low` (today's default; $5 / $25 per million tokens).
+  - `claude-opus-5-5` at `effort=low` ($4 / $20). Thinking cannot be turned off on this model; effort is the only control and its default is `medium`, so `AI_EFFORT=low` must be set explicitly. The provider needs no code change (it never disables thinking or forces a tool, and already sends `output_config.effort`). Two things to watch: its thinking blocks only replay on the same model, so switching models mid-conversation drops them; and text it writes between tool calls that runs longer than a sentence or two comes back as hidden "progress update" thinking blocks instead of text, which would swallow a spoken preamble such as "Let me have a look." Short preambles are expected to stay as text; check on the robot, and if they vanish, try `thinking.display: "updates"` (beta `thinking-display-updates-2026-08-18`) and speak those summaries.
+  - `claude-sonnet-5` at `low` and `medium` ($2 / $10).
+  - `claude-haiku-4-5` ($1 / $5; no effort parameter, so the provider sends none).
+  Check ids and prices against the API docs on the day; the Opus 5.5 details above come from the reference current on 2026-09-22.
 - Method: the same scripted set on the robot for every candidate, run through `scripts/smoke_host.py` (typed, repeatable) and then a short guided spoken run for the finalists. Prompts cover greeting, "look left", "what do you see" (photo), a gesture request, a multi-step request, a stop mid-turn, and a factual question.
 - Measure per turn: time to first sound and to first real words after the transcript, total turn time, tool calls made and whether they were right (silent tool calls before speaking count against), phantom tool calls, spoken length, and cost from the usage block. Judge the photo descriptions for accuracy against the actual image.
 - Decide: a default for spoken turns, and whether typed turns (web UI) should keep a stronger model. `AIManager` could route by `source` if the split is worth it.
