@@ -36,6 +36,9 @@ class TestAIManager:
         assert "Pepper" in system[0]["text"]
         assert "battery 80%" in system[1]["text"]
         assert "posture Stand" in system[1]["text"]
+        from datetime import datetime
+
+        assert datetime.now().strftime("%d %B %Y") in system[1]["text"]  # the model can answer "what's the date?"
 
     async def test_tool_call_then_text(self, mock_ai_manager, mock_ai_provider):
         mock_ai_provider.chat = AsyncMock(side_effect=[tool("set_eye_color", {"color": "blue"}), text("Done!")])

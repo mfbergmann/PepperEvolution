@@ -104,6 +104,18 @@ Goal: pick the model (and effort) that gives the best spoken conversation on Pep
 
 Times are from sending the text to Pepper's first spoken sentence, so the spoken latency adds about 1 s of end-of-speech detection. Every configuration described the photos accurately (checked against the images), waved with an inline gesture tag, and got the factual answer right. Differences: Opus 5 was the most consistent at speaking first but costs two to three times more; Opus 5.5 at low effort was slower, used fillers more often and gave the longest replies; Sonnet 5 at medium effort was as fast as at low, spoke first more often and cost the same; Haiku 4.5 was clearly fastest and cheapest but its descriptions were vaguer and it sometimes narrated its own steps aloud ("Now let me take a photo…"). One run of seven prompts, so single turns are noisy (the multi-step prompt produced 8-9 s outliers for Sonnet). Finalists for the spoken phase: **Sonnet 5 at medium** (best balance) and **Haiku 4.5** (fastest), with Opus 5 as the reference.
 
+### Results, spoken phase (2026-09-22, Pepper's own microphone, a large open public room)
+
+Three blind rounds of the same five spoken prompts, one model per round:
+
+| Model | First words after the transcript | Notes |
+|-------|----------------------------------|-------|
+| Sonnet 5, effort medium | 2.2, 4.6, 3.0, 3.3 s | Best description of the person (glasses, beard, navy shirt) and noticed the photo was blurry; one filler before speaking |
+| Haiku 4.5 | 2.1, 2.3, 2.1, 1.9 s | Fastest every time; good-natured about being misheard ("I'm Pepper, not Hydropper"); descriptions accurate but plainer |
+| Opus 5, effort low | 2.9, 3.3 s | The first greeting was misheard badly and every later reply landed one prompt late, so this round says little about Opus |
+
+The recogniser struggled in the open room: "I pepper", "Looked here left", "Hydropper", "What is to day state", "Glowed up bernoia". Recognition, not the model, is now the weak point of the spoken loop; the utterances of all three rounds are saved in `recordings/round*` for the speech-to-text comparison. All three models said they did not know the date: the state line only gave weekday and time, now fixed to include the full date.
+
 ## Milestone 3: vision grounding
 
 Goal: Claude can act on what it sees, not just describe it.

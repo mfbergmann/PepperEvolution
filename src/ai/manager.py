@@ -501,7 +501,7 @@ class AIManager:
         dynamic = (
             f"Current state: battery {state.battery_level:.0f}%{charging}; posture {state.posture}; "
             f"motors {awake}; autonomous life {state.autonomous_life}; voice language {state.language}. "
-            f"Local time: {now.strftime('%A %H:%M')}."
+            f"Local date and time: {now.strftime('%A %d %B %Y, %H:%M')}."
         )
         return [
             {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
