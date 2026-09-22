@@ -70,6 +70,16 @@ Goal: people talk to Pepper instead of typing.
 
 Acceptance: a five-turn spoken conversation with tool use, end to end.
 
+## Next test session: model comparison for spoken turns
+
+Goal: pick the model (and effort) that gives the best spoken conversation on Pepper, now that the recogniser and the "speak first" prompt have taken latency from 7-12.5 s to 2.6-3.9 s after the transcript (2026-09-22). The remaining time is mostly the model's first round.
+
+- Candidates: `claude-opus-5` at `effort=low` (today's default), `claude-sonnet-5` at low and medium, `claude-haiku-4-5` (no effort parameter), each through `AI_MODEL` / `AI_EFFORT` with nothing else changed. Check current model ids and prices with the API docs before the session.
+- Method: the same scripted set on the robot for every candidate, run through `scripts/smoke_host.py` (typed, repeatable) and then a short guided spoken run for the finalists. Prompts cover greeting, "look left", "what do you see" (photo), a gesture request, a multi-step request, a stop mid-turn, and a factual question.
+- Measure per turn: time to first sound and to first real words after the transcript, total turn time, tool calls made and whether they were right (silent tool calls before speaking count against), phantom tool calls, spoken length, and cost from the usage block. Judge the photo descriptions for accuracy against the actual image.
+- Decide: a default for spoken turns, and whether typed turns (web UI) should keep a stronger model. `AIManager` could route by `source` if the split is worth it.
+- Also try the recogniser's end-of-speech silence at 0.6 s instead of 1.0 s (`rule2_min_trailing_silence`), checking that people are not cut off mid-sentence.
+
 ## Milestone 3: vision grounding
 
 Goal: Claude can act on what it sees, not just describe it.
