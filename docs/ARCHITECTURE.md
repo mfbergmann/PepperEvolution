@@ -92,7 +92,7 @@ The rule behind the table: specialised models may observe and summarise, but onl
 2. **Nothing waits for a model that does not have to.** If a reply can be given without the model, it is; if the model is needed, Pepper shows that it is thinking.
 3. **One voice.** Only the mind speaks and calls action tools. Other layers write facts and raise events.
 4. **State in our code, not in a model.** The world model and memory are ours; models read summaries of them. Swapping a model never loses what Pepper knows.
-5. **Frames stay in memory.** Camera images are never written to disk; the world model holds text. Pepper signals visibly while it is looking.
+5. **Frames stay in memory at runtime.** In normal operation camera images are never written to disk; the world model holds text, and Pepper signals visibly while it is looking. Development test runs are the exception: comparison scripts may keep photos and recordings locally as a record of the work (`results/`, `recordings/`), but these are git-ignored and never leave the machine. Pepper works in a public room, so anything recorded may include bystanders.
 6. **Measure on the robot.** Timing, accuracy and behaviour are judged on Pepper in the room, not only in tests; each finding goes into HANDOFF.md.
 
 ## What "presence" means here
