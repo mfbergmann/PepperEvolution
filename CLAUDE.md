@@ -131,6 +131,7 @@ Copy `env.example` to `.env`. Key variables:
 
 ## Reference Docs
 
+- `docs/ARCHITECTURE.md` — the target design: reflexes, perception, world model, one conversational mind; which model does what; the rules that keep it coherent
 - `docs/HANDOFF.md` — **read first in a new session**: where the last session stopped, what is verified on which target (fake NAOqi, virtual Pepper, physical robot), and the exact commands to resume testing
 - `docs/BRIDGE_API.md` — Full HTTP/WebSocket endpoint reference for the bridge server
 - `docs/GETTING_STARTED.md` — Setup guide, first-test checklist and troubleshooting

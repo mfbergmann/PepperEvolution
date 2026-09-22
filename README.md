@@ -135,7 +135,7 @@ PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -
 python scripts/smoke_host.py --fake            # the whole host stack with the real model, no robot
 ```
 
-Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md).
+Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md). The design the project is building towards is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Credits
 

@@ -195,3 +195,50 @@ class TestPushToTalk:
         voice = VoiceInput(manager, broken)
         result = await voice.handle_utterance(tone(0.5))
         assert result["ignored"] == "error" and result["error"] == "no model"
+
+
+class TestRecording:
+    async def test_streaming_finals_are_saved_with_their_transcript(self, tmp_path):
+        manager, source = fake_manager(), FakeSource()
+        rec = tmp_path / "rec"
+        voice = VoiceInput(
+            manager,
+            FakeTranscriber(["look at me"], streaming=True, endpoint_after=1.0),
+            source=source,
+            record_dir=str(rec),
+        )
+        await voice.start()
+        await source.push(silence(3.0) + tone(1.2))
+        await settle(voice, manager)
+        wavs = sorted(rec.glob("utterance_*.wav"))
+        assert len(wavs) == 1
+        hyp = wavs[0].with_suffix("").with_suffix(".hyp.txt")
+        assert hyp.read_text().strip() == "look at me"
+        # the fake reports the utterance duration, so the saved clip is that plus the pre-roll, not all 4.2 s
+        import wave
+
+        with wave.open(str(wavs[0])) as w:
+            seconds = w.getnframes() / w.getframerate()
+        assert 1.0 < seconds < 3.5
+        assert len(voice._recent_audio) < 16000 * 2  # the window restarts after each saved utterance
+
+    async def test_rolling_window_is_capped(self, tmp_path, monkeypatch):
+        import src.audio.voice as voice_module
+
+        monkeypatch.setattr(voice_module, "RECORD_WINDOW_SECONDS", 1.0)
+        voice = VoiceInput(fake_manager(), FakeTranscriber(streaming=True, endpoint_after=99), record_dir=str(tmp_path))
+        voice._keep_recent(silence(3.0))
+        assert len(voice._recent_audio) == 16000 * 2
+
+    async def test_batch_utterances_save_the_transcript_too(self, tmp_path):
+        voice = VoiceInput(fake_manager(), FakeTranscriber(["hello pepper"]), record_dir=str(tmp_path))
+        await voice.start()
+        await voice.handle_utterance(tone(0.5))
+        assert [p.read_text().strip() for p in tmp_path.glob("*.hyp.txt")] == ["hello pepper"]
+
+    async def test_failed_transcription_still_keeps_the_audio(self, tmp_path):
+        broken = FakeTranscriber()
+        broken.transcribe = AsyncMock(side_effect=RuntimeError("no model"))
+        voice = VoiceInput(fake_manager(), broken, record_dir=str(tmp_path))
+        await voice.handle_utterance(tone(0.5))
+        assert len(list(tmp_path.glob("*.wav"))) == 1 and not list(tmp_path.glob("*.hyp.txt"))

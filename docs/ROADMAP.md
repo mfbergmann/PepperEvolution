@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: September 2026. See [RESEARCH_2026-09.md](RESEARCH_2026-09.md) for the survey this roadmap is based on.
+Last updated: September 2026. The design these milestones build towards is in [ARCHITECTURE.md](ARCHITECTURE.md); the survey behind it is in [RESEARCH_2026-09.md](RESEARCH_2026-09.md).
 
 ## Where we are
 
@@ -90,6 +90,7 @@ Goal: pick the model (and effort) that gives the best spoken conversation on Pep
 - Measure per turn: time to first sound and to first real words after the transcript, total turn time, tool calls made and whether they were right (silent tool calls before speaking count against), phantom tool calls, spoken length, and cost from the usage block. Judge the photo descriptions for accuracy against the actual image.
 - Decide: a default for spoken turns, and whether typed turns (web UI) should keep a stronger model. `AIManager` could route by `source` if the split is worth it.
 - Also try the recogniser's end-of-speech silence at 0.6 s instead of 1.0 s (`rule2_min_trailing_silence`), checking that people are not cut off mid-sentence.
+- Speech-to-text comparison, alongside: run the spoken part with `VOICE_RECORD_DIR=recordings` (each utterance is saved as a WAV with the live transcript beside it), correct a copy of each transcript into a `.ref.txt`, and compare offline with `scripts/compare_stt.py recordings --sherpa <zipformer dir> --sherpa <nemotron dir> --whisper small`. Candidates: today's 2023 streaming zipformer (about 80 MB of weights), NVIDIA's Nemotron speech streaming 0.6B int8 (2026, about 630 MB, same library and API, more accurate), faster-whisper `small` per utterance, and, if local accuracy disappoints, a hosted recogniser with its own end-of-turn detection (Deepgram, AssemblyAI; needs an account and sends audio off the machine). Judge word error rate on your own voice in that room, recognition time, and end-of-turn delay.
 
 ## Milestone 3: vision grounding
 

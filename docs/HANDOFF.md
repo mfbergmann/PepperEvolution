@@ -1,6 +1,6 @@
 # Handoff: where the work stopped and how to pick it up
 
-Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ROADMAP.md` has the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
+Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
 
 ## State of the code
 
@@ -94,7 +94,7 @@ The previous session's standing instruction from the user: once Pepper is on the
 
 ### Voice on the day
 
-`pip install -r requirements-voice.txt`, download the sherpa-onnx streaming zipformer named in `GETTING_STARTED.md`, set `STT_BACKEND=sherpa` and `STT_MODEL=<model dir>`; hold-to-talk needs the UI at `http://localhost:8000`; `VOICE_INPUT=true` adds the robot microphone; `VOICE_RECORD_DIR=recordings` saves utterances for tuning.
+`pip install -r requirements-voice.txt`, download the sherpa-onnx streaming zipformer named in `GETTING_STARTED.md`, set `STT_BACKEND=sherpa` and `STT_MODEL=<model dir>`; hold-to-talk needs the UI at `http://localhost:8000`; `VOICE_INPUT=true` adds the robot microphone; `VOICE_RECORD_DIR=recordings` saves each utterance as a WAV with the live transcript beside it (`.hyp.txt`), in streaming mode too since 2026-09-22; add corrected `.ref.txt` files and run `scripts/compare_stt.py` to compare recognisers.
 
 ## Decisions waiting on the live session
 

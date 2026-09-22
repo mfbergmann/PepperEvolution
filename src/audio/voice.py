@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
 from loguru import logger
 
 from .endpointer import Endpointer
-from .pcm import SAMPLE_RATE, duration, resample, wav_bytes
+from .pcm import BYTES_PER_SAMPLE, SAMPLE_RATE, duration, resample, wav_bytes
 from .stt import Transcriber, Transcript
 
 
@@ -34,6 +34,9 @@ class AudioSource(Protocol):
 
 
 TranscriptCallback = Callable[[Dict[str, Any]], Awaitable[None]]
+
+RECORD_WINDOW_SECONDS = 30.0  # streaming path: how much recent microphone audio is kept for saving
+RECORD_PRE_ROLL_SECONDS = 1.5  # saved before the recogniser's first word, so onsets are not clipped
 
 
 class VoiceInput:
@@ -66,6 +69,7 @@ class VoiceInput:
         self._listening = False
         self._loaded = False
         self._saved = 0
+        self._recent_audio = bytearray()  # streaming path: rolling window for VOICE_RECORD_DIR
 
     def on_transcript(self, callback: TranscriptCallback):
         """Register an async callback for partial and final transcripts (dict payloads)."""
@@ -129,9 +133,13 @@ class VoiceInput:
     async def _on_audio(self, pcm: bytes):
         try:
             if self.transcriber.streaming:
+                if self.record_dir:
+                    self._keep_recent(pcm)
                 for transcript in await self.transcriber.process(pcm):
                     if transcript.final:
                         self.utterances += 1
+                        if self.record_dir:
+                            self._spawn(self._record_streamed(transcript))
                         self._spawn(self._deliver(transcript, "voice"))  # the AI turn must not stall the audio
                     else:
                         await self._set_listening(True)
@@ -173,15 +181,17 @@ class VoiceInput:
     # ------------------------------------------------------------------
 
     async def _transcribe_and_deliver(self, pcm: bytes, source: str, client_id: Optional[str]) -> Optional[Dict]:
-        if self.record_dir:
-            self._save(pcm)
         try:
             transcript = await self.transcriber.transcribe(pcm)
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)
             self.logger.error(f"Transcription failed: {exc}")
+            if self.record_dir:
+                await asyncio.to_thread(self._save, pcm, None)
             await self._set_listening(False)
             return None
+        if self.record_dir:
+            await asyncio.to_thread(self._save, pcm, transcript.text)
         self.logger.info(
             f"[{source}] {transcript.text!r} ({duration(pcm):.1f}s audio, {transcript.latency:.2f}s recognition)"
         )
@@ -229,12 +239,41 @@ class VoiceInput:
         if signal is not None:
             await signal("listening" if listening else "idle")
 
-    def _save(self, pcm: bytes):
+    # ------------------------------------------------------------------
+    # Recording (VOICE_RECORD_DIR), for tuning and comparing recognisers
+    # ------------------------------------------------------------------
+
+    def _keep_recent(self, pcm: bytes):
+        self._recent_audio.extend(pcm)
+        limit = int(RECORD_WINDOW_SECONDS * self.transcriber.sample_rate) * BYTES_PER_SAMPLE
+        if len(self._recent_audio) > limit:
+            del self._recent_audio[: len(self._recent_audio) - limit]
+
+    async def _record_streamed(self, transcript: Transcript):
+        """Save the audio a streaming final came from: its duration plus a pre-roll, from the rolling window."""
+        seconds = (transcript.duration or RECORD_WINDOW_SECONDS) + RECORD_PRE_ROLL_SECONDS
+        take = int(seconds * self.transcriber.sample_rate) * BYTES_PER_SAMPLE
+        pcm = bytes(self._recent_audio[-take:])
+        self._recent_audio.clear()  # the next utterance starts after this one
+        if pcm:
+            await asyncio.to_thread(self._save, pcm, transcript.text)
+
+    def _save(self, pcm: bytes, text: Optional[str] = None) -> Optional[str]:
+        """Write ``utterance_*.wav`` and, when known, the recogniser's transcript as ``utterance_*.hyp.txt``.
+
+        A hand-corrected ``utterance_*.ref.txt`` next to it turns the folder into a test set for
+        ``scripts/compare_stt.py``.
+        """
         try:
             self._saved += 1
-            name = time.strftime("utterance_%Y%m%d_%H%M%S") + f"_{int(time.time() * 1000) % 1000:03d}_{self._saved}.wav"
-            path = os.path.join(self.record_dir or ".", name)
+            stem = time.strftime("utterance_%Y%m%d_%H%M%S") + f"_{int(time.time() * 1000) % 1000:03d}_{self._saved}"
+            path = os.path.join(self.record_dir or ".", stem + ".wav")
             with open(path, "wb") as fh:
                 fh.write(wav_bytes(pcm, self.transcriber.sample_rate))
+            if text is not None:
+                with open(os.path.join(self.record_dir or ".", stem + ".hyp.txt"), "w", encoding="utf-8") as fh:
+                    fh.write(text + "\n")
+            return path
         except OSError as exc:
             self.logger.warning(f"could not save utterance: {exc}")
+            return None

@@ -89,7 +89,7 @@ Typing always works. To let people *talk* to Pepper:
 3. **Robot microphone**: set `VOICE_INPUT=true` and the host streams Pepper's front microphone from the bridge (`/ws/audio`), cuts it into utterances and answers what people say near the robot. The bridge mutes the stream while Pepper talks, so Pepper does not answer itself. Check `curl http://10.0.100.100:8888/audio/stream` to see frames flowing (`streaming`, `frames`, `dropped`).
 4. Control phrases ("stop", "be quiet") work by voice too and never wait for the model.
 
-Recognition with accents, dialects and noise is the weak point of every Pepper study; `VOICE_RECORD_DIR=recordings` saves each utterance as a WAV file so the recogniser and the thresholds in `src/audio/endpointer.py` can be tuned on real data. `GET /voice/status` shows the backend, counters and the last transcript.
+Recognition with accents, dialects and noise is the weak point of every Pepper study; `VOICE_RECORD_DIR=recordings` saves each utterance as a WAV file with the recogniser's transcript beside it (`.hyp.txt`); copy one to `.ref.txt`, correct it to what was said, and `python scripts/compare_stt.py recordings --sherpa <model dir>` scores recognisers on your own voice. `GET /voice/status` shows the backend, counters and the last transcript.
 
 ## What the AI can do
 
