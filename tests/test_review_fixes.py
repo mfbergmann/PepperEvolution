@@ -1,5 +1,5 @@
 """
-Regression tests for the issues found in the adversarial review of v2.1.
+Regression tests for the issues found in the adversarial review of 0.1 (then labelled v2.1).
 
 Covers: thinking-block replay, truncated/empty/refused responses, speech draining
 before tool execution, emergency-halt handling mid-turn, event-reaction re-checks,

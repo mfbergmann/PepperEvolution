@@ -95,7 +95,7 @@ class FakeBridgeClient:
     # -- endpoints ------------------------------------------------------------
 
     async def health(self) -> Dict[str, Any]:
-        return {"ok": True, "bridge": "fake_bridge", "version": "2.2.0", "naoqi": "fake", "robot_name": "FakePepper"}
+        return {"ok": True, "bridge": "fake_bridge", "version": "0.3.0", "naoqi": "fake", "robot_name": "FakePepper"}
 
     async def status(self) -> Dict[str, Any]:
         return {"ok": True, "robot_name": "FakePepper", "naoqi_version": "fake", **self.state}

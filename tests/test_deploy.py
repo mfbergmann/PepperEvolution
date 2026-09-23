@@ -132,7 +132,7 @@ def health_server():
                 self.send_response(401)
             else:
                 body = json.dumps(
-                    {"ok": True, "robot_name": "Pepper", "naoqi": "2.5.10.7", "version": "2.1.0"}
+                    {"ok": True, "robot_name": "Pepper", "naoqi": "2.5.10.7", "version": "0.3.0"}
                 ).encode()
                 self.send_response(200)
             self.send_header("Content-Type", "application/json")

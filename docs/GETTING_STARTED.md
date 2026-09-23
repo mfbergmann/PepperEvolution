@@ -1,4 +1,4 @@
-# Getting Started with PepperEvolution v2.2
+# Getting Started with PepperEvolution
 
 ## Prerequisites
 
@@ -47,7 +47,7 @@ The fuller, ordered checklist for the first session (what to verify endpoint by 
    ```bash
    python robot_bridge/deploy.py
    ```
-   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=2.2.0`. Right after a robot boot
+   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=0.3.0`. Right after a robot boot
    this can take up to about two minutes while NAOqi finishes starting (deploy prints `waiting for NAOqi` meanwhile).
    If it fails, `python robot_bridge/deploy.py --logs` shows `bridge.log` from the robot.
 3. **Sanity-check the bridge directly** (no AI involved):

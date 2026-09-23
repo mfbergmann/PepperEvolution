@@ -4,7 +4,7 @@ Last updated: September 2026. The design these milestones build towards is in [A
 
 ## Where we are
 
-v2.1 was a complete rewrite of the bridge and the host (September 2026); v2.2 added the reactive layer (Milestone 1) and voice input (Milestone 2) on top, borrowing the design of the local intent table, state signals and safety ledger from Autonomous OS (see the research notes). Everything has been verified off-robot only:
+0.1 was a complete rewrite of the bridge and the host (September 2026, first labelled v2.1); 0.2 added the reactive layer (Milestone 1) and voice input (Milestone 2) on top, borrowing the design of the local intent table, state signals and safety ledger from Autonomous OS (see the research notes). Everything has been verified off-robot only:
 
 - About 380 tests, including the real bridge process running under a fake NAOqi that also pumps microphone frames.
 - The bridge suite also passes under Python 2.7.18 + Tornado 3.1.1, the robot's own environment.
@@ -45,7 +45,7 @@ Things most likely to need adjusting on the day: `bodyLanguageMode` config on `A
 
 Five bugs only the hardware showed were fixed on the day (deploy path, emergency-stop rest, looping animations, speech stop, microphone frame size); see HANDOFF.md.
 
-## Milestone 1: reactive layer (implemented in v2.2, verified on the robot 2026-09-22)
+## Milestone 1: reactive layer (implemented in 0.2, verified on the robot 2026-09-22)
 
 Goal: Pepper looks alive while Claude is thinking, without any model call.
 
@@ -61,7 +61,7 @@ Goal: Pepper looks alive while Claude is thinking, without any model call.
 
 Acceptance: perceived latency in a conversation drops; no model calls are made by this layer.
 
-## Milestone 2: voice input (implemented in v2.2, verified on the robot 2026-09-22)
+## Milestone 2: voice input (implemented in 0.2, verified on the robot 2026-09-22)
 
 Goal: people talk to Pepper instead of typing.
 

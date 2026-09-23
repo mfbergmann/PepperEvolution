@@ -1,4 +1,4 @@
-# Pepper Bridge API Reference (v2.2)
+# Pepper Bridge API Reference
 
 The bridge server runs on the Pepper robot (Python 2.7 + Tornado 3.1.1) and exposes NAOqi 2.5 services as JSON-over-HTTP endpoints plus a WebSocket event stream.
 
@@ -108,7 +108,7 @@ The tablet reaches the robot head at `198.18.0.1`; change with `--tablet-host` i
 On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events are edge-triggered:
 
 ```json
-{"type": "hello",   "data": {"version": "2.2.0"}, "timestamp": ...}
+{"type": "hello",   "data": {"version": "0.3.0"}, "timestamp": ...}
 {"type": "sensors", "data": {...same as GET /sensors...}, "timestamp": ...}
 {"type": "touch",   "data": {"sensor": "head_front", "touched": true}, "timestamp": ...}
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
@@ -131,7 +131,7 @@ The bridge registers a small qi service (`PepperBridgeAudio`) with NAOqi and sub
 On connect the client gets one JSON text frame, then binary frames:
 
 ```json
-{"type": "hello", "version": "2.2.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
+{"type": "hello", "version": "0.3.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
 {"type": "state", "streaming": true}
 <binary> 2730 bytes = 1365 samples of signed 16-bit little-endian PCM (85 ms, measured on Pepper 1.8A), repeated
 ```

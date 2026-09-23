@@ -1,5 +1,5 @@
 """
-Pytest configuration and fixtures for PepperEvolution v2 tests.
+Pytest configuration and fixtures for PepperEvolution tests.
 
 Two layers of doubles are available:
 - ``mock_connection`` / ``mock_robot``: AsyncMock-based, for unit tests that
@@ -59,7 +59,7 @@ def mock_connection(connection_config):
     conn = PepperConnection(connection_config, events=False)
     conn.connected = True
     bridge = AsyncMock(spec=BridgeClient)
-    bridge.health = AsyncMock(return_value={"ok": True, "version": "2.1.0"})
+    bridge.health = AsyncMock(return_value={"ok": True, "version": "0.3.0"})
     bridge.status = AsyncMock(
         return_value={
             "ok": True,

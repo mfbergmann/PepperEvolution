@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Pepper Bridge Server v2.1 - HTTP + WebSocket bridge for NAOqi 2.5.
+Pepper Bridge Server - HTTP + WebSocket bridge for NAOqi 2.5 (part of PepperEvolution).
 
 Runs ON the Pepper robot under Python 2.7 with the Tornado that ships with
 NAOqi (3.1.1). Exposes NAOqi services as JSON-over-HTTP endpoints and pushes
@@ -82,7 +82,7 @@ define("log_level", default="INFO", type=str, help="Logging level")
 define("pip", default="", type=str, help="ignored (passed by NAOqi autoload)")
 define("pport", default=0, type=int, help="ignored (passed by NAOqi autoload)")
 
-BRIDGE_VERSION = "2.2.0"
+BRIDGE_VERSION = "0.3.0"  # kept equal to src/__init__.py __version__ (tested)
 LOGGER = logging.getLogger("pepper_bridge")
 START_TIME = time.time()
 IOLOOP = None  # the main IOLoop, captured in main(); worker threads must only touch this one

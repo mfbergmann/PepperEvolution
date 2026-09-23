@@ -45,7 +45,7 @@ class TestEventStream:
         es = EventStream("ws://localhost:8888/ws/events")
         cb = AsyncMock()
         es.on_any(cb)
-        await es._handle_raw(json.dumps({"type": "hello", "data": {"version": "2.1.0"}}))
+        await es._handle_raw(json.dumps({"type": "hello", "data": {"version": "0.3.0"}}))
         await es._handle_raw(json.dumps({"type": "pong"}))
         await es._handle_raw("not json")
         cb.assert_not_called()

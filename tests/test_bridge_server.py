@@ -1044,3 +1044,9 @@ class TestPeopleDebounce:
             clock[0] += 1.1
             poller._people_changes(state)
         assert [e[1]["count"] for e in events] == [1, 0]
+
+
+def test_bridge_and_host_versions_match(bridge):
+    from src import __version__
+
+    assert bridge.BRIDGE_VERSION == __version__  # the robot cannot import src/, so the number lives twice

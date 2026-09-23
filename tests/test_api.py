@@ -37,7 +37,7 @@ class TestAPIServer:
         assert "ui" in resp.text
 
     async def test_health(self, client, mock_robot):
-        mock_robot.connection.health_check = AsyncMock(return_value={"status": "connected", "version": "2.1.0"})
+        mock_robot.connection.health_check = AsyncMock(return_value={"status": "connected", "version": "0.3.0"})
         resp = await client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"

@@ -18,7 +18,7 @@ def read_requirements():
 
 setup(
     name="pepper-evolution",
-    version="2.1.0",
+    version="0.3.0",
     author="PepperEvolution Team",
     author_email="mfb@torontomu.ca",
     description="Cloud-based AI control system for Pepper robots",

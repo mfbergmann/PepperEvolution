@@ -4,7 +4,7 @@ Written 2026-09-13, updated 2026-09-22 after the first session with the physical
 
 ## State of the code
 
-- `main` is pushed with CI green on Python 3.12 and 3.13. Milestones: `0e9ff49` (v2.2: reactive layer + voice input), `070bd5d` (bridge tested against NAOqi's desktop build), and the 2026-09-22 commit with the fixes from the first session on the robot. The robot runs that bridge now.
+- `main` is pushed with CI green on Python 3.12 and 3.13. Milestones: `0e9ff49` (0.2.0: reactive layer + voice input), `070bd5d` (bridge tested against NAOqi's desktop build), and the 2026-09-22 commit with the fixes from the first session on the robot. The robot runs that bridge now.
 - Host: FastAPI app on one port (REST, `/ws`, web UI with hold-to-talk), Claude Opus 5 with streaming tool calls, replies spoken sentence by sentence, local intents ("stop" cancels the model call and remaining tools in milliseconds), eye-LED state signals, backchannel fillers, optional voice input (`src/audio/`, sherpa-onnx or faster-whisper).
 - Bridge (`robot_bridge/pepper_bridge.py`, Python 2.7 + Tornado 3.1.1, runs on the robot): every NAOqi call on a worker thread, `/ws/events`, `/ws/audio` microphone stream muted while the robot speaks, awareness options, sonar guard, emergency stop that rests the robot and blocks motion until wake-up.
 - 415 tests (`pytest tests/`), plus the bridge suite under the robot's interpreter, plus opt-in tests against a real NAOqi.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PepperEvolution v2 - Deploy bridge and start host application.
+# PepperEvolution - deploy the bridge and start the host application.
 #
 # Usage:
 #   ./scripts/start.sh              # deploy bridge + start host

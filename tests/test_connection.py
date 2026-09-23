@@ -59,7 +59,7 @@ class TestPepperConnection:
 
     async def test_health_check_connected(self, mock_connection):
         result = await mock_connection.health_check()
-        assert result["status"] == "connected" and result["version"] == "2.1.0"
+        assert result["status"] == "connected" and result["version"] == "0.3.0"
 
     async def test_health_check_error(self, mock_connection):
         mock_connection.bridge.health = AsyncMock(side_effect=BridgeError("timeout"))

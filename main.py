@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PepperEvolution v2 - Main application entry point.
+PepperEvolution - main application entry point.
 
 Connects to the bridge server on the robot (or a fake one), sets up the AI
 provider and serves the REST API, WebSocket and web UI from one port.
@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv  # noqa: E402
 from loguru import logger  # noqa: E402
 
+from src import __version__  # noqa: E402
 from src.ai import DEFAULT_ANTHROPIC_MODEL, AIManager, AIProvider, AnthropicProvider, OpenAIProvider  # noqa: E402
 from src.audio import VoiceInput, make_transcriber  # noqa: E402
 from src.communication import APIServer  # noqa: E402
@@ -148,7 +149,7 @@ class PepperEvolution:
 
     async def initialize(self):
         s = self.settings
-        self.logger.info("Initializing PepperEvolution v2.1...")
+        self.logger.info(f"Initializing PepperEvolution {__version__}...")
 
         config = ConnectionConfig(
             ip=s.pepper_ip,

@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 
+from .. import __version__
 from ..ai import TOOLS, AIManager
 from ..audio import VoiceInput
 from ..pepper import PepperRobot
@@ -176,7 +177,7 @@ def create_app(
     app = FastAPI(
         title="PepperEvolution API",
         description="Cloud AI control system for Pepper robot",
-        version="2.2.0",
+        version=__version__,
     )
     app.state.hub = hub
     app.add_middleware(
@@ -194,7 +195,7 @@ def create_app(
         index = web_dir / "index.html"
         if index.exists():
             return FileResponse(str(index), media_type="text/html")
-        return {"name": "PepperEvolution", "version": "2.2.0", "status": "running"}
+        return {"name": "PepperEvolution", "version": __version__, "status": "running"}
 
     @app.get("/health")
     async def health():

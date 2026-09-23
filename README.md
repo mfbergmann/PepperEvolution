@@ -1,4 +1,4 @@
-# PepperEvolution v2.2
+# PepperEvolution
 
 A cloud-AI control system for SoftBank Pepper robots. A small bridge server on the robot wraps NAOqi as HTTP/WebSocket endpoints; the host application connects over the network, drives conversations with Anthropic Claude using native tool calling, and speaks the reply through the robot as it streams in.
 
@@ -134,6 +134,8 @@ scripts/virtual_pepper.sh start && scripts/virtual_pepper.sh bridge   # optional
 PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v
 python scripts/smoke_host.py --fake            # the whole host stack with the real model, no robot
 ```
+
+Version 0.3.0; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
 
 Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md). The design the project is building towards is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

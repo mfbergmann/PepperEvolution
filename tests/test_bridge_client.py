@@ -21,10 +21,10 @@ class TestBridgeClient:
 
     @respx.mock
     async def test_health(self, connected_bridge_client):
-        respx.get(f"{BRIDGE_BASE}/health").mock(return_value=ok(version="2.1.0", robot_name="Pepper"))
+        respx.get(f"{BRIDGE_BASE}/health").mock(return_value=ok(version="0.3.0", robot_name="Pepper"))
         result = await connected_bridge_client.health()
         assert result["ok"] is True
-        assert result["version"] == "2.1.0"
+        assert result["version"] == "0.3.0"
 
     @respx.mock
     async def test_status(self, connected_bridge_client):
