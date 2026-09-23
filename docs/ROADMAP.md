@@ -133,6 +133,10 @@ References were drafted from the prompts given in each round (the uncertain ones
 
 The zipformer's mistakes are exactly the ones that derailed the spoken rounds ("Hydropper", "Looked here left", "What is to day state", "Blow numbernorium" for "Hello Pepper how are you"). Nemotron fixes almost all of them while staying a streaming recogniser with its own endpointing and partial results, at a small latency cost; Whisper small is the most accurate but adds about 1.4 s to every turn and would need the energy endpointer, which is weak in a noisy room. **Nemotron is now the default** (`STT_MODEL` in `.env`; 633 MB in `~/.local/share/pepper-models/`, loads in 2.6 s). Whisper small stays an option as a second, more accurate pass on the final transcript if Nemotron's errors matter in practice. Next live check: whether the "Look" clip was the person pausing or the recogniser cutting off early, and whether 1.0 s of end-of-speech silence is right with Nemotron.
 
+### Live check with Nemotron (2026-09-23, the office, Sonnet 5 at medium effort)
+
+The same five spoken prompts through Pepper's microphone, office background level slightly higher than the open room (median microphone level about 610 against 550). Nemotron heard all five word for word ("Hello Pepper, how are you", "Look to your left", "What can you see in front of you", "Be quiet", "What is the date today"), where the zipformer had misheard three of five in each earlier round. First sound 2.4-3.0 s after the transcript; real words first on the greeting and the date question, a filler first on the two turns that needed a head move or photo (first words 3.9 and 5.4 s). The date question is now answered correctly. The recordings are in `recordings/round4-nemotron-office` with references.
+
 ## Milestone 3: vision grounding
 
 Goal: Claude can act on what it sees, not just describe it.
