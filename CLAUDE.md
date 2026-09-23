@@ -140,6 +140,11 @@ Copy `env.example` to `.env`. Key variables:
 - `docs/SAFETY.md` — Every numeric bound and safety behaviour in one table (bridge, host, model), with where it lives
 - `docs/RESEARCH_2026-09.md` — Why the off-board bridge architecture, what robot foundation models do and do not offer Pepper, prior Pepper/NAO LLM work with sources
 
+## Versions and tracking
+
+- Pre-1.0 versions `0.MINOR.PATCH` (one minor per milestone-sized step); `src/__init__.py` `__version__` and `BRIDGE_VERSION` in the bridge must match (tested). Record each version in `CHANGELOG.md` and tag it (`git tag -a v0.X.Y`).
+- `docs/ROADMAP.md` is the source of truth. GitHub milestones M0-M6 and their issues track open work, and the GitHub wiki (`https://github.com/mfbergmann/PepperEvolution.wiki.git`: Home, Roadmap, Architecture, Test-sessions, Versions) summarises it. When a milestone item is finished or added, close or open the issue and update the wiki's status table and Test-sessions page.
+
 ## Code Standards
 
 - Python 3.12+ on the host (CI tests 3.12, 3.13); Python 2.7 for `robot_bridge/pepper_bridge.py`
