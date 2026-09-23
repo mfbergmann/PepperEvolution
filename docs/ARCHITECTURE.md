@@ -80,7 +80,7 @@ A single conversational model holds the dialogue, decides what to do, calls tool
 | Control phrases, safety, state signals | host and bridge | milliseconds | none |
 | People and face detection, tracking | on the robot (NAOqi) | continuous | NAOqi's own |
 | Speech to text | host CPU | about 0.3 s of compute per audio second, final about 0.2 s after you stop | NVIDIA Nemotron speech streaming via sherpa-onnx (chosen 2026-09-22: 6 % word errors in the open room vs 37 % for the older zipformer) |
-| Scene description for the world model | cloud | every 10-20 s | a fast vision model, chosen by comparison |
+| Scene description for the world model | Creative AI Hub server (planned), over the tailnet | every 10-20 s | an open vision-language model on local GPUs, chosen by comparison; a cloud model as fallback |
 | Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model: Sonnet 5 at medium effort, chosen by comparison on 2026-09-22 |
 | Reflection (should I act?) | cloud | every tens of seconds | a small, cheap model, or the mind at low effort |
 

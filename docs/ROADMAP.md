@@ -159,6 +159,10 @@ The world model (host, in memory): people with first-seen / last-seen, zone and 
 
 Constraints: frames are kept in memory only, never written to disk, and Pepper shows that it is looking (for example an eye or chest LED state) while the camera is in use; the scene summaries in the world model are text. Knowing *who* someone is (face or voice identity) is Milestone 5 and builds on this.
 
+Compute for this milestone (2026-09-23): the Creative AI Hub at TMU (RCC230) has an always-on AI server (hal-9000: 2 x RTX 6000 Ada, 48 GB each, 128 GB RAM, 10 GbE, Ubuntu, Ollama already serving local models) and five workstations (alien1-5: RTX 5090 32 GB, Core Ultra 9, 64 GB; one on Ubuntu 24.04, being moved to Ubuntu). Plan: run the periodic vision pass as a service on the server (through its Ollama API or a vLLM server), reached from the host over the TRiPL tailnet; only the host needs to reach it, not Pepper. A 32 GB workstation is enough for fine-tuning jobs (below) and experiments. Before relying on it: agree usage with the Hub (shared machines), check that the host reaches it over the tailnet with low latency, and keep recordings of people in a private account on it. Blackwell cards (RTX 5090) need CUDA 12.8 or newer builds of PyTorch and onnxruntime.
+
+Also for these machines, once there are a few hours of corrected recordings: fine-tune Nemotron or Whisper on the lab's acoustics and voices, and rerun `scripts/compare_stt.py` with the large Whisper models. The Digital Research Alliance cluster remains an option for larger batch jobs, but it cannot host the live service.
+
 Acceptance: someone walks up and Pepper greets them within a few seconds, unprompted; "who's here?" and "what's on the desk?" are answered from the world model without a new photo when the last look is recent; no frame is stored.
 
 ## Milestone 5: memory and people
