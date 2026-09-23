@@ -48,6 +48,8 @@ Quick checks with a person present, same day: sonar (hand in front of the base: 
 
 Model and speech-to-text comparisons (2026-09-22, evening, open public room): all nine base checks passed; five model configurations compared typed and three spoken (results and the decision in ROADMAP.md, "Next test session"); `.env` now uses **Sonnet 5 at medium effort** and the **Nemotron streaming recogniser** (6 % word errors on the recordings from the open room vs 37 % for the zipformer). The model now gets the full date. `scripts/compare_models.py` and `scripts/compare_stt.py` rerun both comparisons; raw results, photos and recordings are in the git-ignored `results/` and `recordings/`, and `recordings/REFERENCES.md` lists the reference transcripts that were guesses. Nemotron was tested live through Pepper in the office on 2026-09-23: all five spoken prompts heard word for word.
 
+Milestone 4, first slice (2026-09-23): debounced people events with distance, gaze and zone from the bridge; `src/world/model.py` and the "Around you" line in the model's state; verified live (three clean events for leave, return, step back). Next in this layer: greet newcomers, then the periodic vision pass on the Creative AI Hub server.
+
 Still to do on the robot: base moves (deferred until there is a bigger space; the robot was parked half a metre from a desk), people-event debouncing, voice latency, voice recognition with a real backend (`STT_BACKEND=sherpa`), `VOICE_INPUT=true`, and deciding the defaults listed below. Idea for the model: put the installed voices into the system prompt's robot state so it does not try French first.
 
 ## Things learned that are not obvious from the docs

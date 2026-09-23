@@ -30,6 +30,10 @@ _MEMORY = {
     "Device/SubDeviceList/Battery/Charge/Sensor/Value": 0.81,
     "Device/SubDeviceList/Battery/Current/Sensor/Value": -0.4,
     "PeoplePerception/VisiblePeopleList": [7],
+    "PeoplePerception/Person/7/Distance": 1.2,
+    "PeoplePerception/Person/7/IsLookingAtRobot": 1,
+    "PeoplePerception/Person/7/EngagementZone": 1,
+    "PeoplePerception/Person/7/PresentSince": 30,
 }
 
 _STATE = {"language": "English", "awake": False, "life": "solitary", "volume": 0.5, "awareness": True}

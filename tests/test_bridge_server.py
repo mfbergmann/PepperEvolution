@@ -160,6 +160,14 @@ class FakeSession:
             "Device/SubDeviceList/Battery/Charge/Sensor/Value": 0.77,
             "Device/SubDeviceList/Battery/Current/Sensor/Value": -0.5,
             "PeoplePerception/VisiblePeopleList": [12, 15],
+            "PeoplePerception/Person/12/Distance": 2.4,
+            "PeoplePerception/Person/12/IsLookingAtRobot": 0,
+            "PeoplePerception/Person/12/EngagementZone": 2,
+            "PeoplePerception/Person/12/PresentSince": 40,
+            "PeoplePerception/Person/15/Distance": 1.03,
+            "PeoplePerception/Person/15/IsLookingAtRobot": 1,
+            "PeoplePerception/Person/15/EngagementZone": 1,
+            "PeoplePerception/Person/15/PresentSince": 12,
         }
         self.services = {}
         self.connected = False
@@ -284,7 +292,20 @@ class TestRobotFacade:
         assert data["obstacle"] is True
         assert data["battery"] == 77 and data["charging"] is False
         assert data["people_count"] == 2 and data["people_ids"] == [12, 15]
+        assert data["people"] == [  # nearest first
+            {"id": 15, "distance": 1.03, "looking": True, "zone": 1, "present_for": 12},
+            {"id": 12, "distance": 2.4, "looking": False, "zone": 2, "present_for": 40},
+        ]
         assert data["bumpers"]["back"] is False
+
+    def test_missing_person_details_are_none(self, robot):
+        mem = robot.session._session.memory
+        mem["PeoplePerception/VisiblePeopleList"] = [99]
+        assert robot.sensors()["people"] == [
+            {"id": 99, "distance": None, "looking": None, "zone": None, "present_for": None}
+        ]
+        mem["PeoplePerception/VisiblePeopleList"] = []
+        assert robot.sensors()["people"] == []
 
     def test_speak_animated_with_language_code_restores_language(self, robot):
         result = robot.speak("Bonjour", language="fr", animated=True)
@@ -485,7 +506,12 @@ class TestRobotFacade:
         session = bridge.NaoqiSession("tcp://fake")
         r = bridge.Robot(session)
         session.connect()
-        assert r.extractors == {"ALSonar": True, "ALPeoplePerception": True}
+        assert r.extractors == {
+            "ALSonar": True,
+            "ALPeoplePerception": True,
+            "ALGazeAnalysis": True,
+            "ALEngagementZones": True,
+        }
         assert ("subscribe", ("pepper_bridge",)) in session.service("ALSonar").calls
         assert ("subscribe", ("pepper_bridge",)) in session.service("ALPeoplePerception").calls
         r.check_extractors()  # getSubscribersInfo returns None in the fake -> re-subscribe
@@ -581,7 +607,8 @@ class TestSensorPoller:
         first = robot.sensors()
         poller._diff(None, first)
         types_ = [e[0] for e in events]
-        assert "touch" in types_ and "sonar" in types_ and "battery" in types_ and "people" in types_
+        assert "touch" in types_ and "sonar" in types_ and "battery" in types_
+        assert "people" not in types_  # people changes wait until they have been stable (see below)
         touch = [e for e in events if e[0] == "touch"]
         assert touch == [("touch", {"sensor": "head_front", "touched": True})]
 
@@ -949,3 +976,71 @@ class TestAudioTap:
         health = robot.health()
         assert health["audio"]["streaming"] is False and health["audio"]["clients"] == 0
         assert health["version"] == bridge.BRIDGE_VERSION
+
+
+class TestPeopleDebounce:
+    """The detector flickers on the robot; events must only follow changes that hold."""
+
+    def make(self, bridge, robot, monkeypatch):
+        events = []
+        monkeypatch.setattr(bridge, "broadcast_from_thread", lambda t, p: events.append((t, p)))
+        clock = [100.0]
+        poller = bridge.SensorPoller(robot, clock=lambda: clock[0])
+        return poller, events, clock
+
+    @staticmethod
+    def snap(count, *people):
+        return {
+            "people_count": count,
+            "people_ids": list(range(count)),
+            "people": [
+                {"id": i, "distance": 1.0, "looking": looking, "zone": zone, "present_for": 1}
+                for i, (zone, looking) in enumerate(people)
+            ],
+        }
+
+    def test_a_change_is_reported_once_it_has_held(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        one = self.snap(1, (1, True))
+        poller._people_changes(one)
+        clock[0] += 0.5
+        poller._people_changes(one)
+        assert events == []
+        clock[0] += 0.6
+        poller._people_changes(one)
+        assert [e[0] for e in events] == ["people"]
+        assert events[0][1]["count"] == 1 and events[0][1]["people"][0]["looking"] is True
+        clock[0] += 5
+        poller._people_changes(one)
+        assert len(events) == 1  # nothing new, nothing sent
+
+    def test_flicker_is_ignored(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        one, two = self.snap(1, (1, True)), self.snap(2, (1, True), (2, False))
+        for _ in range(3):
+            poller._people_changes(one)
+            clock[0] += 1.1
+        poller._people_changes(one)
+        events.clear()
+        for _ in range(20):  # like the robot: 1, 2, 1, 2 ... every quarter second
+            poller._people_changes(two)
+            clock[0] += 0.25
+            poller._people_changes(one)
+            clock[0] += 0.25
+        assert events == []
+
+    def test_gaze_and_zone_changes_count(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        for state in (self.snap(1, (2, False)), self.snap(1, (1, True))):
+            poller._people_changes(state)
+            clock[0] += 1.1
+            poller._people_changes(state)
+        assert [e[1]["people"][0]["zone"] for e in events] == [2, 1]  # walked closer and looked at Pepper
+
+    def test_everyone_leaving_is_reported(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        for state in (self.snap(1, (1, True)), self.snap(0)):
+            poller._people_changes(state)
+            clock[0] += 1.1
+            poller._people_changes(state)
+        assert [e[1]["count"] for e in events] == [1, 0]

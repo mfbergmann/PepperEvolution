@@ -65,8 +65,10 @@ class AIManager:
         image_history: int = 2,
         led_signals: bool = True,
         backchannel_after: float = 2.0,
+        world: Optional[Any] = None,
     ):
         self.robot = robot
+        self.world = world  # WorldModel: its summary goes into the state block on every turn
         self.provider = provider
         self.executor = ToolExecutor(robot)
         self.logger = logger.bind(module="AIManager")
@@ -503,6 +505,9 @@ class AIManager:
             f"motors {awake}; autonomous life {state.autonomous_life}; voice language {state.language}. "
             f"Local date and time: {now.strftime('%A %d %B %Y, %H:%M')}."
         )
+        around = self.world.summary() if self.world is not None else ""
+        if around:
+            dynamic += f"\n{around}"
         return [
             {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": dynamic},

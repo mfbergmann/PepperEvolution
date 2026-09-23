@@ -35,7 +35,9 @@ Optional. Start the bridge with `--api-key=SECRET`; clients must then send `X-AP
  "touch": {"head_front": false, "head_middle": false, "head_rear": false, "hand_left": false, "hand_right": false},
  "bumpers": {"front_left": false, "front_right": false, "back": false},
  "sonar": {"front": 1.23, "back": 2.01}, "obstacle": false,
- "people_count": 1, "people_ids": [7], "sonar_ok": true, "people_ok": true, "timestamp": 1757000000.0}
+ "people_count": 1, "people_ids": [7],
+ "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12}],
+ "sonar_ok": true, "people_ok": true, "timestamp": 1757000000.0}
 ```
 Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/SubDeviceList/Platform/{Front,Back}/Sonar/Sensor/Value`); a raw 0.0 (no measurement published yet, or no hardware) is reported as `null` and never counts as an obstacle. `obstacle` is true when either is under 0.45 m. The bridge subscribes to `ALSonar` and `ALPeoplePerception` itself (they only publish while subscribed, and Autonomous Life stops them when disabled); `sonar_ok`/`people_ok` report whether those subscriptions are in place, and they are renewed on every NAOqi reconnect.
 
@@ -112,11 +114,13 @@ On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events 
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
 {"type": "sonar",   "data": {"front": 0.31, "back": 1.9, "obstacle": true}, "timestamp": ...}
 {"type": "battery", "data": {"level": 75, "charging": false}, "timestamp": ...}
-{"type": "people",  "data": {"count": 2, "ids": [1, 2]}, "timestamp": ...}
+{"type": "people",  "data": {"count": 1, "ids": [7], "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12}]}, "timestamp": ...}
 {"type": "speech",  "data": {"state": "start", "text": "Hello"}, "timestamp": ...}
 ```
 
 Clients may send `{"type": "ping"}` and get `{"type": "pong"}`. Sensors are polled every 250 ms.
+
+`people` is debounced: it is sent only when the number of people, or someone's zone or gaze, has changed and held for 1 s (`PEOPLE_STABLE_SECONDS`). NAOqi's detector flickers several times a second on the robot and its IDs change when tracking is lost, so IDs are not part of the change test. Per person: `distance` (m), `looking` (at Pepper), `zone` (1 near, 2 middle, 3 far; NAOqi engagement zones) and `present_for` (s), each `null` when NAOqi has not published it (on the robot `zone` and `present_for` were not always filled in). The bridge subscribes `ALGazeAnalysis` and `ALEngagementZones` for these; the robot stayed 86 % idle with them on. People are detected by face, so someone facing away or more than about 2 m off can drop out.
 
 ## WebSocket microphone stream
 

@@ -26,6 +26,7 @@ from src.ai import DEFAULT_ANTHROPIC_MODEL, AIManager, AIProvider, AnthropicProv
 from src.audio import VoiceInput, make_transcriber  # noqa: E402
 from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
+from src.world import WorldModel  # noqa: E402
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -143,6 +144,7 @@ class PepperEvolution:
         self.ai_manager: Optional[AIManager] = None
         self.api_server: Optional[APIServer] = None
         self.voice: Optional[VoiceInput] = None
+        self.world = WorldModel()
 
     async def initialize(self):
         s = self.settings
@@ -170,6 +172,7 @@ class PepperEvolution:
             react_to_touch=s.react_to_touch,
             led_signals=s.led_state_signals,
             backchannel_after=s.backchannel_after,
+            world=self.world,
         )
         self.voice = self.build_voice(config)
         self.api_server = APIServer(
@@ -191,6 +194,8 @@ class PepperEvolution:
             posture=s.posture_on_connect,
             awareness=s.awareness_on_connect,
         )
+        # Before connecting: the bridge sends a snapshot (who is around) as soon as the event stream opens.
+        self.robot.on_event(self.world.handle_event)
         if not await self.robot.initialize(prepare=prepare):
             raise RuntimeError(
                 f"Failed to connect to the Pepper bridge at {config.base_url}. "

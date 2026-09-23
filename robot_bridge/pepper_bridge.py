@@ -110,6 +110,15 @@ SONAR_KEYS = [
 BATTERY_KEY = "Device/SubDeviceList/Battery/Charge/Sensor/Value"
 BATTERY_CURRENT_KEY = "Device/SubDeviceList/Battery/Current/Sensor/Value"
 PEOPLE_KEY = "PeoplePerception/VisiblePeopleList"
+# Per-person details NAOqi publishes while someone is visible (checked on Pepper, NAOqi 2.5.10).
+# IsLookingAtRobot needs ALGazeAnalysis and EngagementZone needs ALEngagementZones subscribed.
+PERSON_KEYS = (
+    ("distance", "Distance"),  # metres
+    ("looking", "IsLookingAtRobot"),  # 0/1
+    ("zone", "EngagementZone"),  # 1 near (default < 1.5 m), 2 middle, 3 far
+    ("present_for", "PresentSince"),  # seconds the person has been tracked
+)
+PEOPLE_STABLE_SECONDS = 1.0  # a people change is reported only after it has held this long
 
 OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstacle
 MAX_ANIMATION_SECONDS = 20.0  # looping animations are stopped after this
@@ -316,7 +325,8 @@ NAOQI = NaoqiSession("tcp://127.0.0.1:9559")
 
 class Robot(object):
 
-    EXTRACTORS = ("ALSonar", "ALPeoplePerception")  # publish to ALMemory only while subscribed
+    # publish to ALMemory only while subscribed
+    EXTRACTORS = ("ALSonar", "ALPeoplePerception", "ALGazeAnalysis", "ALEngagementZones")
 
     def __init__(self, session):
         self.session = session
@@ -453,6 +463,7 @@ class Robot(object):
         charging = (current > 0) if isinstance(current, (int, float)) else None
 
         people_ids = self._try(lambda: list(self.svc("ALMemory").getData(PEOPLE_KEY)), None)
+        people = self._people_details(people_ids) if people_ids else []
         obstacle = any(d is not None and d < OBSTACLE_DISTANCE for d in sonar.values())
         return {
             "battery": battery,
@@ -463,10 +474,36 @@ class Robot(object):
             "obstacle": obstacle,
             "people_count": len(people_ids) if people_ids is not None else None,
             "people_ids": people_ids,
+            "people": people,
             "sonar_ok": bool(self.extractors.get("ALSonar", False)),
             "people_ok": bool(self.extractors.get("ALPeoplePerception", False)),
             "timestamp": time.time(),
         }
+
+    def _people_details(self, ids):
+        """Distance, gaze, zone and time present for each visible person, nearest first."""
+        keys = []
+        for pid in ids:
+            for _, key in PERSON_KEYS:
+                keys.append("PeoplePerception/Person/%d/%s" % (pid, key))
+        values = self._memory_values(keys)
+        people = []
+        idx = 0
+        for pid in ids:
+            person = {"id": pid}
+            for name, _ in PERSON_KEYS:
+                v = values[idx]
+                idx += 1
+                number = isinstance(v, (int, float)) and not isinstance(v, bool)
+                if name == "distance":
+                    person[name] = round(float(v), 2) if number and v > 0 else None
+                elif name == "looking":
+                    person[name] = bool(v) if v is not None else None
+                else:
+                    person[name] = int(v) if number and v > 0 else None
+            people.append(person)
+        people.sort(key=lambda p: p["distance"] if p["distance"] is not None else 99.0)
+        return people
 
     def _obstacle_ahead(self, direction):
         """Return the sonar reading (m) if something is closer than OBSTACLE_DISTANCE in that direction.
@@ -1757,11 +1794,15 @@ def broadcast_from_thread(event_type, payload):
 class SensorPoller(object):
     POLL_INTERVAL = 0.25
 
-    def __init__(self, robot):
+    def __init__(self, robot, clock=time.time):
         self.robot = robot
         self._running = False
         self._thread = None
         self.last = None
+        self._clock = clock
+        self._people_candidate = None  # (count, zones and gaze) seen most recently
+        self._people_since = 0.0  # when the candidate was first seen
+        self._people_published = None  # what the last "people" event said
 
     def start(self):
         self._running = True
@@ -1803,8 +1844,36 @@ class SensorPoller(object):
             broadcast_from_thread("sonar", payload)
         if now["battery"] != prev.get("battery") or now["charging"] != prev.get("charging"):
             broadcast_from_thread("battery", {"level": now["battery"], "charging": now["charging"]})
-        if now["people_count"] != prev.get("people_count"):
-            broadcast_from_thread("people", {"count": now["people_count"], "ids": now["people_ids"]})
+        self._people_changes(now)
+
+    @staticmethod
+    def _people_signature(snapshot):
+        people = snapshot.get("people") or []
+        return (snapshot.get("people_count"), tuple(sorted((p.get("zone"), p.get("looking")) for p in people)))
+
+    def _people_changes(self, snapshot):
+        """Report who is around only once it has been stable for PEOPLE_STABLE_SECONDS.
+
+        NAOqi's people detector flickers (on Pepper it alternated between 1 and 2 people several
+        times a second), and IDs change when tracking is lost, so the signature is the count plus
+        each person's zone and gaze, not the IDs.
+        """
+        signature = self._people_signature(snapshot)
+        now = self._clock()
+        if signature != self._people_candidate:
+            self._people_candidate = signature
+            self._people_since = now
+            return
+        if signature != self._people_published and now - self._people_since >= PEOPLE_STABLE_SECONDS:
+            self._people_published = signature
+            broadcast_from_thread(
+                "people",
+                {
+                    "count": snapshot.get("people_count"),
+                    "ids": snapshot.get("people_ids"),
+                    "people": snapshot.get("people") or [],
+                },
+            )
 
 
 # ---------------------------------------------------------------------------

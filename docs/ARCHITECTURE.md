@@ -49,7 +49,7 @@ Things a person expects instantly and that must never wait for a model call: "st
 
 Turns raw sensing into facts: speech into text, NAOqi's people detection into "someone arrived", camera frames into a short scene description. It runs all the time, independently of whether anyone is talking to Pepper, and each part uses the fastest tool that is good enough: NAOqi's on-robot detectors are free; speech-to-text runs locally (sherpa-onnx); the periodic vision pass uses a fast vision model at a low rate (every 10 to 20 s, and at once when the people count changes). Perception writes to the world model and emits events; it never speaks.
 
-**Status:** speech-to-text is built and verified (Milestone 2). People events reach the host but are not debounced or used. The vision pass is planned (Milestone 4).
+**Status:** speech-to-text is built and verified (Milestone 2). People events are debounced on the bridge with distance, gaze and zone per person, and feed the world model (2026-09-23). The vision pass is planned (Milestone 4).
 
 ### 3. World model: the shared state
 
@@ -60,7 +60,7 @@ One structure on the host that holds what Pepper currently believes about its su
 - The reflection loop reads it to decide whether to act.
 - Memory persists selected parts across sessions.
 
-**Status:** planned (Milestone 4). Today the mind only knows battery, posture and motor state, and must call a tool to learn anything else.
+**Status:** first slice built (2026-09-23): `src/world/model.py` tracks who is in view (distance, gaze, how long, recent arrivals and departures) and the mind gets an "Around you" sentence on every turn. Scene descriptions, a detail tool and memory come next.
 
 ### 4. Mind: one voice
 
