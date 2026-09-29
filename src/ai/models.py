@@ -419,7 +419,8 @@ class OllamaProvider(OpenAIProvider):
         on_text: Optional[TextCallback] = None,
     ) -> AIResponse:
         text = ""
-        calls: Dict[int, Dict[str, str]] = {}
+        calls: List[Dict[str, str]] = []
+        current: Dict[int, Dict[str, str]] = {}  # stream index -> the call being assembled
         finish = ""
         usage: Dict[str, Any] = {}
         try:
@@ -447,8 +448,12 @@ class OllamaProvider(OpenAIProvider):
                     if on_text is not None:
                         await on_text(delta.content)
                 for tc in delta.tool_calls or []:
-                    entry = calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
-                    if tc.id:
+                    entry = current.get(tc.index)
+                    if entry is None or (tc.id and entry["id"] and tc.id != entry["id"]):
+                        # Ollama sends each complete call with index 0 and its own id: a new id is a new call
+                        entry = current[tc.index] = {"id": tc.id or "", "name": "", "args": ""}
+                        calls.append(entry)
+                    elif tc.id:
                         entry["id"] = tc.id
                     if tc.function and tc.function.name:
                         entry["name"] += tc.function.name
@@ -458,7 +463,7 @@ class OllamaProvider(OpenAIProvider):
             self.logger.error(f"Local model error ({self.base_url}): {exc}")
             return AIResponse(text=ERROR_TEXT, stop_reason="error", model=self.model, usage={"error": str(exc)})
         tool_calls = []
-        for i, c in sorted(calls.items()):
+        for i, c in enumerate(calls):
             try:
                 args = json.loads(c["args"] or "{}")
             except json.JSONDecodeError:

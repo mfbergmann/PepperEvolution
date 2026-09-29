@@ -71,6 +71,20 @@ class TestStreaming:
         ]
         assert r.stop_reason == "tool_use"
 
+    async def test_separate_calls_sharing_index_zero_stay_separate(self):
+        p = provider()
+        p.client.chat.completions.create = AsyncMock(
+            return_value=stream_of(
+                chunk(tool_calls=[call(0, id="a", name="set_eye_color", args='{"color": "blue"}')]),
+                chunk(tool_calls=[call(0, id="b", name="move_head", args='{"yaw": -60}')]),
+            )
+        )
+        r = await p.chat([{"role": "user", "content": "Blue eyes, look right"}])
+        assert [(t.name, t.input) for t in r.tool_calls] == [
+            ("set_eye_color", {"color": "blue"}),
+            ("move_head", {"yaw": -60}),
+        ]
+
     async def test_server_down_is_an_error_reply(self):
         p = provider()
         p.client.chat.completions.create = AsyncMock(side_effect=ConnectionError("refused"))
