@@ -53,7 +53,7 @@ PRICES = {
     "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
     "qwen3-vl:30b-a3b-instruct": (0.0, 0.0),  # our own GPU
-    # claude-sonnet-5-5: price not checked yet; add it here and costs will be computed
+    "claude-sonnet-5-5": (2.0, 10.0),  # checked 2026-09-29, same as Sonnet 5
 }
 
 PROMPTS = [

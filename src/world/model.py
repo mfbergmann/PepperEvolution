@@ -31,6 +31,8 @@ class Person:
     looking: Optional[bool] = None  # looking at Pepper
     zone: Optional[int] = None  # 1 close, 2 middle, 3 far (NAOqi engagement zones)
     present_for: Optional[int] = None  # seconds tracked, from NAOqi
+    yaw: Optional[float] = None  # head yaw (degrees, left positive) that would face them
+    pitch: Optional[float] = None  # head pitch (degrees, down positive) that would face them
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Person":
@@ -40,6 +42,8 @@ class Person:
             looking=data.get("looking"),
             zone=data.get("zone"),
             present_for=data.get("present_for"),
+            yaw=data.get("yaw"),
+            pitch=data.get("pitch"),
         )
 
 

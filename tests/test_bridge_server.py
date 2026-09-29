@@ -168,6 +168,7 @@ class FakeSession:
             "PeoplePerception/Person/15/IsLookingAtRobot": 1,
             "PeoplePerception/Person/15/EngagementZone": 1,
             "PeoplePerception/Person/15/PresentSince": 12,
+            "PeoplePerception/Person/15/PositionInTorsoFrame": [1.0, 0.25, 0.3],
         }
         self.services = {}
         self.connected = False
@@ -293,10 +294,17 @@ class TestRobotFacade:
         assert data["battery"] == 77 and data["charging"] is False
         assert data["people_count"] == 2 and data["people_ids"] == [12, 15]
         assert data["people"] == [  # nearest first
-            {"id": 15, "distance": 1.03, "looking": True, "zone": 1, "present_for": 12},
+            {"id": 15, "distance": 1.03, "looking": True, "zone": 1, "present_for": 12, "yaw": 14.0, "pitch": 2.8},
             {"id": 12, "distance": 2.4, "looking": False, "zone": 2, "present_for": 40},
         ]
         assert data["bumpers"]["back"] is False
+
+    def test_head_direction_to_face_a_person(self, bridge):
+        assert bridge.head_direction([2.0, 0.0, 0.35]) == {"yaw": 0.0, "pitch": -0.0}
+        assert bridge.head_direction([1.0, -1.0, 0.35])["yaw"] == -45.0  # to Pepper's right
+        assert bridge.head_direction([1.0, 0.0, 1.35])["pitch"] == -45.0  # a tall person close up: look up
+        assert bridge.head_direction([-1.0, 0.0, 0.3]) == {}  # behind the camera: no answer
+        assert bridge.head_direction(None) == {} and bridge.head_direction([1.0]) == {}
 
     def test_missing_person_details_are_none(self, robot):
         mem = robot.session._session.memory

@@ -117,7 +117,27 @@ PERSON_KEYS = (
     ("looking", "IsLookingAtRobot"),  # 0/1
     ("zone", "EngagementZone"),  # 1 near (default < 1.5 m), 2 middle, 3 far
     ("present_for", "PresentSince"),  # seconds the person has been tracked
+    ("position", "PositionInTorsoFrame"),  # [x forward, y left, z up] metres; becomes yaw/pitch below
 )
+EYE_HEIGHT_ABOVE_TORSO = 0.35  # metres, roughly where Pepper's head camera sits above the torso origin
+
+
+def head_direction(position):
+    """Head yaw/pitch in degrees (Pepper's convention: yaw left positive, pitch down positive) to face a
+    person at ``position`` [x, y, z] in the torso frame; empty when NAOqi gave no usable position."""
+    try:
+        x, y, z = [float(c) for c in position][:3]
+    except (TypeError, ValueError):
+        return {}
+    if x <= 0.05:
+        return {}
+    ground = math.hypot(x, y)
+    return {
+        "yaw": round(math.degrees(math.atan2(y, x)), 1),
+        "pitch": round(-math.degrees(math.atan2(z - EYE_HEIGHT_ABOVE_TORSO, ground)), 1),
+    }
+
+
 PEOPLE_STABLE_SECONDS = 1.0  # a people change is reported only after it has held this long
 
 OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstacle
@@ -499,6 +519,8 @@ class Robot(object):
                     person[name] = round(float(v), 2) if number and v > 0 else None
                 elif name == "looking":
                     person[name] = bool(v) if v is not None else None
+                elif name == "position":
+                    person.update(head_direction(v))
                 else:
                     person[name] = int(v) if number and v > 0 else None
             people.append(person)

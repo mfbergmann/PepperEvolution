@@ -46,6 +46,7 @@ PID_FILE = REMOTE_DIR + "/bridge.pid"
 HEALTH_TIMEOUT = 150.0  # bridge retries NAOqi for ~120 s after a robot boot; give it time
 DEAD_AFTER = 30.0  # seconds without any /health answer before we check whether the process died
 SETTLE_SECONDS = 1.0
+STOP_WAIT_SECONDS = 10  # the bridge rests the robot on SIGTERM before exiting
 
 
 def connect(host, user, password):
@@ -69,6 +70,16 @@ def stop_bridge(client):
     print("Stopping bridge (if running)...")
     run_cmd(client, f"cat {PID_FILE} 2>/dev/null | xargs -r kill 2>/dev/null; rm -f {PID_FILE}")
     run_cmd(client, "pkill -f '[p]epper_bridge.py' 2>/dev/null")  # [p] so pkill does not match this shell
+    # The bridge rests the robot before it exits, which can take several seconds; starting the new one
+    # earlier fails with "Address already in use". Wait, then force it.
+    for _ in range(STOP_WAIT_SECONDS * 2):
+        _, _, rc = run_cmd(client, "pgrep -f '[p]epper_bridge.py' >/dev/null", check=False)
+        if rc != 0:
+            break
+        time.sleep(0.5)
+    else:
+        print(f"Bridge still running after {STOP_WAIT_SECONDS}s; forcing it to stop")
+        run_cmd(client, "pkill -9 -f '[p]epper_bridge.py' 2>/dev/null", check=False)
     time.sleep(SETTLE_SECONDS)
 
 

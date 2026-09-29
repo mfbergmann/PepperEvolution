@@ -64,6 +64,9 @@ class AIManager:
     MAX_TOOL_ROUNDS = 10  # Safety limit on tool-call loops
     EVENT_MAX_AGE = 2.0  # seconds; older queued reactions are dropped
     GREET_WINDOW = 10.0  # seconds after an arrival in which a greeting may still fire (they look over, step closer)
+    GREET_UNKNOWN_GAZE_DISTANCE = 1.8  # metres; this close, a person whose gaze is not known yet is greeted too
+    TURN_TO_ARRIVAL_DISTANCE = 3.0  # metres; Pepper turns its head towards newcomers this close
+    TURN_TO_ARRIVAL_SPEED = 0.3  # fraction of maximum head speed
 
     def __init__(
         self,
@@ -507,7 +510,31 @@ class AIManager:
         if not self.greet_newcomers:
             return
         self._pending_arrival = (self._clock(), arrival)
+        self._turn_towards(arrival.nearest)
         self._try_greeting()
+
+    def _turn_towards(self, person: Any):
+        """Reflex, no model: turn the head to a newcomer at once, so Pepper visibly notices them."""
+        if person is None or person.yaw is None or person.distance is None:
+            return
+        if person.distance > self.TURN_TO_ARRIVAL_DISTANCE:
+            return
+        if self.busy or self.robot.direct_commands_running or self.robot.halted:
+            return  # a turn or a direct command may be using the head
+        pitch = person.pitch if person.pitch is not None else 0.0
+
+        async def turn():
+            try:
+                await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED)
+                if self.led_signals and self._led_ok:
+                    await self.robot.set_eye_color("blue")  # attending, as while listening
+            except Exception as exc:  # noqa: BLE001 - a missed glance is not worth an error
+                self.logger.debug(f"Could not turn towards the newcomer: {exc}")
+
+        self.logger.info(f"Turning towards a newcomer: yaw {person.yaw:.0f}, pitch {pitch:.0f}")
+        task = asyncio.create_task(turn(), name="turn-to-arrival")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _try_greeting(self):
         """Greet a pending arrival once the nearest person is close and looking at Pepper."""
@@ -522,8 +549,10 @@ class AIManager:
         nearest = people[0] if people else None
         if nearest is None or nearest.distance is None or nearest.distance > self.greet_max_distance:
             return
-        if nearest.looking is not True:
+        if nearest.looking is False:
             return
+        if nearest.looking is None and nearest.distance > self.GREET_UNKNOWN_GAZE_DISTANCE:
+            return  # gaze not known yet: only greet someone who has clearly come up close
         self._pending_arrival = None  # decided now, whether or not we speak
         if self.busy or self.robot.direct_commands_running or self.robot.halted:
             return
@@ -534,7 +563,8 @@ class AIManager:
         self._last_greeting = now  # consumed even if the greeting is dropped below: never greet late
         away = "" if arrival.empty_for == float("inf") else f" Nobody had been around for {_span(arrival.empty_for)}."
         prompt = (
-            f"[Sensor event] Someone just walked up to you, about {nearest.distance:.1f} m away and looking at you."
+            f"[Sensor event] Someone just walked up to you, about {nearest.distance:.1f} m away"
+            f"{' and looking at you' if nearest.looking else ''}."
             f"{away} Greet them in one short, friendly sentence, or stay quiet if a greeting doesn't fit."
         )
         self.logger.info(f"Greeting a newcomer at {nearest.distance:.1f} m")

@@ -10,8 +10,16 @@ from src.ai.manager import AIManager
 from src.world import WorldModel
 
 
-def person(distance=1.2, looking=True, pid=1):
-    return {"id": pid, "distance": distance, "looking": looking, "zone": None, "present_for": 2}
+def person(distance=1.2, looking=True, pid=1, yaw=None, pitch=None):
+    return {
+        "id": pid,
+        "distance": distance,
+        "looking": looking,
+        "zone": None,
+        "present_for": 2,
+        "yaw": yaw,
+        "pitch": pitch,
+    }
 
 
 class Room:
@@ -105,6 +113,16 @@ class TestWhoIsGreeted:
         await r.people(person(distance=None))
         assert r.greetings == []
 
+    async def test_unknown_gaze_is_greeted_only_up_close(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(distance=2.3, looking=None))  # a passer-by, as on the robot
+        assert r.greetings == []
+        r.wait(2)
+        await r.people(person(distance=1.6, looking=None))  # comes up close
+        assert len(r.greetings) == 1
+        assert "about 1.6 m away." in r.greetings[0] and "looking at you" not in r.greetings[0]
+
     async def test_greeted_when_they_look_over_within_the_window(self, mock_robot, mock_ai_provider):
         r = await room(mock_robot, mock_ai_provider)
         r.wait(30)
@@ -120,6 +138,29 @@ class TestWhoIsGreeted:
         r.wait(AIManager.GREET_WINDOW + 1)
         await r.people(person(looking=True))
         assert r.greetings == []
+
+
+class TestTurningTowardsNewcomers:
+    async def test_head_turns_to_a_newcomer_at_once(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(distance=2.5, looking=False, yaw=20.0, pitch=-5.0))  # not greeted, still noticed
+        await asyncio.sleep(0)
+        mock_robot.connection.bridge.move_head.assert_awaited_once_with(20.0, -5.0, 0.3)
+        assert r.greetings == []
+
+    async def test_no_turn_without_a_direction_far_away_or_mid_turn(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        for p in (person(yaw=None), person(distance=3.5, yaw=10.0)):
+            r.wait(30)
+            await r.people(p)
+            r.wait(1)
+            await r.people()
+        r.wait(30)
+        async with r.manager._lock:
+            await r.people(person(yaw=10.0))
+            await asyncio.sleep(0)
+        mock_robot.connection.bridge.move_head.assert_not_awaited()
 
 
 class TestWhenToStayQuiet:
