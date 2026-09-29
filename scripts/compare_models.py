@@ -40,6 +40,8 @@ CONFIGS = [
     ("claude-sonnet-5", "low"),
     ("claude-sonnet-5", "medium"),
     ("claude-haiku-4-5", ""),
+    ("claude-sonnet-5-5", "low"),  # released 2026-09-28; same API surface as Sonnet 5 (checked via the Models API)
+    ("claude-sonnet-5-5", "medium"),
 ]
 
 # $ per million input / output tokens (Claude API list prices, checked 2026-09-22); cache reads at 10 % of input.
@@ -48,6 +50,7 @@ PRICES = {
     "claude-opus-5-5": (4.0, 20.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    # claude-sonnet-5-5: price not checked yet; add it here and costs will be computed
 }
 
 PROMPTS = [
@@ -70,7 +73,9 @@ def free_port() -> int:
 
 
 def cost(model: str, usage: dict) -> float:
-    pin, pout = PRICES.get(model, (0.0, 0.0))
+    if model not in PRICES:
+        return float("nan")  # unknown price: reported as n/a, never guessed
+    pin, pout = PRICES[model]
     fresh = usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0) * 1.25
     cached = usage.get("cache_read_input_tokens", 0) * 0.1
     return ((fresh + cached) * pin + usage.get("output_tokens", 0) * pout) / 1e6
@@ -178,7 +183,8 @@ def summarise(all_turns: list):
         words_first = sum(1 for t in turns if t["spoken"] and t["spoken"][0] not in FILLERS)
         spend = sum(t["cost"] for t in turns)
         label = f"{model}:{effort or '-'}"
-        print(f"{label:<26} {fs:10.1f}s {fw:10.1f}s {tot:6.1f}s {words_first:>4}/{len(turns):<4} ${spend:7.3f}")
+        money = f"${spend:7.3f}" if spend == spend else "     n/a"  # NaN when the price is unknown
+        print(f"{label:<26} {fs:10.1f}s {fw:10.1f}s {tot:6.1f}s {words_first:>4}/{len(turns):<4} {money}")
     print("(medians per turn; 'words 1st' = turns whose first sound was a real answer, not a filler)")
 
 
