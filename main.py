@@ -55,6 +55,8 @@ class Settings:
     speak_responses: bool
     tablet_subtitles: bool
     react_to_touch: bool
+    greet_newcomers: bool
+    greet_cooldown: float
     prepare_on_connect: bool
     autonomous_life: Optional[str]
     posture_on_connect: Optional[str]
@@ -93,6 +95,8 @@ class Settings:
             speak_responses=env_bool("SPEAK_RESPONSES", True),
             tablet_subtitles=env_bool("TABLET_SUBTITLES", True),
             react_to_touch=env_bool("REACT_TO_TOUCH", True),
+            greet_newcomers=env_bool("GREET_NEWCOMERS", True),
+            greet_cooldown=float(os.getenv("GREET_COOLDOWN") or "90"),
             prepare_on_connect=env_bool("PREPARE_ON_CONNECT", True),
             autonomous_life=None if life in ("", "keep", "none") else life,
             posture_on_connect=os.getenv("POSTURE_ON_CONNECT") or None,
@@ -171,6 +175,8 @@ class PepperEvolution:
             speak_responses=s.speak_responses,
             tablet_subtitles=s.tablet_subtitles,
             react_to_touch=s.react_to_touch,
+            greet_newcomers=s.greet_newcomers,
+            greet_cooldown=s.greet_cooldown,
             led_signals=s.led_state_signals,
             backchannel_after=s.backchannel_after,
             world=self.world,
@@ -203,6 +209,7 @@ class PepperEvolution:
                 "Is the bridge running? (python robot_bridge/deploy.py --status)"
             )
         self.robot.on_event(self.ai_manager.handle_event)
+        self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
         self.robot.start_state_loop(interval=10.0)
         if self.voice is not None:
             await self.voice.start()  # streams the robot microphone if VOICE_INPUT

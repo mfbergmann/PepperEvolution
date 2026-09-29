@@ -1,0 +1,176 @@
+"""
+Tests for greeting newcomers: the world model decides what counts as an arrival,
+the manager decides whether to speak.
+"""
+
+import asyncio
+from unittest.mock import AsyncMock
+
+from src.ai.manager import AIManager
+from src.world import WorldModel
+
+
+def person(distance=1.2, looking=True, pid=1):
+    return {"id": pid, "distance": distance, "looking": looking, "zone": None, "present_for": 2}
+
+
+class Room:
+    """A world model and a manager wired as in main.py, on one fake clock."""
+
+    def __init__(self, robot, provider, snapshot=0, **kw):
+        self.clock = [1000.0]
+        self.world = WorldModel(clock=lambda: self.clock[0])
+        kw.setdefault("speak_responses", False)
+        kw.setdefault("tablet_subtitles", False)
+        kw.setdefault("backchannel_after", 0)
+        self.manager = AIManager(robot, provider, world=self.world, **kw)
+        self.manager._clock = lambda: self.clock[0]
+        self.manager.process_user_input = AsyncMock(return_value={})
+        self.world.on_arrival(self.manager.handle_arrival)
+        self.snapshot = snapshot
+
+    async def connect(self):
+        people = [person() for _ in range(self.snapshot)]
+        await self.world.handle_event("sensors", {"people_count": self.snapshot, "people": people})
+
+    async def people(self, *people):
+        data = {"count": len(people), "people": list(people)}
+        await self.world.handle_event("people", data)  # registered first, as in main.py
+        await self.manager.handle_event("people", data)
+        await asyncio.sleep(0)  # let a greeting task run
+
+    def wait(self, seconds):
+        self.clock[0] += seconds
+
+    @property
+    def greetings(self):
+        return [c.args[0] for c in self.manager.process_user_input.call_args_list if c.kwargs.get("source") == "event"]
+
+
+async def room(mock_robot, mock_ai_provider, **kw):
+    r = Room(mock_robot, mock_ai_provider, **kw)
+    await r.connect()
+    return r
+
+
+class TestArrivals:
+    async def test_someone_walking_up_to_an_empty_room_is_greeted_once(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(distance=1.2))
+        assert len(r.greetings) == 1
+        assert "[Sensor event] Someone just walked up to you, about 1.2 m away and looking at you." in r.greetings[0]
+        r.wait(2)
+        await r.people(person(distance=1.0))  # they step closer: same visit
+        assert len(r.greetings) == 1
+
+    async def test_the_prompt_says_how_long_the_room_was_empty(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider, snapshot=1)
+        r.wait(10)
+        await r.people()  # the person leaves
+        r.wait(300)
+        await r.people(person())
+        assert "Nobody had been around for 5 minutes." in r.greetings[0]
+
+    async def test_a_short_dropout_is_not_an_arrival(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider, snapshot=1)
+        r.wait(10)
+        await r.people()  # the detector loses them when they look away
+        r.wait(5)
+        await r.people(person())
+        assert r.greetings == []
+        assert "Someone left" not in r.world.summary() and "arrived" not in r.world.summary()
+
+    async def test_someone_already_there_at_start_up_is_not_greeted(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider, snapshot=1)
+        r.wait(5)
+        await r.people(person(looking=False))
+        await r.people(person(looking=True))  # a gaze change with the same count
+        assert r.greetings == []
+
+    async def test_a_second_person_joining_is_not_greeted(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider, snapshot=1)
+        r.wait(30)
+        await r.people(person(), person(pid=2))
+        assert r.greetings == []
+        assert "Someone arrived" in r.world.summary()
+
+
+class TestWhoIsGreeted:
+    async def test_far_away_or_not_looking_is_a_passer_by(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(distance=3.5))
+        await r.people(person(distance=1.5, looking=False))
+        await r.people(person(distance=None))
+        assert r.greetings == []
+
+    async def test_greeted_when_they_look_over_within_the_window(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(distance=2.8, looking=False))
+        r.wait(4)
+        await r.people(person(distance=1.4, looking=True))
+        assert len(r.greetings) == 1 and "about 1.4 m away" in r.greetings[0]
+
+    async def test_not_greeted_when_they_look_over_too_late(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(looking=False))
+        r.wait(AIManager.GREET_WINDOW + 1)
+        await r.people(person(looking=True))
+        assert r.greetings == []
+
+
+class TestWhenToStayQuiet:
+    async def test_cooldown_between_greetings(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider, greet_cooldown=90)
+        for gap in (30, 30, 70):  # second visit 30 s after the first greeting, third one 100 s after
+            r.wait(gap)
+            await r.people(person())
+            r.wait(1)
+            await r.people()
+        assert len(r.greetings) == 2
+
+    async def test_not_during_a_conversation(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        r.manager._last_talk_at = r.clock[0] - 10  # someone spoke to Pepper 10 s ago
+        await r.people(person())
+        assert r.greetings == []
+
+    async def test_a_user_turn_counts_as_conversation(self, mock_robot, mock_ai_provider):
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False)
+        manager._clock = lambda: 42.0
+        await manager.process_user_input("hello")
+        assert manager._last_talk_at == 42.0
+        await manager.process_user_input("[Sensor event] x", source="event")
+        manager._clock = lambda: 50.0
+        assert manager._last_talk_at == 42.0
+
+    async def test_not_while_busy_halted_or_switched_off(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        mock_robot.halted = True
+        r.wait(30)
+        await r.people(person())
+        mock_robot.halted = False
+        r.wait(1)
+        await r.people()
+        r.manager.greet_newcomers = False
+        r.wait(30)
+        await r.people(person())
+        assert r.greetings == []
+
+    async def test_a_dropped_greeting_still_uses_the_cooldown(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.world.handle_event("people", {"count": 1, "people": [person()]})  # greeting scheduled
+        await r.manager._lock.acquire()  # a turn starts before the greeting task runs
+        await asyncio.sleep(0)
+        r.manager._lock.release()
+        assert r.greetings == [] and r.manager._last_greeting is not None
+        r.wait(1)
+        await r.people()
+        r.wait(30)
+        await r.people(person())
+        assert r.greetings == []  # within the cooldown: no late second try

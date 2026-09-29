@@ -102,6 +102,13 @@ class TestSettings:
         assert s.fake_bridge is True and s.speak_responses is False and s.react_to_touch is False
         assert main.env_bool("MISSING_VAR_X", True) is True
 
+    def test_greeting_settings(self, monkeypatch):
+        s = settings_with(monkeypatch)
+        assert s.greet_newcomers is True and s.greet_cooldown == 90
+        s = settings_with(monkeypatch, GREET_NEWCOMERS="false", GREET_COOLDOWN="")
+        assert s.greet_newcomers is False and s.greet_cooldown == 90
+        assert settings_with(monkeypatch, GREET_COOLDOWN="30").greet_cooldown == 30
+
 
 class TestBuildProvider:
 

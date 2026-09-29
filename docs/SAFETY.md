@@ -53,6 +53,7 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 | Intent phrases | only exact short phrases (≤ **40** characters after normalisation); "stop by the kitchen" is not a stop | `match_intent` | false stops are annoying, false positives on "wait" are worse |
 | Emergency stop by voice | only "emergency stop" / "e-stop" / "kill the motors" → full `/emergency_stop` (motors off); a bare "halt" is an ordinary stop | `intents.py` | |
 | Touch reactions | at most one per **8 s**, none while a turn runs | `AIManager.handle_event` | |
+| Greetings | at most one per **90 s** (`GREET_COOLDOWN`); only after nobody was in view for **20 s**, for someone within **2 m** and looking at Pepper; none while a turn runs, while halted, or within **30 s** of someone speaking to Pepper; a greeting that cannot run at once is dropped, never delayed | `WorldModel.update_people`, `AIManager.handle_arrival` | |
 | Backchannel filler | after **2 s** without model text, once per turn, never on event turns | `AIManager._backchannel` | |
 | Truncated replies | a reply cut off by `max_tokens` never has its tool calls executed | `AIManager._run_turn` | half a tool call is not a tool call |
 | Phantom tool calls | XML that looks like a tool call is never spoken; retried once | `SpeechStreamer`, `AIManager` | |

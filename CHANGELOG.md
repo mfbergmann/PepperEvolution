@@ -4,6 +4,10 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Unreleased
+
+- **Greeting newcomers** (Milestone 4): the world model raises an arrival when someone appears after nobody was in view for 20 s, and Pepper greets them in one short line if they are close and looking at it, with a 90 s cooldown and no greeting during a conversation (`GREET_NEWCOMERS`, `GREET_COOLDOWN`). Built and tested off the robot; the robot test is next.
+
 ## 0.3.0 (2026-09-23): first sessions on the robot, world model begins
 
 - **First contact with the physical Pepper** (Milestone 0 complete): every bridge endpoint, base moves with odometry, touch, bumpers, people, tablet, head tracking, camera, microphone and emergency stop verified on Pepper 1.8A with NAOqi 2.5.10.7.

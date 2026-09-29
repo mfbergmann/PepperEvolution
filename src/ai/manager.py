@@ -47,11 +47,23 @@ EVENT_MESSAGES = {
 }
 
 
+def _span(seconds: float) -> str:
+    """'40 seconds', 'a minute', '5 minutes', 'over an hour' for the greeting prompt."""
+    if seconds < 60:
+        return f"{int(seconds)} seconds"
+    if seconds < 120:
+        return "a minute"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} minutes"
+    return "over an hour"
+
+
 class AIManager:
     """Manages multi-turn AI conversations with tool calling and speech."""
 
     MAX_TOOL_ROUNDS = 10  # Safety limit on tool-call loops
     EVENT_MAX_AGE = 2.0  # seconds; older queued reactions are dropped
+    GREET_WINDOW = 10.0  # seconds after an arrival in which a greeting may still fire (they look over, step closer)
 
     def __init__(
         self,
@@ -66,6 +78,10 @@ class AIManager:
         led_signals: bool = True,
         backchannel_after: float = 2.0,
         world: Optional[Any] = None,
+        greet_newcomers: bool = True,
+        greet_cooldown: float = 90.0,
+        greet_max_distance: float = 2.0,
+        greet_quiet_after_talk: float = 30.0,
     ):
         self.robot = robot
         self.world = world  # WorldModel: its summary goes into the state block on every turn
@@ -77,6 +93,10 @@ class AIManager:
         self.tablet_subtitles = tablet_subtitles
         self.react_to_touch = react_to_touch
         self.touch_cooldown = touch_cooldown
+        self.greet_newcomers = greet_newcomers  # greet someone who walks up after the room was empty
+        self.greet_cooldown = greet_cooldown  # seconds between greetings
+        self.greet_max_distance = greet_max_distance  # metres; farther people are passers-by
+        self.greet_quiet_after_talk = greet_quiet_after_talk  # no greeting this soon after someone spoke to Pepper
         self.history_turns = history_turns  # user turns kept in context
         self.image_history = image_history  # photos kept in context (older ones become text)
 
@@ -85,6 +105,9 @@ class AIManager:
         self._lock = asyncio.Lock()
         self._last_event_reaction: Optional[float] = None  # monotonic time; None = never (monotonic may start near 0)
         self._clock = time.monotonic  # injectable for tests
+        self._last_greeting: Optional[float] = None
+        self._last_talk_at: Optional[float] = None  # last user or voice turn
+        self._pending_arrival: Optional[Any] = None  # (time, Arrival) waiting for the person to qualify
         self._tablet_ok = True
         self._tasks: Set[asyncio.Task] = set()
         self.intents = IntentExecutor(robot)
@@ -135,6 +158,7 @@ class AIManager:
         """
         speak = self.speak_responses if speak is None else speak
         if source in ("user", "voice"):
+            self._last_talk_at = self._clock()
             intent = match_intent(user_input)
             if intent is not None:
                 # Control phrases never wait behind the model or an in-flight turn.
@@ -455,6 +479,9 @@ class AIManager:
 
     async def handle_event(self, event_type: str, data: Dict[str, Any]):
         """React to touch/bumper events with a short spoken response (rate-limited)."""
+        if event_type == "people":
+            self._try_greeting()  # a pending arrival may qualify now (they looked over or came closer)
+            return
         if not self.react_to_touch:
             return
         if event_type == "touch" and not data.get("touched"):
@@ -475,15 +502,58 @@ class AIManager:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _react(self, prompt: str, scheduled_at: float):
+    async def handle_arrival(self, arrival: Any):
+        """World-model callback: someone came into view after the room was empty (``WorldModel.on_arrival``)."""
+        if not self.greet_newcomers:
+            return
+        self._pending_arrival = (self._clock(), arrival)
+        self._try_greeting()
+
+    def _try_greeting(self):
+        """Greet a pending arrival once the nearest person is close and looking at Pepper."""
+        if self._pending_arrival is None:
+            return
+        arrived_at, arrival = self._pending_arrival
+        now = self._clock()
+        if now - arrived_at > self.GREET_WINDOW:
+            self._pending_arrival = None  # they never came close or looked over: a passer-by
+            return
+        people = self.world.people if self.world is not None else [arrival.nearest] if arrival.nearest else []
+        nearest = people[0] if people else None
+        if nearest is None or nearest.distance is None or nearest.distance > self.greet_max_distance:
+            return
+        if nearest.looking is not True:
+            return
+        self._pending_arrival = None  # decided now, whether or not we speak
+        if self.busy or self.robot.direct_commands_running or self.robot.halted:
+            return
+        if self._last_talk_at is not None and now - self._last_talk_at < self.greet_quiet_after_talk:
+            return  # someone is already talking with Pepper
+        if self._last_greeting is not None and now - self._last_greeting < self.greet_cooldown:
+            return
+        self._last_greeting = now  # consumed even if the greeting is dropped below: never greet late
+        away = "" if arrival.empty_for == float("inf") else f" Nobody had been around for {_span(arrival.empty_for)}."
+        prompt = (
+            f"[Sensor event] Someone just walked up to you, about {nearest.distance:.1f} m away and looking at you."
+            f"{away} Greet them in one short, friendly sentence, or stay quiet if a greeting doesn't fit."
+        )
+        self.logger.info(f"Greeting a newcomer at {nearest.distance:.1f} m")
+        task = asyncio.create_task(self._react(prompt, now, kind="greeting"), name="greeting")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _react(self, prompt: str, scheduled_at: float, kind: str = "event"):
         # Re-check right before taking the lock: a user turn may have started in the meantime.
+        # A dropped touch reaction frees its cooldown; a dropped greeting keeps it (a late greeting is worse).
         if self._lock.locked() or self.robot.direct_commands_running or self.robot.halted:
-            self.logger.debug("Dropping sensor reaction: robot busy")
-            self._last_event_reaction = None
+            self.logger.debug(f"Dropping {kind}: robot busy")
+            if kind == "event":
+                self._last_event_reaction = None
             return
         if self._clock() - scheduled_at > self.EVENT_MAX_AGE:
-            self.logger.debug("Dropping sensor reaction: stale")
-            self._last_event_reaction = None
+            self.logger.debug(f"Dropping {kind}: stale")
+            if kind == "event":
+                self._last_event_reaction = None
             return
         try:
             await self.process_user_input(prompt, source="event")
