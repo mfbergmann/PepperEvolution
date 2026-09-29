@@ -10,6 +10,7 @@ from .models import (
     AIProvider,
     AIResponse,
     AnthropicProvider,
+    OllamaProvider,
     OpenAIProvider,
     ToolCall,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "AIManager",
     "AIProvider",
     "AnthropicProvider",
+    "OllamaProvider",
     "OpenAIProvider",
     "AIResponse",
     "ToolCall",

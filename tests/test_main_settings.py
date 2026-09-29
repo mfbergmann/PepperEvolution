@@ -5,7 +5,7 @@ Tests for main.py configuration and provider selection.
 import pytest
 
 import main
-from src.ai.models import AnthropicProvider, OpenAIProvider
+from src.ai.models import AnthropicProvider, OllamaProvider, OpenAIProvider
 
 
 def settings_with(monkeypatch, **env):
@@ -132,7 +132,15 @@ class TestBuildProvider:
         s = settings_with(monkeypatch, AI_MODEL="gpt-4o", OPENAI_API_KEY="sk-test")
         assert isinstance(main.build_provider(s), OpenAIProvider)
 
+    def test_local_model_through_ollama(self, monkeypatch):
+        s = settings_with(monkeypatch, AI_MODEL="qwen3-vl:30b-a3b-instruct", OLLAMA_URL="http://alien3:11434/")
+        provider = main.build_provider(s)
+        assert isinstance(provider, OllamaProvider) and provider.base_url == "http://alien3:11434"
+        s = settings_with(monkeypatch, AI_MODEL="o3", OPENAI_API_KEY="sk-test")
+        assert type(main.build_provider(s)) is OpenAIProvider  # OpenAI models still go to OpenAI
+
     def test_unknown_model(self, monkeypatch):
+        monkeypatch.delenv("OLLAMA_URL", raising=False)
         s = settings_with(monkeypatch, AI_MODEL="llama-3")
         with pytest.raises(ValueError, match="Unsupported"):
             main.build_provider(s)

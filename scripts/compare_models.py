@@ -42,7 +42,9 @@ CONFIGS = [
     ("claude-haiku-4-5", ""),
     ("claude-sonnet-5-5", "low"),  # released 2026-09-28; same API surface as Sonnet 5 (checked via the Models API)
     ("claude-sonnet-5-5", "medium"),
+    ("qwen3-vl:30b-a3b-instruct", ""),  # local, on Ollama at OLLAMA_URL (Alien3); no thinking
 ]
+LOCAL_DEFAULT_URL = "http://alien3:11434"
 
 # $ per million input / output tokens (Claude API list prices, checked 2026-09-22); cache reads at 10 % of input.
 PRICES = {
@@ -50,6 +52,7 @@ PRICES = {
     "claude-opus-5-5": (4.0, 20.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    "qwen3-vl:30b-a3b-instruct": (0.0, 0.0),  # our own GPU
     # claude-sonnet-5-5: price not checked yet; add it here and costs will be computed
 }
 
@@ -81,13 +84,23 @@ def cost(model: str, usage: dict) -> float:
     return ((fresh + cached) * pin + usage.get("output_tokens", 0) * pout) / 1e6
 
 
+def load_local_model(model: str, url: str):
+    """Load a local model into GPU memory before timing it, and keep it there for the session."""
+    httpx.post(f"{url}/api/generate", json={"model": model, "keep_alive": "30m"}, timeout=300).raise_for_status()
+
+
 async def run_config(model: str, effort: str, args, out: Path) -> list:
     port = free_port()
+    local = not model.startswith("claude")
+    ollama_url = os.environ.get("OLLAMA_URL") or LOCAL_DEFAULT_URL
+    if local:
+        load_local_model(model, ollama_url)
     url = httpx.URL(args.bridge)
     env = dict(
         os.environ,
         AI_MODEL=model,
         AI_EFFORT=effort or "none",
+        OLLAMA_URL=ollama_url,
         API_PORT=str(port),
         API_HOST="127.0.0.1",
         PEPPER_FAKE_BRIDGE="false",
@@ -98,9 +111,9 @@ async def run_config(model: str, effort: str, args, out: Path) -> list:
         REACT_TO_TOUCH="false",
         TABLET_SUBTITLES="false",
         PREPARE_ON_CONNECT="true",
-        LOG_FILE=str(out / f"{model}_{effort or 'default'}.log"),
+        LOG_FILE=str(out / f"{model.replace(':', '_')}_{effort or 'default'}.log"),
     )
-    log = open(out / f"{model}_{effort or 'default'}.stdout", "w")
+    log = open(out / f"{model.replace(':', '_')}_{effort or 'default'}.stdout", "w")
     proc = subprocess.Popen([sys.executable, "main.py"], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
     turns = []
     try:
@@ -137,7 +150,7 @@ async def run_config(model: str, effort: str, args, out: Path) -> list:
                     first_words = next((ts - t0 for ts, text in spoken_at if text not in FILLERS), None)
                     photo_file = None
                     if r.get("photo"):
-                        photo_file = out / f"{model}_{effort or 'default'}_{name}.jpg"
+                        photo_file = out / f"{model.replace(':', '_')}_{effort or 'default'}_{name}.jpg"
                         photo_file.write_bytes(base64.b64decode(r["photo"]["base64"]))
                     turn = {
                         "model": model,

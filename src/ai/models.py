@@ -388,3 +388,182 @@ class OpenAIProvider(AIProvider):
                 }
             )
         return oai_tools
+
+
+class OllamaProvider(OpenAIProvider):
+    """A local model served by Ollama (or any OpenAI-compatible server), streamed, with photos.
+
+    Differences from :class:`OpenAIProvider`, all for latency or for photos:
+
+    - Replies stream, so Pepper starts speaking at the first sentence, as with Claude.
+    - The system message holds only the static prompt; the changing state block (time, "Around you")
+      goes at the end of the current user message. Ollama reuses its cache for the longest unchanged
+      prefix, so a state line at the top would make it re-read the whole prompt and tool list every turn.
+    - Photos from tool results are sent as a user message right after the tool results, because
+      OpenAI-style tool messages cannot carry images.
+    """
+
+    def __init__(self, base_url: str, model: str, max_tokens: int = DEFAULT_MAX_TOKENS):
+        AIProvider.__init__(self, "", model)
+        import openai
+
+        self.base_url = base_url.rstrip("/")
+        self.client = openai.AsyncOpenAI(base_url=self.base_url + "/v1", api_key="ollama")
+        self.max_tokens = max_tokens
+
+    async def chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        system: Optional[Union[str, List[Dict[str, Any]]]] = None,
+        on_text: Optional[TextCallback] = None,
+    ) -> AIResponse:
+        text = ""
+        calls: Dict[int, Dict[str, str]] = {}
+        finish = ""
+        usage: Dict[str, Any] = {}
+        try:
+            kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "messages": self._convert_messages_local(messages, system),
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+            if tools:
+                kwargs["tools"] = self._convert_tools(tools)
+            stream = await self.client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if chunk.usage:
+                    usage = {"input_tokens": chunk.usage.prompt_tokens, "output_tokens": chunk.usage.completion_tokens}
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                if choice.finish_reason:
+                    finish = choice.finish_reason
+                delta = choice.delta
+                if delta.content:
+                    text += delta.content
+                    if on_text is not None:
+                        await on_text(delta.content)
+                for tc in delta.tool_calls or []:
+                    entry = calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        entry["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        entry["name"] += tc.function.name
+                    if tc.function and tc.function.arguments:
+                        entry["args"] += tc.function.arguments
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error(f"Local model error ({self.base_url}): {exc}")
+            return AIResponse(text=ERROR_TEXT, stop_reason="error", model=self.model, usage={"error": str(exc)})
+        tool_calls = []
+        for i, c in sorted(calls.items()):
+            try:
+                args = json.loads(c["args"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=c["id"] or f"call_{i}", name=c["name"], input=args))
+        stop = "tool_use" if tool_calls else ("max_tokens" if finish == "length" else "end_turn")
+        return AIResponse(text=text, tool_calls=tool_calls, stop_reason=stop, model=self.model, usage=usage)
+
+    def _convert_messages_local(
+        self, messages: List[Dict[str, Any]], system: Optional[Union[str, List[Dict[str, Any]]]]
+    ) -> List[Dict[str, Any]]:
+        static, dynamic = "", ""
+        if isinstance(system, str):
+            static = system
+        elif system:
+            blocks = [b.get("text", "") for b in system if b.get("type") == "text"]
+            static, dynamic = blocks[0] if blocks else "", "\n\n".join(blocks[1:])
+        oai: List[Dict[str, Any]] = [{"role": "system", "content": static}] if static else []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                oai.append({"role": role, "content": content})
+                continue
+            texts: List[str] = []
+            tool_calls: List[Dict[str, Any]] = []
+            images: List[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    texts.append(block.get("text", ""))
+                elif btype == "image":
+                    url = _image_url(block)
+                    if url:
+                        images.append(url)
+                elif btype == "tool_use":
+                    tool_calls.append(
+                        {
+                            "id": block.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name", ""),
+                                "arguments": json.dumps(block.get("input", {})),
+                            },
+                        }
+                    )
+                elif btype == "tool_result":
+                    result = block.get("content")
+                    oai.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": block.get("tool_use_id", ""),
+                            "content": _tool_result_plain(result),
+                        }
+                    )
+                    for b in result if isinstance(result, list) else []:
+                        url = _image_url(b) if isinstance(b, dict) and b.get("type") == "image" else None
+                        if url:
+                            images.append(url)
+            if role == "assistant":
+                if tool_calls or texts:
+                    entry: Dict[str, Any] = {"role": "assistant", "content": "\n".join(texts) or None}
+                    if tool_calls:
+                        entry["tool_calls"] = tool_calls
+                    oai.append(entry)
+            elif images:
+                parts: List[Dict[str, Any]] = [{"type": "text", "text": "\n".join(texts) or "The photo you just took:"}]
+                parts += [{"type": "image_url", "image_url": {"url": u}} for u in images]
+                oai.append({"role": "user", "content": parts})
+            elif texts:
+                oai.append({"role": role, "content": "\n".join(texts)})
+        if dynamic:
+            _append_to_last_user_text(oai, dynamic)
+        return oai
+
+
+def _image_url(block: Dict[str, Any]) -> Optional[str]:
+    source = block.get("source") or {}
+    if source.get("type") != "base64" or not source.get("data"):
+        return None  # elided older photos
+    return f"data:{source.get('media_type', 'image/jpeg')};base64,{source['data']}"
+
+
+def _tool_result_plain(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    parts = [b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text"]
+    if any(isinstance(b, dict) and b.get("type") == "image" for b in content or []):
+        parts.append("[photo follows]")
+    return "\n".join(p for p in parts if p)
+
+
+def _append_to_last_user_text(oai: List[Dict[str, Any]], dynamic: str):
+    """Put the state block after the newest user text, so everything before it stays cacheable."""
+    for msg in reversed(oai):
+        if msg["role"] != "user":
+            continue
+        note = f"\n\n[{dynamic}]"
+        if isinstance(msg["content"], str):
+            msg["content"] += note
+            return
+        for part in msg["content"]:
+            if part.get("type") == "text":
+                part["text"] += note
+                return
+    oai.append({"role": "user", "content": dynamic})

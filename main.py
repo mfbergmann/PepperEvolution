@@ -11,6 +11,7 @@ provider and serves the REST API, WebSocket and web UI from one port.
 
 import asyncio
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,14 @@ from dotenv import load_dotenv  # noqa: E402
 from loguru import logger  # noqa: E402
 
 from src import __version__  # noqa: E402
-from src.ai import DEFAULT_ANTHROPIC_MODEL, AIManager, AIProvider, AnthropicProvider, OpenAIProvider  # noqa: E402
+from src.ai import (  # noqa: E402
+    DEFAULT_ANTHROPIC_MODEL,
+    AIManager,
+    AIProvider,
+    AnthropicProvider,
+    OllamaProvider,
+    OpenAIProvider,
+)
 from src.audio import VoiceInput, make_transcriber  # noqa: E402
 from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
@@ -50,6 +58,7 @@ class Settings:
     ai_max_tokens: int
     anthropic_api_key: Optional[str]
     openai_api_key: Optional[str]
+    ollama_url: Optional[str]
     api_host: str
     api_port: int
     speak_responses: bool
@@ -90,6 +99,7 @@ class Settings:
             ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "16000")),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+            ollama_url=os.getenv("OLLAMA_URL") or None,
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "8000")),
             speak_responses=env_bool("SPEAK_RESPONSES", True),
@@ -125,11 +135,13 @@ def build_provider(settings: Settings) -> AIProvider:
             effort=settings.ai_effort if settings.ai_effort not in ("", "none") else None,
             max_tokens=settings.ai_max_tokens,
         )
-    if model.startswith("gpt") or model.startswith("o"):
+    if model.startswith("gpt") or re.match(r"o\d", model):
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required for OpenAI models")
         return OpenAIProvider(settings.openai_api_key, model, max_tokens=settings.ai_max_tokens)
-    raise ValueError(f"Unsupported AI model: {model}")
+    if settings.ollama_url:
+        return OllamaProvider(settings.ollama_url, model, max_tokens=settings.ai_max_tokens)
+    raise ValueError(f"Unsupported AI model: {model} (set OLLAMA_URL for a local model)")
 
 
 class PepperEvolution:
