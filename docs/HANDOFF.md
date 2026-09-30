@@ -50,12 +50,12 @@ Model and speech-to-text comparisons (2026-09-22, evening, open public room): al
 
 Milestone 4, first slice (2026-09-23): debounced people events with distance, gaze and zone from the bridge; `src/world/model.py` and the "Around you" line in the model's state; verified live (three clean events for leave, return, step back). Next in this layer: the greeting test below, then the periodic vision pass on the Creative AI Hub server.
 
-**Greeting newcomers (built 2026-09-29, not yet run on the robot).** Arrival = someone in view after nobody was for 20 s; greeted if within 2 m and looking at Pepper within 10 s, no user or voice turn in the last 30 s, last greeting over 90 s ago. Guided test, with the host running normally (`python main.py`, `GREET_NEWCOMERS=true`) and the log open (`grep -E "Greeting a newcomer|\[event\]" pepper_evolution.log`):
-1. Leave Pepper's view completely for **at least 25 s**, then walk up to about 1 m and look at it: one greeting, within about 3 s. Note the latency from stopping to hearing it.
-2. Stay, look away for 3-5 s, look back: **no** second greeting (short dropout).
-3. Leave for 25 s, come back: no greeting (within the 90 s cooldown). Wait until 90 s have passed since the first greeting, leave for 25 s, come back: greeted again.
-4. Leave for 25 s, walk past at about 3 m without looking: no greeting.
-Record: greetings heard, false greetings, latency, and whether the "Around you" line agreed. Known gap: a second person joining someone already there is noted in the world model but not greeted.
+**Session 2026-09-29 (office, then the open room outside it).**
+- Greeting newcomers passes on the robot (details in ROADMAP, Milestone 4): picked up at 2.9 m, head turns at once, speech about 2 s later. Run the host with `PEPPER_AWARENESS=true` (now in `.env`) so the head follows people up close and looks out at the room when it is empty.
+- The office is too small for people perception: side-on at a desk, the user was never seen as looking; test greetings in the open room.
+- Model: `.env` switched to `claude-sonnet-5-5` (medium). Local models run through Ollama on Alien3 (`OLLAMA_URL=http://alien3:11434`, `qwen3-vl:30b-a3b-instruct`): very fast, but describes scenes without looking; not for general use yet.
+- The bridge does not start by itself after Pepper boots (`python robot_bridge/deploy.py --restart`); the robot had an older bridge copy until today. `deploy.py` now waits for the old bridge to exit (it rests the robot first) and forces it after 10 s.
+- Next: blurry photos (head still moving when the photo is taken; plan in the GitHub issue under Milestone 3), then the host-side person detector on Alien3 for longer range.
 
 Still to do on the robot: base moves (deferred until there is a bigger space; the robot was parked half a metre from a desk), people-event debouncing, voice latency, voice recognition with a real backend (`STT_BACKEND=sherpa`), `VOICE_INPUT=true`, and deciding the defaults listed below. Idea for the model: put the installed voices into the system prompt's robot state so it does not try French first.
 

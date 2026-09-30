@@ -6,7 +6,11 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 ## Unreleased
 
-- **Greeting newcomers** (Milestone 4): the world model raises an arrival when someone appears after nobody was in view for 20 s, and Pepper greets them in one short line if they are close and looking at it, with a 90 s cooldown and no greeting during a conversation (`GREET_NEWCOMERS`, `GREET_COOLDOWN`). Built and tested off the robot; the robot test is next.
+- **Greeting newcomers** (Milestone 4): the world model raises an arrival when someone appears after nobody was in view for 20 s, and Pepper greets them in one short line if they are close and looking at it, with a 90 s cooldown and no greeting during a conversation (`GREET_NEWCOMERS`, `GREET_COOLDOWN`). Tested on the robot in the open room: picked up at 2.9 m, head turns at once, speech about 2 s later.
+- **Head reflexes**: Pepper turns its head to a newcomer as soon as it sees them, and looks back out at the room (straight ahead, 18° up) 3 s after the last person leaves. With `PEPPER_AWARENESS=true`, NAOqi face tracking runs while someone is in view and is switched off for an empty room, where it used to park the head looking at the floor. The bridge reports the head direction to face each person.
+- **Local models through Ollama** (`OLLAMA_URL`): a streaming provider with photos, `scripts/bench_llm.py` for raw latency, and local models in `scripts/compare_models.py`. Qwen3-VL on an RTX 5090 is about twice as fast as Claude to first words but not yet reliable about looking before describing.
+- Sonnet 5.5 chosen for spoken turns (typed and blind spoken rounds on the robot).
+- `deploy.py` waits for the old bridge to exit before starting the new one.
 
 ## 0.3.0 (2026-09-23): first sessions on the robot, world model begins
 

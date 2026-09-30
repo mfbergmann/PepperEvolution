@@ -120,9 +120,9 @@ PepperEvolution/
 | `ANTHROPIC_API_KEY` | | Required for Claude |
 | `OPENAI_API_KEY` | | Required for GPT |
 | `SPEAK_RESPONSES` / `TABLET_SUBTITLES` / `REACT_TO_TOUCH` | `true` | Behaviour switches |
-| `GREET_NEWCOMERS` / `GREET_COOLDOWN` | `true` / `90` | Greet someone who walks up (within 2 m, looking at Pepper) after nobody was in view for 20 s; seconds between greetings |
+| `GREET_NEWCOMERS` / `GREET_COOLDOWN` | `true` / `90` | Greet someone who walks up (within 3 m looking at Pepper, or 1.8 m) after nobody was in view for 20 s; seconds between greetings |
 | `LED_STATE_SIGNALS` / `BACKCHANNEL_AFTER` | `true` / `2.0` | Eye colour state signals; seconds before a spoken filler |
-| `PEPPER_AWARENESS` | `false` | Head follows people and sounds (`true`; `keep` leaves it alone); head moves pause it for 8 s |
+| `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |
 | `VOICE_INPUT` | `false` | Also stream the robot's microphone (hold-to-talk in the UI works without it) |
 | `API_PORT` | `8000` | Host port (REST + WebSocket + UI) |
