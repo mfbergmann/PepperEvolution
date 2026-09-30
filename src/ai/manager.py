@@ -86,7 +86,7 @@ class AIManager:
         world: Optional[Any] = None,
         greet_newcomers: bool = True,
         greet_cooldown: float = 90.0,
-        greet_max_distance: float = 2.0,
+        greet_max_distance: float = 3.0,
         greet_quiet_after_talk: float = 30.0,
         face_tracking: bool = False,
     ):
@@ -102,7 +102,7 @@ class AIManager:
         self.touch_cooldown = touch_cooldown
         self.greet_newcomers = greet_newcomers  # greet someone who walks up after the room was empty
         self.greet_cooldown = greet_cooldown  # seconds between greetings
-        self.greet_max_distance = greet_max_distance  # metres; farther people are passers-by
+        self.greet_max_distance = greet_max_distance  # metres, for someone looking at Pepper (detection starts ~3 m)
         self.greet_quiet_after_talk = greet_quiet_after_talk  # no greeting this soon after someone spoke to Pepper
         # NAOqi face tracking (ALBasicAwareness) on while someone is in view, off while the room is empty:
         # left on, it parks the head looking down, where the camera cannot see the next person coming.

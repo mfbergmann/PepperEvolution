@@ -113,6 +113,12 @@ class TestWhoIsGreeted:
         await r.people(person(distance=None))
         assert r.greetings == []
 
+    async def test_looking_from_where_pepper_first_sees_people_is_greeted(self, mock_robot, mock_ai_provider):
+        r = await room(mock_robot, mock_ai_provider)
+        r.wait(30)
+        await r.people(person(distance=2.35, looking=True))  # the open room on the robot: first seen at 2.35 m
+        assert len(r.greetings) == 1
+
     async def test_unknown_gaze_is_greeted_only_up_close(self, mock_robot, mock_ai_provider):
         r = await room(mock_robot, mock_ai_provider)
         r.wait(30)
