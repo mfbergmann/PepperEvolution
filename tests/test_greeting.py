@@ -171,6 +171,23 @@ class TestLookingBackAtTheRoom:
         await asyncio.sleep(0.05)
         mock_robot.connection.bridge.move_head.assert_awaited_once_with(0.0, -18.0, 0.15)
 
+    async def test_face_tracking_off_for_an_empty_room_and_back_on_for_a_person(
+        self, mock_robot, mock_ai_provider, monkeypatch
+    ):
+        monkeypatch.setattr(AIManager, "RECENTRE_AFTER", 0.01)
+        r = await room(mock_robot, mock_ai_provider, snapshot=1, face_tracking=True)
+        bridge = mock_robot.connection.bridge
+        await r.people()
+        await asyncio.sleep(0.05)
+        bridge.set_awareness.assert_awaited_once_with(False, tracking_mode=None, engagement_mode=None, stimuli=None)
+        r.wait(5)  # back before it counts as an arrival: still turned to and tracked
+        await r.people(person(yaw=15.0, pitch=-10.0))
+        await asyncio.sleep(0)
+        bridge.move_head.assert_awaited_with(15.0, -10.0, 0.3)
+        bridge.set_awareness.assert_awaited_with(
+            True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=["People", "Touch"]
+        )
+
     async def test_no_recentre_when_someone_came_back(self, mock_robot, mock_ai_provider, monkeypatch):
         monkeypatch.setattr(AIManager, "RECENTRE_AFTER", 0.02)
         r = await room(mock_robot, mock_ai_provider, snapshot=1)

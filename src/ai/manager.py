@@ -67,6 +67,7 @@ class AIManager:
     GREET_UNKNOWN_GAZE_DISTANCE = 1.8  # metres; this close, a person whose gaze is not known yet is greeted too
     TURN_TO_ARRIVAL_DISTANCE = 3.0  # metres; Pepper turns its head towards newcomers this close
     TURN_TO_ARRIVAL_SPEED = 0.3  # fraction of maximum head speed
+    TRACKING_STIMULI = ["People", "Touch"]  # no Sound or Movement: they pull the head around an open room
     NEUTRAL_HEAD = (0.0, -18.0)  # yaw, pitch: straight ahead at face height of someone about 2 m away
     RECENTRE_AFTER = 3.0  # seconds with nobody in view before the head goes back to neutral
 
@@ -87,6 +88,7 @@ class AIManager:
         greet_cooldown: float = 90.0,
         greet_max_distance: float = 2.0,
         greet_quiet_after_talk: float = 30.0,
+        face_tracking: bool = False,
     ):
         self.robot = robot
         self.world = world  # WorldModel: its summary goes into the state block on every turn
@@ -102,6 +104,10 @@ class AIManager:
         self.greet_cooldown = greet_cooldown  # seconds between greetings
         self.greet_max_distance = greet_max_distance  # metres; farther people are passers-by
         self.greet_quiet_after_talk = greet_quiet_after_talk  # no greeting this soon after someone spoke to Pepper
+        # NAOqi face tracking (ALBasicAwareness) on while someone is in view, off while the room is empty:
+        # left on, it parks the head looking down, where the camera cannot see the next person coming.
+        self.face_tracking = face_tracking
+        self._tracking_off = False  # we switched it off for an empty room
         self.history_turns = history_turns  # user turns kept in context
         self.image_history = image_history  # photos kept in context (older ones become text)
 
@@ -489,6 +495,9 @@ class AIManager:
             self._try_greeting()  # a pending arrival may qualify now (they looked over or came closer)
             if not data.get("count"):
                 self._schedule_recentre()
+            elif self._tracking_off:
+                people = self.world.people if self.world is not None else []
+                self._turn_towards(people[0] if people else None)  # someone back before it counted as an arrival
             return
         if not self.react_to_touch:
             return
@@ -534,6 +543,9 @@ class AIManager:
             if self.busy or self.robot.direct_commands_running or self.robot.halted:
                 return
             try:
+                if self.face_tracking:
+                    await self.robot.set_awareness(False)
+                    self._tracking_off = True
                 await self.robot.move_head(*self.NEUTRAL_HEAD, speed=0.15)
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug(f"Could not recentre the head: {exc}")
@@ -543,24 +555,33 @@ class AIManager:
         self._recentre_task.add_done_callback(self._tasks.discard)
 
     def _turn_towards(self, person: Any):
-        """Reflex, no model: turn the head to a newcomer at once, so Pepper visibly notices them."""
-        if person is None or person.yaw is None or person.distance is None:
-            return
-        if person.distance > self.TURN_TO_ARRIVAL_DISTANCE:
+        """Reflex, no model: turn the head to a newcomer at once, so Pepper visibly notices them,
+        and hand over to face tracking if it was switched off for the empty room."""
+        if person is None or person.distance is None or person.distance > self.TURN_TO_ARRIVAL_DISTANCE:
             return
         if self.busy or self.robot.direct_commands_running or self.robot.halted:
             return  # a turn or a direct command may be using the head
+        resume_tracking = self._tracking_off
+        self._tracking_off = False
+        if person.yaw is None and not resume_tracking:
+            return
         pitch = person.pitch if person.pitch is not None else 0.0
 
         async def turn():
             try:
-                await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED)
+                if person.yaw is not None:
+                    await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED)
+                if resume_tracking:
+                    await self.robot.set_awareness(
+                        True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=self.TRACKING_STIMULI
+                    )
                 if self.led_signals and self._led_ok:
                     await self.robot.set_eye_color("blue")  # attending, as while listening
             except Exception as exc:  # noqa: BLE001 - a missed glance is not worth an error
                 self.logger.debug(f"Could not turn towards the newcomer: {exc}")
 
-        self.logger.info(f"Turning towards a newcomer: yaw {person.yaw:.0f}, pitch {pitch:.0f}")
+        if person.yaw is not None:
+            self.logger.info(f"Turning towards a newcomer: yaw {person.yaw:.0f}, pitch {pitch:.0f}")
         task = asyncio.create_task(turn(), name="turn-to-arrival")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)

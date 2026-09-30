@@ -189,6 +189,7 @@ class PepperEvolution:
             react_to_touch=s.react_to_touch,
             greet_newcomers=s.greet_newcomers,
             greet_cooldown=s.greet_cooldown,
+            face_tracking=s.awareness_on_connect is True,
             led_signals=s.led_state_signals,
             backchannel_after=s.backchannel_after,
             world=self.world,
