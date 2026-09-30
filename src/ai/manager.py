@@ -527,6 +527,10 @@ class AIManager:
         self._turn_towards(arrival.nearest)
         self._try_greeting()
 
+    def look_at_the_room(self):
+        """Head to neutral (and face tracking off) as if the room had just emptied."""
+        self._schedule_recentre()
+
     def _schedule_recentre(self):
         """Reflex: once nobody has been in view for a few seconds, look back out at the room.
 

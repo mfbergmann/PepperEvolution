@@ -223,6 +223,8 @@ class PepperEvolution:
             )
         self.robot.on_event(self.ai_manager.handle_event)
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
+        if self.world.count == 0:
+            self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
         self.robot.start_state_loop(interval=10.0)
         if self.voice is not None:
             await self.voice.start()  # streams the robot microphone if VOICE_INPUT
