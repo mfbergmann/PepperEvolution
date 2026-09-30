@@ -82,7 +82,7 @@ define("log_level", default="INFO", type=str, help="Logging level")
 define("pip", default="", type=str, help="ignored (passed by NAOqi autoload)")
 define("pport", default=0, type=int, help="ignored (passed by NAOqi autoload)")
 
-BRIDGE_VERSION = "0.3.0"  # kept equal to src/__init__.py __version__ (tested)
+BRIDGE_VERSION = "0.4.0"  # kept equal to src/__init__.py __version__ (tested)
 LOGGER = logging.getLogger("pepper_bridge")
 START_TIME = time.time()
 IOLOOP = None  # the main IOLoop, captured in main(); worker threads must only touch this one
@@ -146,6 +146,36 @@ SPEECH_STOP_TIMEOUT = 3.0  # /speak/stop keeps stopping for at most this long
 REST_ATTEMPTS = 4  # emergency stop: rest() calls before reporting that the motors are still on
 REST_RETRY_DELAY = 0.3  # seconds between them
 AWARENESS_RESUME_AFTER = 8.0  # seconds a /move/head holds before people tracking takes the head back
+# Head moves are non-blocking in NAOqi (setAngles); photos taken while the head still turns are blurry.
+HEAD_SETTLE_TIMEOUT = 3.0  # seconds /move/head waits for the head to arrive and stop
+HEAD_ON_TARGET_DEG = 3.0  # "arrived": measured angles within this of the target
+HEAD_STILL_DEG = 0.3  # "stopped": two readings a poll apart differ by less than this
+HEAD_STILL_FOR = 0.15  # seconds the head must stay still
+HEAD_POLL = 0.05  # seconds between readings
+PHOTO_STILL_TIMEOUT = 1.5  # seconds /picture waits for a still head before shooting anyway
+PHOTO_TRACKING_RESUME = 1.0  # seconds after a photo before face tracking (paused for the shot) resumes
+FRAME_GAP = 0.2  # seconds between the dropped first frame and the kept one (the camera runs at 5 fps)
+# Arms and legs of ALRobotPosture's StandInit (read from NAOqi 2.5.10's Pepper model); no head: tracking and
+# the host's reflexes own it. /posture/neutral returns here after gestures and animations.
+NEUTRAL_JOINTS = (
+    ("LShoulderPitch", 1.593),
+    ("LShoulderRoll", 0.157),
+    ("LElbowYaw", -1.269),
+    ("LElbowRoll", -0.486),
+    ("LWristYaw", 0.0),
+    ("LHand", 0.6),
+    ("RShoulderPitch", 1.59),
+    ("RShoulderRoll", -0.155),
+    ("RElbowYaw", 1.267),
+    ("RElbowRoll", 0.485),
+    ("RWristYaw", 0.0),
+    ("RHand", 0.6),
+    ("HipRoll", 0.0),
+    ("HipPitch", -0.04),
+    ("KneePitch", -0.01),
+)
+NEUTRAL_SPEED = 0.2  # fraction of maximum joint speed
+BRIDGE_SERVICE_NAME = "PepperBridge"  # registered with NAOqi so ALServiceManager sees the autostarted service
 
 # ISO codes -> NAOqi language names. Full names pass through unchanged.
 LANGUAGE_NAMES = {
@@ -192,7 +222,7 @@ LIFE_STATES = ("solitary", "interactive", "safeguard", "disabled")
 TRACKING_MODES = ("Head", "BodyRotation", "WholeBody", "MoveContextually")  # ALBasicAwareness.setTrackingMode
 ENGAGEMENT_MODES = ("Unengaged", "SemiEngaged", "FullyEngaged")
 STIMULI = ("People", "Touch", "TabletTouch", "Sound", "Movement", "NavigationMotion")
-DEFAULT_STIMULI = ("People", "Sound", "Touch")  # what turns Pepper's head when /prepare enables awareness
+DEFAULT_STIMULI = ("People", "Touch")  # Sound (and Movement) pull the head around an open room
 
 # Pepper head limits in degrees (NAOqi 2.5 joints_pep.html). HeadPitch range shrinks
 # as |HeadYaw| grows because the head would hit the casing/tablet.
@@ -355,6 +385,9 @@ class Robot(object):
         self.halted = False  # set by emergency_stop; motion is refused until wake_up/prepare
         self.extractors = {}  # service name -> subscribed?
         self._awareness_resume = None  # threading.Timer that resumes people tracking after a head move
+        self._animations = 0  # animations running now (the neutral pose waits for them)
+        self.clock = time.time  # injectable for tests
+        self.sleep = time.sleep
         self._speech = set()  # qi futures of say() calls in progress, so /speak/stop can end them
         self._speech_lock = threading.Lock()
         self._speech_cancelled_at = 0.0
@@ -682,7 +715,7 @@ class Robot(object):
             done = motion.moveTo(x, y, theta, [["MaxVelXY", clamp(as_float(speed, 0.3), 0.1, MAX_VEL_XY)]])
         return {"x": x, "y": y, "theta": theta_deg, "completed": self._completed(done)}
 
-    def move_head(self, yaw_deg, pitch_deg, speed):
+    def move_head(self, yaw_deg, pitch_deg, speed, wait=True):
         yaw_deg = clamp(as_float(yaw_deg, 0), -HEAD_YAW_LIMIT_DEG, HEAD_YAW_LIMIT_DEG)
         pitch_low, pitch_high = head_pitch_limits(yaw_deg)
         pitch_deg = clamp(as_float(pitch_deg, 0), pitch_low, pitch_high)
@@ -692,7 +725,46 @@ class Robot(object):
         paused = self._pause_awareness_for_head_move()
         motion.setStiffnesses("Head", 1.0)
         motion.setAngles(["HeadYaw", "HeadPitch"], [math.radians(yaw_deg), math.radians(pitch_deg)], speed)
-        return {"yaw": round(yaw_deg, 1), "pitch": round(pitch_deg, 1), "awareness_paused": paused}
+        result = {"yaw": round(yaw_deg, 1), "pitch": round(pitch_deg, 1), "awareness_paused": paused}
+        if as_bool(wait, True):
+            # setAngles returns at once; wait until the head has arrived and stopped, so a photo taken next is sharp
+            settled, waited = self._wait_head_still(motion, (yaw_deg, pitch_deg), HEAD_SETTLE_TIMEOUT)
+            result.update({"settled": settled, "waited": round(waited, 2)})
+        return result
+
+    def _head_angles(self, motion):
+        return [math.degrees(a) for a in motion.getAngles(["HeadYaw", "HeadPitch"], True)]
+
+    def _wait_head_still(self, motion, target, timeout):
+        """Poll the measured head angles until they stop changing (and are on ``target``, if given).
+
+        Returns (settled, seconds waited). Gives up at ``timeout`` or as soon as an emergency stop halts the robot.
+        """
+        started = self.clock()
+        previous = None
+        still_since = None
+        while True:
+            now = self.clock()
+            if self.halted:
+                return False, now - started
+            try:
+                angles = self._head_angles(motion)
+            except Exception as exc:
+                LOGGER.debug("could not read head angles: %s", exc)
+                return False, now - started
+            on_target = target is None or all(abs(a - t) <= HEAD_ON_TARGET_DEG for a, t in zip(angles, target))
+            still = previous is not None and all(abs(a - b) <= HEAD_STILL_DEG for a, b in zip(angles, previous))
+            if on_target and still:
+                if still_since is None:
+                    still_since = now
+                if now - still_since >= HEAD_STILL_FOR:
+                    return True, now - started
+            else:
+                still_since = None
+            if now - started >= timeout:
+                return False, now - started
+            previous = angles
+            self.sleep(HEAD_POLL)
 
     # -- awareness vs. explicit head moves --------------------------------------
     # ALBasicAwareness only pauses itself for Autonomous Life activities, not for raw
@@ -708,9 +780,9 @@ class Robot(object):
         self._schedule_awareness_resume()
         return True
 
-    def _schedule_awareness_resume(self):
+    def _schedule_awareness_resume(self, delay=None):
         self._cancel_awareness_resume()
-        timer = threading.Timer(AWARENESS_RESUME_AFTER, self._resume_awareness)
+        timer = threading.Timer(AWARENESS_RESUME_AFTER if delay is None else delay, self._resume_awareness)
         timer.daemon = True
         timer.start()
         self._awareness_resume = timer
@@ -909,6 +981,22 @@ class Robot(object):
         camera = clamp(as_int(camera, 0), 0, 1)
         resolution = clamp(as_int(resolution, 2), 0, 3)  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
         color_space = 11  # RGB
+        # A moving head blurs the photo: hold face tracking for the shot and wait for the head to stop.
+        tracking_paused = self._pause_tracking_for_photo()
+        head_still = None
+        try:
+            motion = self.svc("ALMotion")
+            head_still, _ = self._wait_head_still(motion, None, PHOTO_STILL_TIMEOUT)
+            image = self._grab_frame(camera, resolution, color_space)
+        finally:
+            if tracking_paused:
+                self._schedule_awareness_resume(PHOTO_TRACKING_RESUME)
+        if not image:
+            raise RuntimeError("camera returned no image")
+        return self._encode_picture(image, camera, resolution, head_still)
+
+    def _grab_frame(self, camera, resolution, color_space):
+        """Subscribe, drop the first frame (exposure not settled yet), keep the next one, unsubscribe."""
         video = self.svc("ALVideoDevice")
         handle = video.subscribeCamera(
             "pepper_bridge_%d" % int(time.time() * 1000 % 100000), camera, resolution, color_space, 5
@@ -917,10 +1005,23 @@ class Robot(object):
             raise RuntimeError("ALVideoDevice refused the camera subscription (too many subscribers?)")
         try:
             image = video.getImageRemote(handle)
+            if image:
+                self._try(lambda: video.releaseImage(handle))
+                self.sleep(FRAME_GAP)
+                image = video.getImageRemote(handle) or image
+            return image
         finally:
             self._try(lambda: video.unsubscribe(handle))
-        if not image:
-            raise RuntimeError("camera returned no image")
+
+    def _pause_tracking_for_photo(self):
+        """Pause face tracking for a photo unless it is paused already (then a head move owns the resume)."""
+        ba = self.svc("ALBasicAwareness")
+        if not self._try(ba.isEnabled, False) or self._try(ba.isAwarenessPaused, False):
+            return False
+        self._try(ba.pauseAwareness)
+        return True
+
+    def _encode_picture(self, image, camera, resolution, head_still):
         width, height, raw = image[0], image[1], image[6]
         raw = bytes(bytearray(raw))
         if PILImage is not None:
@@ -936,6 +1037,7 @@ class Robot(object):
             "height": height,
             "format": fmt,
             "camera": camera,
+            "head_still": head_still,
         }
 
     # -- LEDs / animation -----------------------------------------------------
@@ -958,6 +1060,13 @@ class Robot(object):
         motion = self.svc("ALMotion")
         self._ensure_awake(motion)
         started = time.time()
+        self._animations += 1
+        try:
+            return self._run_animation(name, started)
+        finally:
+            self._animations -= 1
+
+    def _run_animation(self, name, started):
         # Some installed "animations" loop until stopped (animations/LED/CircleEyes, the Waiting
         # set), so run() may never return. Run it as a qi future and stop it at a time limit.
         future = self.svc("ALAnimationPlayer").run(name, _async=True)
@@ -970,6 +1079,22 @@ class Robot(object):
         elif future.hasError():
             raise RuntimeError(future.error())
         return {"animation": name, "duration": round(time.time() - started, 2), "completed": completed}
+
+    def neutral_pose(self):
+        """Arms and legs back to StandInit after gestures and animations; the head is left alone.
+
+        Skipped (not an error) while resting, halted or while an animation still runs.
+        """
+        if self.halted:
+            return {"skipped": "halted"}
+        motion = self.svc("ALMotion")
+        if not self._try(motion.robotIsWakeUp, True):
+            return {"skipped": "resting"}
+        if self._animations:
+            return {"skipped": "animation running"}
+        names = [n for n, _ in NEUTRAL_JOINTS]
+        motion.angleInterpolationWithSpeed(names, [a for _, a in NEUTRAL_JOINTS], NEUTRAL_SPEED)
+        return {"joints": len(names)}
 
     def list_animations(self):
         behaviors = self.svc("ALBehaviorManager").getInstalledBehaviors()
@@ -1386,7 +1511,15 @@ class MoveTurnHandler(JSONHandler):
 class MoveHeadHandler(JSONHandler):
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.move_head, self.arg("yaw", 0), self.arg("pitch", 0), self.arg("speed", 0.2))
+        return self.run_in_thread(
+            ROBOT.move_head, self.arg("yaw", 0), self.arg("pitch", 0), self.arg("speed", 0.2), self.arg("wait", True)
+        )
+
+
+class NeutralPoseHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(ROBOT.neutral_pose)
 
 
 class MoveToHandler(JSONHandler):
@@ -1919,6 +2052,7 @@ def make_app():
             (r"/stop", StopHandler),
             (r"/emergency_stop", EmergencyStopHandler),
             (r"/posture", PostureHandler),
+            (r"/posture/neutral", NeutralPoseHandler),
             (r"/wake_up", WakeUpHandler),
             (r"/rest", RestHandler),
             (r"/prepare", PrepareHandler),
@@ -1943,9 +2077,23 @@ def make_app():
     )
 
 
+class BridgeService(object):
+    """A small qi service, so NAOqi (and ALServiceManager, which starts the bridge at boot) can see it runs."""
+
+    def version(self):
+        return BRIDGE_VERSION
+
+    def port(self):
+        return options.port
+
+
 def _connect_naoqi_in_background():
     """Connect to NAOqi with retries; start the sensor poller once connected."""
     if NAOQI.connect_with_retry():
+        try:
+            NAOQI._session.registerService(BRIDGE_SERVICE_NAME, BridgeService())
+        except Exception as exc:  # e.g. a second bridge already registered it
+            LOGGER.warning("Could not register the %s service: %s", BRIDGE_SERVICE_NAME, exc)
         try:
             LOGGER.info("Robot: %s, NAOqi %s", ROBOT.svc("ALSystem").robotName(), ROBOT.svc("ALSystem").systemVersion())
         except Exception as exc:

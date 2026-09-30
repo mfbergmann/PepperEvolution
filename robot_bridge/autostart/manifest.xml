@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Installed by deploy.py (install-autostart option): ALServiceManager starts the service at boot. -->
+<package version="0.4.0" uuid="pepper-bridge-autostart">
+    <names>
+        <name lang="en_US">Pepper Bridge autostart</name>
+    </names>
+    <supportedLanguages>
+        <language>en_US</language>
+    </supportedLanguages>
+    <descriptionLanguages>
+        <language>en_US</language>
+    </descriptionLanguages>
+    <contents />
+    <requirements>
+        <naoqiRequirement minVersion="2.5" />
+    </requirements>
+    <services>
+        <service name="PepperBridge" autorun="true" execStart="/bin/sh service.sh" />
+    </services>
+    <executableFiles>
+        <file path="service.sh" />
+    </executableFiles>
+</package>

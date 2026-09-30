@@ -55,7 +55,14 @@ Milestone 4, first slice (2026-09-23): debounced people events with distance, ga
 - The office is too small for people perception: side-on at a desk, the user was never seen as looking; test greetings in the open room.
 - Model: `.env` switched to `claude-sonnet-5-5` (medium). Local models run through Ollama on Alien3 (`OLLAMA_URL=http://alien3:11434`, `qwen3-vl:30b-a3b-instruct`): very fast, but describes scenes without looking; not for general use yet.
 - The bridge does not start by itself after Pepper boots (`python robot_bridge/deploy.py --restart`); the robot had an older bridge copy until today. `deploy.py` now waits for the old bridge to exit (it rests the robot first) and forces it after 10 s.
-- Next: blurry photos (head still moving when the photo is taken; plan in the GitHub issue under Milestone 3), then the host-side person detector on Alien3 for longer range.
+- Built after the session, offline (0.4.0, not yet on the robot): sharp photos, a neutral pose after gestures (a greeting wave had left a hand up), and bridge autostart at boot. All tested on NAOqi's desktop build.
+
+**Checklist for the next robot session (0.4.0):**
+1. `python robot_bridge/deploy.py` (uploads the 0.4.0 bridge and `launch.sh`), then `python robot_bridge/deploy.py --install-autostart`.
+2. Power-cycle Pepper; without running anything, `python robot_bridge/deploy.py --status` must show the bridge healthy (a few minutes after boot).
+3. Sharp photos: ten "look left/right, what do you see" turns; compare the sharpness scores with the 2026-09-29 photos in `results/models-2026-09-29` (76-200 after head moves) and note how much longer the head move now takes (about 1.3 s for 60 degrees on the desktop build).
+4. Neutral pose: get a greeting with a wave; the arm should come down about half a second after Pepper stops speaking. Also play an animation from the web UI.
+5. With `PEPPER_AWARENESS=true`, a photo while someone is in view: face tracking pauses for the shot and resumes a second later.
 
 Still to do on the robot: base moves (deferred until there is a bigger space; the robot was parked half a metre from a desk), people-event debouncing, voice latency, voice recognition with a real backend (`STT_BACKEND=sherpa`), `VOICE_INPUT=true`, and deciding the defaults listed below. Idea for the model: put the installed voices into the system prompt's robot state so it does not try French first.
 

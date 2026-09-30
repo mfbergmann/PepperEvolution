@@ -65,17 +65,18 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 |--------|------|------|-------------|
 | POST | `/move/forward` | `{"distance": 0.5, "speed": 0.3, "force": false}` | Drive forward/backward (−2 to 2 m). `speed` is m/s (0.1–0.55, sets `MaxVelXY`). Refused (HTTP 500, `not moving: front sonar shows an obstacle at 0.31 m`) when the sonar in the direction of travel reads under 0.45 m, unless `force` is true. Refused while the robot is resting or halted (wake it first; motion never wakes the robot implicitly). `completed` is false when collision avoidance or `/stop` cut the move short. |
 | POST | `/move/turn` | `{"angle": 90}` | Turn in place (−180 to 180°, positive = left) |
-| POST | `/move/head` | `{"yaw": 0, "pitch": 0, "speed": 0.2}` | Head angles in degrees (yaw ±119.5, pitch −40.5..25.5 straight ahead, narrower when turned), non-blocking Returns the clamped angles and `awareness_paused` (true when people tracking was paused for this move; it resumes 8 s after the last head move). |
+| POST | `/move/head` | `{"yaw": 0, "pitch": 0, "speed": 0.2, "wait": true}` | Head angles in degrees (yaw ±119.5, pitch −40.5..25.5 straight ahead, narrower when turned). With `wait` (default) the answer comes once the measured head angles are on target and have stopped changing for 0.15 s (at most 3 s; an emergency stop ends the wait), so a photo taken next is sharp; `wait: false` returns at once (the host's reflexes). Returns the clamped angles, `awareness_paused` (true when people tracking was paused for this move; it resumes 8 s after the last head move) and, when waiting, `settled` and `waited` (seconds). |
 | POST | `/move/to` | `{"x": 0.5, "y": 0, "theta": 0, "speed": 0.3, "force": false}` | Move to a relative pose (theta in degrees); same sonar and awake checks as `/move/forward` |
 | POST | `/stop` | | Stops any running animation (`ALBehaviorManager.stopAllBehaviors`) and the base (`stopMove()` + `killMove()`) |
 | POST | `/emergency_stop` | | Stops all behaviours (animations, animated speech gestures) and speech, kills all motion tasks, then `rest()` (Pepper does not allow manual body stiffness control). Sets `halted`: every motion/animation call is refused until `/wake_up` or `/prepare`. |
 | POST | `/posture` | `{"posture": "Stand", "speed": 0.5}` | `Stand`, `StandInit`, `StandZero`, `Crouch` |
+| POST | `/posture/neutral` | — | Arms and legs back to StandInit (not the head) at 20 % speed, e.g. after a gesture left a hand raised. Skipped (`{"skipped": "resting"|"halted"|"animation running"}`), not an error, when it should not move. |
 
 ### Camera & audio
 
 | Method | Path | Params/Body | Description |
 |--------|------|-------------|-------------|
-| GET | `/picture` | `?camera=0&resolution=2` | Snapshot. camera 0 = forehead, 1 = mouth; resolution 0=QQVGA 1=QVGA 2=VGA 3=4VGA. Returns `image` (base64), `width`, `height`, `format` (`jpeg` when PIL is on the robot, else raw `rgb`). |
+| GET | `/picture` | `?camera=0&resolution=2` | Snapshot. camera 0 = forehead, 1 = mouth; resolution 0=QQVGA 1=QVGA 2=VGA 3=4VGA. Pauses face tracking for the shot (resumed 1 s later, unless a head move had already paused it), waits up to 1.5 s for a still head, drops the first frame after subscribing and keeps the next. Returns `image` (base64), `width`, `height`, `format` (`jpeg` when PIL is on the robot, else raw `rgb`), `head_still`. |
 | POST | `/audio/record` | `{"duration": 3.0}` | Record from the front microphone; returns base64 16 kHz mono WAV |
 | GET | `/audio/stream` | | State of the live microphone stream (see `/ws/audio`): `streaming`, `clients`, `muted`, `frames`, `dropped`, `sample_rate`, `last_frame_age`. Also included in `/health` as `audio`. |
 
@@ -108,7 +109,7 @@ The tablet reaches the robot head at `198.18.0.1`; change with `--tablet-host` i
 On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events are edge-triggered:
 
 ```json
-{"type": "hello",   "data": {"version": "0.3.0"}, "timestamp": ...}
+{"type": "hello",   "data": {"version": "0.4.0"}, "timestamp": ...}
 {"type": "sensors", "data": {...same as GET /sensors...}, "timestamp": ...}
 {"type": "touch",   "data": {"sensor": "head_front", "touched": true}, "timestamp": ...}
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
@@ -131,7 +132,7 @@ The bridge registers a small qi service (`PepperBridgeAudio`) with NAOqi and sub
 On connect the client gets one JSON text frame, then binary frames:
 
 ```json
-{"type": "hello", "version": "0.3.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
+{"type": "hello", "version": "0.4.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
 {"type": "state", "streaming": true}
 <binary> 2730 bytes = 1365 samples of signed 16-bit little-endian PCM (85 ms, measured on Pepper 1.8A), repeated
 ```
@@ -169,3 +170,7 @@ The bridge starts listening immediately and connects to NAOqi in the background,
 | Happy | `animations/Stand/Emotions/Positive/Happy_1` |
 
 Use `GET /animations` for the definitive list on your robot.
+
+## Starting at boot
+
+`python robot_bridge/deploy.py --install-autostart` installs a small NAOqi package (`robot_bridge/autostart/`: a manifest with one `autorun` service) so ALServiceManager starts the bridge whenever Pepper boots. The service runs `~/pepper_bridge/launch.sh`, the same launcher `deploy.py` uses, with the port and API key `deploy.py` wrote to `~/pepper_bridge/bridge.env`; the launcher does nothing if a bridge is already running. The bridge registers a `PepperBridge` qi service (`version()`, `port()`) once it is connected to NAOqi. `--remove-autostart` uninstalls the package. Tested on NAOqi's desktop build (install, stays up, cold start); on the robot, see `docs/HANDOFF.md`.

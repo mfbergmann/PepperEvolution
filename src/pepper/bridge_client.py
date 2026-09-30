@@ -137,8 +137,15 @@ class BridgeClient:
     async def move_turn(self, angle: float) -> Dict[str, Any]:
         return await self._post("/move/turn", json={"angle": angle}, timeout=self.action_timeout)
 
-    async def move_head(self, yaw: float = 0, pitch: float = 0, speed: float = 0.2) -> Dict[str, Any]:
-        return await self._post("/move/head", json={"yaw": yaw, "pitch": pitch, "speed": speed})
+    async def move_head(
+        self, yaw: float = 0, pitch: float = 0, speed: float = 0.2, wait: bool = True
+    ) -> Dict[str, Any]:
+        """``wait``: the bridge answers once the head has arrived and stopped (up to 3 s)."""
+        return await self._post("/move/head", json={"yaw": yaw, "pitch": pitch, "speed": speed, "wait": wait})
+
+    async def neutral_pose(self) -> Dict[str, Any]:
+        """Arms and legs back to StandInit (not the head); skipped while resting, halted or animating."""
+        return await self._post("/posture/neutral", json={})
 
     async def move_to(self, x: float, y: float, theta: float = 0, speed: Optional[float] = None) -> Dict[str, Any]:
         body: Dict[str, Any] = {"x": x, "y": y, "theta": theta}

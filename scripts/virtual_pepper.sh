@@ -46,7 +46,8 @@ case "${1:-status}" in
     grep -q JULIETTEY20MP "$SUITE/etc/naoqi/ALRobotModel.xml" || echo "warning: ALRobotModel.xml is not set to the Pepper model (JULIETTEY20MP.xml)"
     export QI_WRITABLE_PATH="$SIM_DIR/state"
     mkdir -p "$QI_WRITABLE_PATH"
-    (cd "$SUITE" && nohup ./bin/naoqi-bin --qi-listen-url "tcp://127.0.0.1:$NAOQI_PORT" --qi-log-level 4 \
+    # "cd; cmd &" (not "cd && cmd &"): with && the job is a subshell and $! is not naoqi-bin's PID.
+    (cd "$SUITE"; nohup ./bin/naoqi-bin --qi-listen-url "tcp://127.0.0.1:$NAOQI_PORT" --qi-log-level 4 \
         > "$RUN_DIR/naoqi.log" 2>&1 < /dev/null & echo $! > "$RUN_DIR/naoqi.pid")
     for _ in $(seq 1 60); do
       if "$SUITE/bin/qicli" info --qi-url "tcp://127.0.0.1:$NAOQI_PORT" > /dev/null 2>&1; then
@@ -78,7 +79,12 @@ case "${1:-status}" in
       pid=$([ "$name" = bridge ] && bridge_pid || naoqi_pid)
       if alive "$pid"; then kill "$pid" && echo "stopped $name (pid $pid)"; fi
       rm -f "$RUN_DIR/$name.pid"
-    done ;;
+    done
+    # NAOqi's service manager runs naoqi-service (and any autorun package services) as children;
+    # take them down with it, as a real shutdown would.
+    pkill -f "[n]aoqi-bin --qi-listen-url tcp://127.0.0.1:$NAOQI_PORT" 2>/dev/null
+    pkill -f "[n]aoqi-service --qi-url tcp://127.0.0.1:$NAOQI_PORT" 2>/dev/null
+    true ;;
   status)
     if alive "$(naoqi_pid)"; then echo "NAOqi: running (pid $(naoqi_pid)), $("$SUITE/bin/qicli" info --qi-url "tcp://127.0.0.1:$NAOQI_PORT" 2>/dev/null | grep -c '^[0-9]' || echo 0) services"; else echo "NAOqi: not running"; fi
     if alive "$(bridge_pid)"; then echo "bridge: running (pid $(bridge_pid)) $(curl -s "http://127.0.0.1:$BRIDGE_PORT/health" | cut -c1-120)"; else echo "bridge: not running"; fi ;;

@@ -86,7 +86,9 @@ class TestToolExecutor:
     async def test_move_head(self, executor, mock_robot):
         outcome = await executor.execute("move_head", {"yaw": 30, "pitch": -10})
         assert outcome.ok
-        mock_robot.connection.bridge.move_head.assert_called_once_with(30.0, -10.0, 0.2)
+        mock_robot.connection.bridge.move_head.assert_called_once_with(
+            30.0, -10.0, 0.2, wait=True
+        )  # the tool waits for a still head
 
     async def test_set_posture_invalid(self, executor):
         outcome = await executor.execute("set_posture", {"posture": "Handstand"})

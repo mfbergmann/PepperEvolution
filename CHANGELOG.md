@@ -4,7 +4,12 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Unreleased
+## 0.4.0 (2026-09-29): greeting newcomers, head reflexes, sharp photos, autostart
+
+- **Sharp photos**: `/move/head` waits until the head has arrived and stopped (about 1.3 s for a 60° turn); `/picture` pauses face tracking for the shot, waits for a still head and drops the first frame; the host scores each photo's sharpness, retakes a blurry one once and tells the model if it is still blurry. Built offline; measurement on the robot next session.
+- **Neutral pose** after gestures and animations: arms and legs return to StandInit (`/posture/neutral`), the head is left to tracking.
+- **Bridge autostart**: `deploy.py --install-autostart` installs a NAOqi package whose `autorun` service starts the bridge at every boot, through the same `launch.sh` that `deploy.py` uses. Tested on NAOqi's desktop build, including a cold start.
+- Face tracking at start-up no longer follows sounds (`People` and `Touch` only).
 
 - **Greeting newcomers** (Milestone 4): the world model raises an arrival when someone appears after nobody was in view for 20 s, and Pepper greets them in one short line if they are close and looking at it, with a 90 s cooldown and no greeting during a conversation (`GREET_NEWCOMERS`, `GREET_COOLDOWN`). Tested on the robot in the open room: picked up at 2.9 m, head turns at once, speech about 2 s later.
 - **Head reflexes**: Pepper turns its head to a newcomer as soon as it sees them, and looks back out at the room (straight ahead, 18° up) 3 s after the last person leaves. With `PEPPER_AWARENESS=true`, NAOqi face tracking runs while someone is in view and is switched off for an empty room, where it used to park the head looking at the floor. The bridge reports the head direction to face each person.

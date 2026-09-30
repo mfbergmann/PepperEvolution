@@ -20,6 +20,9 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 | NAOqi collision protection | never disabled | (not touched) | NAOqi's own arm/base reflexes stay on; `completed: false` reports a cut-short move |
 | Motion while resting or halted | refused with a clear error; the bridge never wakes the robot implicitly | `Robot._ensure_awake` | a robot that stands up by itself surprises people |
 | Awareness tracking | off unless `PEPPER_AWARENESS=true` or "look at me"; then **Head** tracking only. `BodyRotation`/`MoveContextually` (which rotate or drive the base) must be asked for explicitly. `/move/head` pauses tracking for **8 s** (`AWARENESS_RESUME_AFTER`) so the tracker and the model do not fight over the head | `Robot.prepare`, `set_awareness`, `_pause_awareness_for_head_move` | the base must not move because someone walked past |
+| Head moves wait | `/move/head` answers once the head has arrived and stopped, at most **3 s**; an emergency stop ends the wait at once | `Robot._wait_head_still` | a photo right after a turn was blurry |
+| Neutral pose | arms and legs (never head or base) back to StandInit at **20 %** speed after a turn that gestured or played an animation, 0.5 s after it ends; skipped while resting, halted, animating, or when a new turn or a direct command has started | `Robot.neutral_pose`, `AIManager._after_turn` | a greeting wave left a hand up |
+| Photos | face tracking paused for the shot and resumed **1 s** later; a blurry photo is retaken once and the model is told when it is still blurry | `Robot.picture`, `PepperRobot.take_picture` | |
 
 ## Stopping (bridge)
 

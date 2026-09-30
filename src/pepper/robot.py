@@ -69,10 +69,31 @@ class Photo:
     width: int
     height: int
     camera: int = 0
+    sharpness: Optional[float] = None  # variance of the Laplacian at 320 px wide; see photo_sharpness()
+    blurry: bool = False
 
     @property
     def data_url(self) -> str:
         return f"data:{self.media_type};base64,{self.base64_data}"
+
+
+BLURRY_BELOW = 250.0  # sharpness; photos taken while Pepper's head turned scored 76-200, still ones 290-1250
+
+
+def photo_sharpness(photo: Photo) -> Optional[float]:
+    """Edge contrast of a photo (variance of the Laplacian on a 320 px grey copy); low means blurry."""
+    try:
+        from PIL import Image, ImageFilter, ImageStat
+    except ImportError:  # pragma: no cover - Pillow is in requirements
+        return None
+    try:
+        img = Image.open(io.BytesIO(base64.b64decode(photo.base64_data))).convert("L")
+    except Exception:  # noqa: BLE001 - an unreadable image is not worth failing the photo for
+        return None
+    if img.width > 320:
+        img = img.resize((320, max(1, int(320 * img.height / img.width))))
+    kernel = ImageFilter.Kernel((3, 3), [0, 1, 0, 1, -4, 1, 0, 1, 0], scale=1, offset=128)
+    return float(ImageStat.Stat(img.filter(kernel)).var[0])
 
 
 def _to_jpeg_photo(result: Dict[str, Any]) -> Photo:
@@ -240,8 +261,15 @@ class PepperRobot:
     async def turn(self, angle: float) -> Dict[str, Any]:
         return await self.bridge.move_turn(angle)
 
-    async def move_head(self, yaw: float = 0, pitch: float = 0, speed: float = 0.2) -> Dict[str, Any]:
-        return await self.bridge.move_head(yaw, pitch, speed)
+    async def move_head(
+        self, yaw: float = 0, pitch: float = 0, speed: float = 0.2, wait: bool = True
+    ) -> Dict[str, Any]:
+        """Turn the head; with ``wait`` the bridge answers once the head has arrived and stopped (sharp photos)."""
+        return await self.bridge.move_head(yaw, pitch, speed, wait=wait)
+
+    async def neutral_pose(self) -> Dict[str, Any]:
+        """Arms and legs back to the standing pose after gestures (the head is left alone)."""
+        return await self.bridge.neutral_pose()
 
     async def set_posture(self, posture: str, speed: float = 0.5) -> Dict[str, Any]:
         return await self.bridge.set_posture(posture, speed)
@@ -266,11 +294,23 @@ class PepperRobot:
         """Take a photo and return it as a JPEG/PNG :class:`Photo`."""
         if resolution is None:
             resolution = self.photo_resolution
+        photo = await self._grab_photo(camera, resolution)
+        if photo.sharpness is not None and photo.sharpness < BLURRY_BELOW:
+            # Retake once (the bridge waits for a still head, but a person may have moved) and keep the sharper.
+            self.logger.info(f"Photo looks blurry (sharpness {photo.sharpness:.0f}); taking another")
+            second = await self._grab_photo(camera, resolution)
+            if (second.sharpness or 0.0) > photo.sharpness:
+                photo = second
+            photo.blurry = photo.sharpness is not None and photo.sharpness < BLURRY_BELOW
+        self.last_photo = photo
+        return photo
+
+    async def _grab_photo(self, camera: int, resolution: int) -> Photo:
         result = await self.bridge.take_picture(camera=camera, resolution=resolution)
         if not result.get("image"):
             raise BridgeError("Camera returned no image")
         photo = _to_jpeg_photo(result)
-        self.last_photo = photo
+        photo.sharpness = await asyncio.to_thread(photo_sharpness, photo)
         return photo
 
     async def play_animation(self, name: str) -> Dict[str, Any]:

@@ -33,6 +33,9 @@ class FakeService:
         self.language = "English"
         self.awake = True
         self.life_state = "solitary"
+        self.head = [0.0, 0.0]  # radians; getAngles moves it towards head_target, like a real head
+        self.head_target = [0.0, 0.0]
+        self.head_step = 0.1  # radians per reading
 
     def __getattr__(self, method):
         def call(*args, **kwargs):
@@ -46,6 +49,14 @@ class FakeService:
         return call
 
     def _respond(self, method, args):
+        if method == "setAngles" and list(args[0]) == ["HeadYaw", "HeadPitch"]:
+            self.head_target = list(args[1])
+            return None
+        if method == "getAngles" and list(args[0]) == ["HeadYaw", "HeadPitch"]:
+            for i in (0, 1):
+                gap = self.head_target[i] - self.head[i]
+                self.head[i] += max(-self.head_step, min(self.head_step, gap))
+            return list(self.head)
         if method == "getData":
             return self.memory[args[0]]
         if method == "getListData":
@@ -222,6 +233,9 @@ def robot(bridge):
     bridge.NAOQI._session.connect(bridge.NAOQI.url)
     bridge.NAOQI._services = {}
     r = bridge.Robot(bridge.NAOQI)
+    now = [1000.0]  # simulated time: sleeping advances it, so settle loops run instantly
+    r.clock = lambda: now[0]
+    r.sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
     return r
 
 
@@ -305,6 +319,66 @@ class TestRobotFacade:
         assert bridge.head_direction([1.0, 0.0, 1.35])["pitch"] == -45.0  # a tall person close up: look up
         assert bridge.head_direction([-1.0, 0.0, 0.3]) == {}  # behind the camera: no answer
         assert bridge.head_direction(None) == {} and bridge.head_direction([1.0]) == {}
+
+    def test_move_head_waits_until_the_head_has_stopped(self, robot):
+        motion = robot.svc("ALMotion")
+        result = robot.move_head(60, 0, 0.2)
+        assert result["settled"] is True and result["waited"] > 0.5  # about 1 rad at 0.1 rad per 50 ms reading
+        assert abs(motion.head[0] - 1.0472) < 1e-3  # the head really is there
+        assert robot.move_head(0, 0, 0.2, wait=False).get("settled") is None  # reflexes do not wait
+
+    def test_move_head_gives_up_when_the_head_never_arrives(self, robot):
+        robot.svc("ALMotion").head_step = 0.0  # stuck (e.g. blocked by a hand)
+        result = robot.move_head(30, 0, 0.2)
+        assert result["settled"] is False and result["waited"] >= 3.0
+
+    def test_emergency_stop_ends_the_wait(self, robot):
+        motion = robot.svc("ALMotion")
+        motion.head_step = 0.0
+        robot.sleep = lambda seconds: setattr(robot, "halted", True)  # a stop arrives mid-wait
+        assert robot.move_head(30, 0, 0.2)["settled"] is False
+
+    def test_photo_waits_for_a_still_head_and_drops_the_first_frame(self, robot):
+        motion = robot.svc("ALMotion")
+        motion.head_target = [0.5, 0.0]  # still turning from an earlier move
+        video = robot.svc("ALVideoDevice")
+        video._respond = lambda method, args: (
+            "handle"
+            if method == "subscribeCamera"
+            else [2, 1, 3, 0, 0, 0, b"\x00" * 6] if method == "getImageRemote" else None
+        )
+        result = robot.picture(0, 2)
+        assert result["head_still"] is True and abs(motion.head[0] - 0.5) < 1e-6
+        assert [c[0] for c in video.calls].count("getImageRemote") == 2
+
+    def test_photo_pauses_face_tracking_and_resumes_it_soon(self, robot, bridge, monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(robot, "_schedule_awareness_resume", lambda delay=None: scheduled.append(delay))
+        awareness = robot.svc("ALBasicAwareness")
+        awareness._respond = lambda method, args: {"isEnabled": True, "isAwarenessPaused": False}.get(method)
+        video = robot.svc("ALVideoDevice")
+        video._respond = lambda method, args: (
+            "handle"
+            if method == "subscribeCamera"
+            else [2, 1, 3, 0, 0, 0, b"\x00" * 6] if method == "getImageRemote" else None
+        )
+        robot.picture(0, 2)
+        assert ("pauseAwareness", ()) in awareness.calls and scheduled == [bridge.PHOTO_TRACKING_RESUME]
+
+    def test_neutral_pose_moves_arms_and_legs_not_the_head(self, robot, bridge):
+        assert robot.neutral_pose() == {"joints": len(bridge.NEUTRAL_JOINTS)}
+        call = [c for c in calls(robot, "ALMotion") if c[0] == "angleInterpolationWithSpeed"][0]
+        names = call[1][0]
+        assert "LShoulderPitch" in names and "HeadYaw" not in names and "HeadPitch" not in names
+
+    def test_neutral_pose_is_skipped_while_resting_halted_or_animating(self, robot):
+        robot._animations = 1
+        assert robot.neutral_pose() == {"skipped": "animation running"}
+        robot._animations = 0
+        robot.svc("ALMotion").awake = False
+        assert robot.neutral_pose() == {"skipped": "resting"}
+        robot.halted = True
+        assert robot.neutral_pose() == {"skipped": "halted"}
 
     def test_missing_person_details_are_none(self, robot):
         mem = robot.session._session.memory
@@ -392,17 +466,15 @@ class TestRobotFacade:
         set_angles = [c for c in motion if c[0] == "setAngles"][0]
         names, angles, speed = set_angles[1]
         assert names == ["HeadYaw", "HeadPitch"]
-        assert result == {
-            "yaw": 119.5,
-            "pitch": -35.0,
-            "awareness_paused": False,
-        }  # pitch range shrinks when the head is turned
+        assert result["yaw"] == 119.5 and result["pitch"] == -35.0  # pitch range shrinks when the head is turned
+        assert result["awareness_paused"] is False and result["settled"] is True
         assert abs(angles[0] - 2.0857) < 1e-3 and abs(angles[1] + 0.6109) < 1e-3
         assert speed == 0.6
 
     def test_move_head_pitch_limit_straight_ahead(self, robot, bridge):
-        assert robot.move_head(0, 90, 0.2) == {"yaw": 0.0, "pitch": 25.5, "awareness_paused": False}
-        assert robot.move_head(0, -90, 0.2) == {"yaw": 0.0, "pitch": -40.5, "awareness_paused": False}
+        for pitch, expected in ((90, 25.5), (-90, -40.5)):
+            result = robot.move_head(0, pitch, 0.2, wait=False)
+            assert result == {"yaw": 0.0, "pitch": expected, "awareness_paused": False}
         assert bridge.head_pitch_limits(50) == (-35.2, 20.9)
 
     def test_emergency_stop_kills_behaviours_motion_and_rests(self, robot):
@@ -763,7 +835,7 @@ class TestAwareness:
         assert result["awareness"] == {
             "enabled": True,
             "tracking_mode": "Head",
-            "stimuli": ["People", "Sound", "Touch"],
+            "stimuli": ["People", "Touch"],
         }
         assert ("setStimulusDetectionEnabled", ("Movement", False)) in calls(robot, "ALBasicAwareness")
 

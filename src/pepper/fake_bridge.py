@@ -144,8 +144,13 @@ class FakeBridgeClient:
         await asyncio.sleep(0.2)
         return result
 
-    async def move_head(self, yaw: float = 0, pitch: float = 0, speed: float = 0.2) -> Dict[str, Any]:
-        return self._record("move_head", yaw=yaw, pitch=pitch, speed=speed)
+    async def move_head(
+        self, yaw: float = 0, pitch: float = 0, speed: float = 0.2, wait: bool = True
+    ) -> Dict[str, Any]:
+        return self._record("move_head", yaw=yaw, pitch=pitch, speed=speed, wait=wait)
+
+    async def neutral_pose(self) -> Dict[str, Any]:
+        return self._record("neutral_pose")
 
     async def move_to(self, x: float, y: float, theta: float = 0, speed: Optional[float] = None) -> Dict[str, Any]:
         return self._record("move_to", x=x, y=y, theta=theta)

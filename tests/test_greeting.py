@@ -152,7 +152,7 @@ class TestTurningTowardsNewcomers:
         r.wait(30)
         await r.people(person(distance=2.5, looking=False, yaw=20.0, pitch=-5.0))  # not greeted, still noticed
         await asyncio.sleep(0)
-        mock_robot.connection.bridge.move_head.assert_awaited_once_with(20.0, -5.0, 0.3)
+        mock_robot.connection.bridge.move_head.assert_awaited_once_with(20.0, -5.0, 0.3, wait=False)
         assert r.greetings == []
 
     async def test_no_turn_without_a_direction_far_away_or_mid_turn(self, mock_robot, mock_ai_provider):
@@ -175,7 +175,7 @@ class TestLookingBackAtTheRoom:
         r = await room(mock_robot, mock_ai_provider, snapshot=1)
         await r.people()
         await asyncio.sleep(0.05)
-        mock_robot.connection.bridge.move_head.assert_awaited_once_with(0.0, -18.0, 0.15)
+        mock_robot.connection.bridge.move_head.assert_awaited_once_with(0.0, -18.0, 0.15, wait=False)
 
     async def test_face_tracking_off_for_an_empty_room_and_back_on_for_a_person(
         self, mock_robot, mock_ai_provider, monkeypatch
@@ -189,7 +189,7 @@ class TestLookingBackAtTheRoom:
         r.wait(5)  # back before it counts as an arrival: still turned to and tracked
         await r.people(person(yaw=15.0, pitch=-10.0))
         await asyncio.sleep(0)
-        bridge.move_head.assert_awaited_with(15.0, -10.0, 0.3)
+        bridge.move_head.assert_awaited_with(15.0, -10.0, 0.3, wait=False)
         bridge.set_awareness.assert_awaited_with(
             True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=["People", "Touch"]
         )

@@ -85,6 +85,7 @@ def mock_connection(connection_config):
         return_value={"ok": True, "image": "base64data", "width": 640, "height": 480, "format": "jpeg"}
     )
     bridge.play_animation = AsyncMock(return_value={"ok": True})
+    bridge.neutral_pose = AsyncMock(return_value={"joints": 15})
     bridge.list_animations = AsyncMock(return_value=["animations/Stand/Gestures/Hey_1"])
     bridge.set_eye_leds = AsyncMock(return_value={"ok": True})
     bridge.set_chest_leds = AsyncMock(return_value={"ok": True})

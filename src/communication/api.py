@@ -112,6 +112,15 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
         )
         return {"media_type": shot.media_type, "base64": shot.base64_data, "width": shot.width, "height": shot.height}
 
+    async def animate(name: str) -> Dict[str, Any]:
+        """Play an animation, then bring the arms back down (animations can end with a hand still up)."""
+        result = await bridge.play_animation(name)
+        try:
+            result["neutral"] = await bridge.neutral_pose()
+        except Exception as exc:  # noqa: BLE001 - the animation itself worked
+            result["neutral_error"] = str(exc)
+        return result
+
     dispatch = {
         "speak": lambda: bridge.speak(
             p.get("text", ""), language=p.get("language"), animated=bool(p.get("animated", True))
@@ -142,7 +151,8 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
         "sensors": lambda: bridge.get_sensors(),
         "eye_color": lambda: robot.set_eye_color(p.get("color", "white")),
         "chest_color": lambda: bridge.set_chest_leds(color=p.get("color", "white")),
-        "animation": lambda: bridge.play_animation(p.get("name", "")),
+        "animation": lambda: animate(p.get("name", "")),
+        "neutral_pose": lambda: bridge.neutral_pose(),
         "animations": lambda: bridge.list_animations(),
         "volume": lambda: bridge.set_volume(int(p.get("level", 50))),
         "tablet_text": lambda: bridge.tablet_text(p.get("text", ""), title=p.get("title")),
@@ -152,6 +162,7 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
     }
 
     handler = dispatch.get(cmd)
+
     if not handler:
         return {"success": False, "error": f"Unknown command: {cmd}", "known": sorted(dispatch)}
     robot.direct_commands_running += 1  # sensor reactions wait while an operator drives the robot

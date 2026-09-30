@@ -181,7 +181,9 @@ class AIManager:
                 # Queued behind the turn that "stop" cancelled: the person does not want it any more.
                 self.logger.info(f"[{source}] dropped after a stop: {user_input!r}")
                 return self._bare_result("", source, client_id, "cancelled")
-            return await self._run_turn(user_input, speak, source, client_id)
+            result = await self._run_turn(user_input, speak, source, client_id)
+        self._after_turn(result)
+        return result
 
     async def _handle_intent(
         self, intent: Intent, user_input: str, speak: bool, source: str, client_id: Optional[str]
@@ -527,6 +529,32 @@ class AIManager:
         self._turn_towards(arrival.nearest)
         self._try_greeting()
 
+    NEUTRAL_POSE_DELAY = 0.5  # seconds after a turn before the arms go back down, unless a new turn has started
+
+    def _after_turn(self, result: Dict[str, Any]):
+        """Bring the arms back down after a turn that gestured or played an animation.
+
+        Inline gestures (``^start(...)``) and animations can end with a hand still raised (seen on the robot
+        after a greeting wave).
+        """
+        spoken = " ".join(result.get("spoken") or [])
+        animated = any(tc.get("name") == "play_animation" for tc in result.get("tool_calls") or [])
+        if "^start(" not in spoken and "^run(" not in spoken and not animated:
+            return
+
+        async def settle():
+            await asyncio.sleep(self.NEUTRAL_POSE_DELAY)
+            if self.busy or self.robot.direct_commands_running or self.robot.halted:
+                return  # the next turn or a command owns the body now
+            try:
+                await self.robot.neutral_pose()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug(f"Could not return to the neutral pose: {exc}")
+
+        task = asyncio.create_task(settle(), name="neutral-pose")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     def look_at_the_room(self):
         """Head to neutral (and face tracking off) as if the room had just emptied."""
         self._schedule_recentre()
@@ -550,7 +578,7 @@ class AIManager:
                 if self.face_tracking:
                     await self.robot.set_awareness(False)
                     self._tracking_off = True
-                await self.robot.move_head(*self.NEUTRAL_HEAD, speed=0.15)
+                await self.robot.move_head(*self.NEUTRAL_HEAD, speed=0.15, wait=False)
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug(f"Could not recentre the head: {exc}")
 
@@ -574,7 +602,7 @@ class AIManager:
         async def turn():
             try:
                 if person.yaw is not None:
-                    await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED)
+                    await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
                 if resume_tracking:
                     await self.robot.set_awareness(
                         True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=self.TRACKING_STIMULI

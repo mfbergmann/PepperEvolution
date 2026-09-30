@@ -147,6 +147,7 @@ The same five spoken prompts through Pepper's microphone, office background leve
 
 Goal: Claude can act on what it sees, not just describe it.
 
+- Sharp photos (**built 2026-09-29**, measure on the robot next session): `/move/head` waits for the head to stop, `/picture` pauses face tracking and waits for a still head and drops the first frame, and the host retakes a blurry photo once and tells the model if it is still blurry. Photos taken right after a head move scored 76-200 on the sharpness measure, still ones 290-1250.
 - `look_at(x, y)`: the model returns a point in the last photo; the bridge converts it to head angles using the camera field of view.
 - Verify-after-act: for moves and gestures with a visible effect, take a photo and let the model judge success before continuing.
 - Optional depth frames from the 3D camera for distance questions.
@@ -185,7 +186,7 @@ Goal: Pepper remembers who it talked to and what was said.
 
 ## Milestone 6: robustness and operations
 
-- Bridge autostart on robot boot (`autoload.ini`) and a watchdog.
+- Bridge autostart on robot boot: **built 2026-09-29**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`), tested on NAOqi's desktop build including a cold start; robot check next session. Still to do: a watchdog that restarts a crashed bridge.
 - Latency budget per turn in the log; per-sentence speech timing.
 - Session recording (transcripts, photos, tool calls) for later analysis.
 

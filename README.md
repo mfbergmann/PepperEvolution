@@ -36,6 +36,7 @@ Or step by step:
 
 ```bash
 python robot_bridge/deploy.py                  # upload + start the bridge, wait for /health
+python robot_bridge/deploy.py --install-autostart   # once: the bridge starts at every boot
 curl http://10.0.100.100:8888/status           # bridge answers directly
 python main.py                                 # host app on http://localhost:8000
 python examples/basic_chat.py                  # or chat from the terminal

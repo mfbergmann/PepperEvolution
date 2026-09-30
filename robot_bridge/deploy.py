@@ -14,11 +14,13 @@ Connection details come from flags or the environment (.env is loaded):
 """
 
 import argparse
+import io
 import json
 import os
 import shlex
 import sys
 import time
+import zipfile
 import urllib.error
 import urllib.request
 
@@ -36,13 +38,20 @@ except ImportError:
     sys.exit(1)
 
 
-BRIDGE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pepper_bridge.py")
+HERE = os.path.dirname(os.path.abspath(__file__))
+BRIDGE_FILE = os.path.join(HERE, "pepper_bridge.py")
+LAUNCH_FILE = os.path.join(HERE, "launch.sh")  # the one way the bridge is started (here and at boot)
+AUTOSTART_DIR = os.path.join(HERE, "autostart")  # NAOqi package whose service runs launch.sh at boot
+AUTOSTART_UUID = "pepper-bridge-autostart"
+REMOTE_PKG = "/tmp/" + AUTOSTART_UUID + ".pkg"
 REMOTE_DIR = "/home/nao/pepper_bridge"
 # NAOqi's Python bindings are only on the path in a login shell; a plain ssh exec does not source it.
 NAOQI_ENV = "PYTHONPATH=/opt/aldebaran/lib/python2.7/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 REMOTE_SCRIPT = REMOTE_DIR + "/pepper_bridge.py"
 REMOTE_LOG = REMOTE_DIR + "/bridge.log"
 PID_FILE = REMOTE_DIR + "/bridge.pid"
+REMOTE_LAUNCH = REMOTE_DIR + "/launch.sh"
+REMOTE_ENV = REMOTE_DIR + "/bridge.env"
 HEALTH_TIMEOUT = 150.0  # bridge retries NAOqi for ~120 s after a robot boot; give it time
 DEAD_AFTER = 30.0  # seconds without any /health answer before we check whether the process died
 SETTLE_SECONDS = 1.0
@@ -91,23 +100,62 @@ def upload(client):
     sftp = client.open_sftp()
     try:
         sftp.put(BRIDGE_FILE, REMOTE_SCRIPT)
+        sftp.put(LAUNCH_FILE, REMOTE_LAUNCH)
     finally:
         sftp.close()
 
 
+def write_settings(client, port, api_key):
+    """bridge.env: what launch.sh starts the bridge with, now and at the next boot."""
+    lines = [f"PORT={int(port)}"]
+    if api_key:
+        lines.append(f"API_KEY={shlex.quote(api_key)}")
+    body = "\n".join(lines) + "\n"
+    run_cmd(client, f"umask 077; printf %s {shlex.quote(body)} > {REMOTE_ENV}")
+
+
+def build_autostart_package():
+    """The NAOqi package (a zip) whose autorun service starts the bridge at boot."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as pkg:
+        for name in ("manifest.xml", "service.sh"):
+            pkg.write(os.path.join(AUTOSTART_DIR, name), name)
+    return buf.getvalue()
+
+
+def install_autostart(client):
+    print("Installing the autostart package (ALServiceManager starts the bridge at boot)...")
+    sftp = client.open_sftp()
+    try:
+        with sftp.open(REMOTE_PKG, "wb") as fh:
+            fh.write(build_autostart_package())
+    finally:
+        sftp.close()
+    out, err, rc = run_cmd(client, f"{NAOQI_ENV} qicli call PackageManager.install {REMOTE_PKG} 2>&1")
+    run_cmd(client, f"rm -f {REMOTE_PKG}")
+    print(out or err)
+    if rc != 0 or "false" in out.lower() or "error" in out.lower():
+        print("Autostart package NOT installed")
+        return False
+    print(f"Installed {AUTOSTART_UUID}; the bridge will start by itself after the next boot")
+    return True
+
+
+def remove_autostart(client):
+    out, err, _ = run_cmd(client, f"{NAOQI_ENV} qicli call PackageManager.removePkg {AUTOSTART_UUID} 2>&1")
+    print(out or err)
+    return "true" in out.lower()
+
+
 def start_bridge(client, port, api_key):
-    api_key_arg = f"--api-key={shlex.quote(api_key)}" if api_key else ""
-    # "cd DIR; cmd &" (not "cd && cmd &"): with && the job is a subshell and $! is not python's PID.
-    cmd = (
-        f"cd {REMOTE_DIR}; "
-        f"{NAOQI_ENV} nohup python pepper_bridge.py --port={port} {api_key_arg} "
-        f"> {REMOTE_LOG} 2>&1 < /dev/null & echo $!"
-    )
+    write_settings(client, port, api_key)
+    # launch.sh writes its PID (it execs python, so that is the bridge's PID) and the log itself.
+    # "cd DIR; cmd &" (not "cd && cmd &"): with && the job is a subshell and $! is not the launcher's PID.
+    cmd = f"cd {REMOTE_DIR}; nohup /bin/sh launch.sh > /dev/null 2>&1 < /dev/null & echo $!"
     print(f"Starting bridge on port {port}...")
     pid_out, _, _ = run_cmd(client, cmd)
     pid = pid_out.strip().splitlines()[-1] if pid_out.strip() else ""
     if pid:
-        run_cmd(client, f"echo {pid} > {PID_FILE}")
         print(f"Bridge started with PID {pid}")
     else:
         print("Warning: could not capture PID")
@@ -185,13 +233,20 @@ def deploy(args):
             health = wait_for_health(args.host, args.port, args.api_key, timeout=4)
             print(f"/health: {json.dumps(health) if health else 'no answer'}")
             return 0 if running and health else 1
+        if args.install_autostart:
+            if not run_cmd(client, f"test -f {REMOTE_LAUNCH}", check=False)[2] == 0:
+                print("Deploy the bridge first (launch.sh is not on the robot yet)")
+                return 1
+            return 0 if install_autostart(client) else 1
+        if args.remove_autostart:
+            return 0 if remove_autostart(client) else 1
         if args.stop:
             stop_bridge(client)
             print("Bridge stopped." if not is_running(client) else "Warning: a bridge process is still alive")
             return 0
 
         stop_bridge(client)
-        if not args.restart:
+        if not args.restart or run_cmd(client, f"test -f {REMOTE_LAUNCH}", check=False)[2] != 0:
             upload(client)
         start_bridge(client, args.port, args.api_key)
 
@@ -221,10 +276,17 @@ def main():
     parser.add_argument("--stop", action="store_true", help="stop the bridge and exit")
     parser.add_argument("--logs", action="store_true", help="print the bridge log and exit")
     parser.add_argument("--status", action="store_true", help="report process + /health state")
+    parser.add_argument(
+        "--install-autostart", action="store_true", help="install the package that starts the bridge at boot"
+    )
+    parser.add_argument("--remove-autostart", action="store_true", help="remove the autostart package")
     parser.add_argument("-n", "--lines", type=int, default=50, help="log lines for --logs")
     args = parser.parse_args()
 
-    if not (args.restart or args.stop or args.logs or args.status) and not os.path.exists(BRIDGE_FILE):
+    only_manage = (
+        args.restart or args.stop or args.logs or args.status or args.install_autostart or args.remove_autostart
+    )
+    if not only_manage and not os.path.exists(BRIDGE_FILE):
         print(f"Error: {BRIDGE_FILE} not found")
         sys.exit(1)
     try:

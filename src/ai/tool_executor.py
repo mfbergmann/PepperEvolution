@@ -155,7 +155,14 @@ class ToolExecutor:
                     "width": photo.width,
                     "height": photo.height,
                     "camera": "forehead" if camera == 0 else "mouth",
-                    "note": "The photo is attached above; describe what you actually see in it.",
+                    "note": (
+                        "The photo is attached above; describe what you actually see in it."
+                        + (
+                            " It came out blurry even on a second try, so say so rather than guess at details."
+                            if photo.blurry
+                            else ""
+                        )
+                    ),
                 },
                 image=photo,
             )

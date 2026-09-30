@@ -81,6 +81,16 @@ class TestAgainstRealNaoqi:
         assert far["yaw"] == 119.5
         await client.move_head(0, 0)
 
+    async def test_head_move_waits_until_the_head_has_stopped(self, client):
+        result = await client.move_head(60, -15, 0.2)
+        assert result["settled"] is True and result["waited"] > 0.5  # a real 60 degree turn takes time
+        quick = await client.move_head(0, 0, 0.6, wait=False)
+        assert "settled" not in quick
+
+    async def test_neutral_pose_after_a_gesture(self, client):
+        result = await client.neutral_pose()
+        assert result.get("joints") == 15 or result.get("skipped")
+
     async def test_base_moves_complete_and_stop(self, client):
         turn = await client.move_turn(20)
         assert turn["completed"] is True
@@ -130,6 +140,7 @@ class TestAgainstRealNaoqi:
             print("no camera:", exc)
             return
         assert shot["width"] > 0 and shot["image"]
+        assert shot["head_still"] is True  # the bridge waited for a still head before the shot
 
     async def test_emergency_stop_and_recovery(self, client):
         stopped = await client.emergency_stop()

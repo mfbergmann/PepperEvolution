@@ -47,9 +47,11 @@ The fuller, ordered checklist for the first session (what to verify endpoint by 
    ```bash
    python robot_bridge/deploy.py
    ```
-   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=0.3.0`. Right after a robot boot
+   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=0.4.0`. Right after a robot boot
    this can take up to about two minutes while NAOqi finishes starting (deploy prints `waiting for NAOqi` meanwhile).
    If it fails, `python robot_bridge/deploy.py --logs` shows `bridge.log` from the robot.
+   Once it works, `python robot_bridge/deploy.py --install-autostart` makes NAOqi start the bridge at every boot,
+   so after that the bridge is up whenever Pepper is (redeploy after code changes as before).
 3. **Sanity-check the bridge directly** (no AI involved):
    ```bash
    curl http://10.0.100.100:8888/status
