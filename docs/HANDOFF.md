@@ -59,7 +59,7 @@ Milestone 4, first slice (2026-09-23): debounced people events with distance, ga
 
 **Checklist for the next robot session (0.4.0):**
 1. `python robot_bridge/deploy.py` (uploads the 0.4.0 bridge and `launch.sh`), then `python robot_bridge/deploy.py --install-autostart`.
-2. Power-cycle Pepper; without running anything, `python robot_bridge/deploy.py --status` must show the bridge healthy (a few minutes after boot).
+2. Power-cycle Pepper; without running anything, `python robot_bridge/deploy.py --status` must show the bridge healthy (a few minutes after boot). If not: `~/pepper_bridge/bridge.log`, `qicli call ALServiceManager.isServiceRunning pepper-bridge-autostart.PepperBridge`, and NAOqi's log (`/var/log/naoqi/servicemanager/`, or `qicli log-view`). On the desktop build, installing while a bridge already ran made the launcher exit at once (service "terminated", no retry), and the next cold start still autostarted it. `autostart/service.sh` relies on `$HOME` for the service process; if it is not `/home/nao` on the robot, hardcode the path there.
 3. Sharp photos: ten "look left/right, what do you see" turns; compare the sharpness scores with the 2026-09-29 photos in `results/models-2026-09-29` (76-200 after head moves) and note how much longer the head move now takes (about 1.3 s for 60 degrees on the desktop build).
 4. Neutral pose: get a greeting with a wave; the arm should come down about half a second after Pepper stops speaking. Also play an animation from the web UI.
 5. With `PEPPER_AWARENESS=true`, a photo while someone is in view: face tracking pauses for the shot and resumes a second later.

@@ -94,6 +94,16 @@ class TestNeutralPose:
         await asyncio.sleep(0.01)
         mock_robot.connection.bridge.neutral_pose.assert_not_awaited()
 
+    async def test_no_pose_change_after_a_stop(self, mock_robot, mock_ai_provider, monkeypatch):
+        monkeypatch.setattr(AIManager, "NEUTRAL_POSE_DELAY", 0.02)
+        mock_robot.connection.bridge.neutral_pose = AsyncMock()
+        mock_ai_provider.chat = AsyncMock(side_effect=reply("^start(animations/Stand/Gestures/Hey_1) Hello!"))
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=False)
+        await manager.process_user_input("Hi Pepper")
+        await manager.process_user_input("stop")  # during the delay: the arms stay where they are
+        await asyncio.sleep(0.05)
+        mock_robot.connection.bridge.neutral_pose.assert_not_awaited()
+
     async def test_a_new_turn_keeps_the_body(self, mock_robot, mock_ai_provider, monkeypatch):
         monkeypatch.setattr(AIManager, "NEUTRAL_POSE_DELAY", 0.02)
         mock_robot.connection.bridge.neutral_pose = AsyncMock()

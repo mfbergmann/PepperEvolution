@@ -152,6 +152,7 @@ HEAD_ON_TARGET_DEG = 3.0  # "arrived": measured angles within this of the target
 HEAD_STILL_DEG = 0.3  # "stopped": two readings a poll apart differ by less than this
 HEAD_STILL_FOR = 0.15  # seconds the head must stay still
 HEAD_POLL = 0.05  # seconds between readings
+HEAD_STOPPED_SHORT_AFTER = 0.4  # seconds; a head still this long after the command, but off target, stopped short
 PHOTO_STILL_TIMEOUT = 1.5  # seconds /picture waits for a still head before shooting anyway
 PHOTO_TRACKING_RESUME = 1.0  # seconds after a photo before face tracking (paused for the shot) resumes
 FRAME_GAP = 0.2  # seconds between the dropped first frame and the kept one (the camera runs at 5 fps)
@@ -754,11 +755,14 @@ class Robot(object):
                 return False, now - started
             on_target = target is None or all(abs(a - t) <= HEAD_ON_TARGET_DEG for a, t in zip(angles, target))
             still = previous is not None and all(abs(a - b) <= HEAD_STILL_DEG for a, b in zip(angles, previous))
-            if on_target and still:
+            if still:
                 if still_since is None:
                     still_since = now
                 if now - still_since >= HEAD_STILL_FOR:
-                    return True, now - started
+                    if on_target:
+                        return True, now - started
+                    if now - started >= HEAD_STOPPED_SHORT_AFTER:
+                        return False, now - started  # stopped short (a /stop, a blocked head): do not wait on
             else:
                 still_since = None
             if now - started >= timeout:

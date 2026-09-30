@@ -182,7 +182,7 @@ class AIManager:
                 self.logger.info(f"[{source}] dropped after a stop: {user_input!r}")
                 return self._bare_result("", source, client_id, "cancelled")
             result = await self._run_turn(user_input, speak, source, client_id)
-        self._after_turn(result)
+        self._after_turn(result, submitted)
         return result
 
     async def _handle_intent(
@@ -531,7 +531,7 @@ class AIManager:
 
     NEUTRAL_POSE_DELAY = 0.5  # seconds after a turn before the arms go back down, unless a new turn has started
 
-    def _after_turn(self, result: Dict[str, Any]):
+    def _after_turn(self, result: Dict[str, Any], started: float):
         """Bring the arms back down after a turn that gestured or played an animation.
 
         Inline gestures (``^start(...)``) and animations can end with a hand still raised (seen on the robot
@@ -542,10 +542,16 @@ class AIManager:
         if "^start(" not in spoken and "^run(" not in spoken and not animated:
             return
 
+        def stopped() -> bool:  # "stop" means no more movement, not even tidying up
+            return self._last_stop_at is not None and self._last_stop_at >= started
+
+        if stopped():
+            return
+
         async def settle():
             await asyncio.sleep(self.NEUTRAL_POSE_DELAY)
-            if self.busy or self.robot.direct_commands_running or self.robot.halted:
-                return  # the next turn or a command owns the body now
+            if self.busy or self.robot.direct_commands_running or self.robot.halted or stopped():
+                return  # the next turn, a command or a stop owns the body now
             try:
                 await self.robot.neutral_pose()
             except Exception as exc:  # noqa: BLE001

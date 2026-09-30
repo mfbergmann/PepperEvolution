@@ -327,10 +327,15 @@ class TestRobotFacade:
         assert abs(motion.head[0] - 1.0472) < 1e-3  # the head really is there
         assert robot.move_head(0, 0, 0.2, wait=False).get("settled") is None  # reflexes do not wait
 
-    def test_move_head_gives_up_when_the_head_never_arrives(self, robot):
-        robot.svc("ALMotion").head_step = 0.0  # stuck (e.g. blocked by a hand)
+    def test_move_head_stops_waiting_when_the_head_stopped_short(self, robot):
+        robot.svc("ALMotion").head_step = 0.0  # stuck (a /stop mid-turn, a hand in the way)
         result = robot.move_head(30, 0, 0.2)
-        assert result["settled"] is False and result["waited"] >= 3.0
+        assert result["settled"] is False and result["waited"] < 1.0  # not the full 3 s
+
+    def test_move_head_gives_up_at_the_timeout_while_still_moving(self, robot):
+        robot.svc("ALMotion").head_step = 0.01  # creeping (0.6 degrees per reading): never still, not there in 3 s
+        result = robot.move_head(90, 0, 0.05)
+        assert result["settled"] is False and 3.0 <= result["waited"] < 3.2
 
     def test_emergency_stop_ends_the_wait(self, robot):
         motion = robot.svc("ALMotion")
