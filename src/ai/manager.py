@@ -67,6 +67,8 @@ class AIManager:
     GREET_UNKNOWN_GAZE_DISTANCE = 1.8  # metres; this close, a person whose gaze is not known yet is greeted too
     TURN_TO_ARRIVAL_DISTANCE = 3.0  # metres; Pepper turns its head towards newcomers this close
     TURN_TO_ARRIVAL_SPEED = 0.3  # fraction of maximum head speed
+    NEUTRAL_HEAD = (0.0, -18.0)  # yaw, pitch: straight ahead at face height of someone about 2 m away
+    RECENTRE_AFTER = 3.0  # seconds with nobody in view before the head goes back to neutral
 
     def __init__(
         self,
@@ -111,6 +113,7 @@ class AIManager:
         self._last_greeting: Optional[float] = None
         self._last_talk_at: Optional[float] = None  # last user or voice turn
         self._pending_arrival: Optional[Any] = None  # (time, Arrival) waiting for the person to qualify
+        self._recentre_task: Optional[asyncio.Task] = None
         self._tablet_ok = True
         self._tasks: Set[asyncio.Task] = set()
         self.intents = IntentExecutor(robot)
@@ -484,6 +487,8 @@ class AIManager:
         """React to touch/bumper events with a short spoken response (rate-limited)."""
         if event_type == "people":
             self._try_greeting()  # a pending arrival may qualify now (they looked over or came closer)
+            if not data.get("count"):
+                self._schedule_recentre()
             return
         if not self.react_to_touch:
             return
@@ -512,6 +517,30 @@ class AIManager:
         self._pending_arrival = (self._clock(), arrival)
         self._turn_towards(arrival.nearest)
         self._try_greeting()
+
+    def _schedule_recentre(self):
+        """Reflex: once nobody has been in view for a few seconds, look back out at the room.
+
+        Face tracking leaves the head wherever it lost the last person (on the robot: pointing at the
+        floor), where the camera cannot see the next one coming.
+        """
+        if self._recentre_task is not None and not self._recentre_task.done():
+            self._recentre_task.cancel()
+
+        async def recentre():
+            await asyncio.sleep(self.RECENTRE_AFTER)
+            if self.world is not None and self.world.count:
+                return  # someone is back
+            if self.busy or self.robot.direct_commands_running or self.robot.halted:
+                return
+            try:
+                await self.robot.move_head(*self.NEUTRAL_HEAD, speed=0.15)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug(f"Could not recentre the head: {exc}")
+
+        self._recentre_task = asyncio.create_task(recentre(), name="recentre-head")
+        self._tasks.add(self._recentre_task)
+        self._recentre_task.add_done_callback(self._tasks.discard)
 
     def _turn_towards(self, person: Any):
         """Reflex, no model: turn the head to a newcomer at once, so Pepper visibly notices them."""

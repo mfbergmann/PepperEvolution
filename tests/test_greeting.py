@@ -163,6 +163,23 @@ class TestTurningTowardsNewcomers:
         mock_robot.connection.bridge.move_head.assert_not_awaited()
 
 
+class TestLookingBackAtTheRoom:
+    async def test_head_recentres_when_nobody_is_left(self, mock_robot, mock_ai_provider, monkeypatch):
+        monkeypatch.setattr(AIManager, "RECENTRE_AFTER", 0.01)
+        r = await room(mock_robot, mock_ai_provider, snapshot=1)
+        await r.people()
+        await asyncio.sleep(0.05)
+        mock_robot.connection.bridge.move_head.assert_awaited_once_with(0.0, -18.0, 0.15)
+
+    async def test_no_recentre_when_someone_came_back(self, mock_robot, mock_ai_provider, monkeypatch):
+        monkeypatch.setattr(AIManager, "RECENTRE_AFTER", 0.02)
+        r = await room(mock_robot, mock_ai_provider, snapshot=1)
+        await r.people()
+        await r.people(person())  # back within the wait (no yaw, so no turn either)
+        await asyncio.sleep(0.05)
+        mock_robot.connection.bridge.move_head.assert_not_awaited()
+
+
 class TestWhenToStayQuiet:
     async def test_cooldown_between_greetings(self, mock_robot, mock_ai_provider):
         r = await room(mock_robot, mock_ai_provider, greet_cooldown=90)
