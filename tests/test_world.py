@@ -64,6 +64,19 @@ class TestWorldModel:
         assert "another person, about 2.2 m away, not looking at you" in text
         assert text.count("another person") == 2 and text.endswith("and 1 more.")
 
+    async def test_direction_in_the_terms_of_the_turn_tool(self):
+        world, _ = world_at()
+        people = [
+            {"id": 1, "distance": 1.5, "looking": True, "yaw": 22.0},
+            {"id": 2, "distance": 2.5, "looking": None, "yaw": -61.0},
+        ]
+        await world.handle_event("people", {"count": 2, "people": people})
+        text = world.summary()
+        assert "one person, about 1.5 m away, about 20° to your left, looking at you" in text
+        assert "another person, about 2.5 m away, about 60° to your right" in text
+        await world.handle_event("people", {"count": 1, "people": [{"id": 1, "distance": 1.0, "yaw": 4.0}]})
+        assert "about 1.0 m away, straight ahead" in world.summary()
+
     async def test_zone_words_when_distance_is_missing(self):
         world, _ = world_at()
         await world.handle_event(

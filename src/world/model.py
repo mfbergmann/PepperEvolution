@@ -68,6 +68,16 @@ def _ago(seconds: float) -> str:
     return "a minute ago" if minutes == 1 else f"{minutes} minutes ago"
 
 
+def _direction(yaw: Optional[float]) -> Optional[str]:
+    """Where a person is relative to Pepper's body, in the terms of the turn tool (left = positive degrees)."""
+    if yaw is None:
+        return None
+    if abs(yaw) < 10:
+        return "straight ahead"
+    degrees = int(round(abs(yaw) / 5.0) * 5)
+    return f"about {degrees}° to your {'left' if yaw > 0 else 'right'}"
+
+
 def _duration(seconds: Optional[int]) -> Optional[str]:
     if seconds is None:
         return None
@@ -182,6 +192,9 @@ class WorldModel:
             words.append(f"about {person.distance:.1f} m away")
         elif person.zone in ZONE_WORDS:
             words.append(ZONE_WORDS[person.zone])
+        direction = _direction(person.yaw)
+        if direction:
+            words.append(direction)
         if person.looking is True:
             words.append("looking at you")
         elif person.looking is False:

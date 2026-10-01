@@ -78,7 +78,7 @@ class ToolExecutor:
             self.logger.error(f"Tool {tool_name} failed: {exc}")
             outcome = ToolOutcome.failure(str(exc))
         level = "info" if outcome.ok else "warning"
-        getattr(self.logger, level)(f"Tool {tool_name} -> {outcome.summary()[:200]}")
+        getattr(self.logger, level)(f"Tool {tool_name} -> {outcome.summary()[:2000]}")  # full, for reviewing sessions
         return outcome
 
     async def _dispatch(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:

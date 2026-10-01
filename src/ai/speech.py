@@ -178,6 +178,7 @@ class SpeechStreamer:
                     self.suppressed.append(item)
                     continue
                 try:
+                    self.logger.info(f"Saying: {item}")  # logged at the start, for response-time reviews
                     await self.speak(item)
                     self.spoken.append(item)
                 except Exception as exc:  # noqa: BLE001

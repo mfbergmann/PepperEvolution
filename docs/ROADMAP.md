@@ -147,12 +147,13 @@ The same five spoken prompts through Pepper's microphone, office background leve
 
 Goal: Claude can act on what it sees, not just describe it.
 
-- Sharp photos (**built 2026-09-29**, measure on the robot next session): `/move/head` waits for the head to stop, `/picture` pauses face tracking and waits for a still head and drops the first frame, and the host retakes a blurry photo once and tells the model if it is still blurry. Photos taken right after a head move scored 76-200 on the sharpness measure, still ones 290-1250.
+- Sharp photos (**done 2026-10-01**, verified on the robot; a paused face tracker also had to be held off): `/move/head` waits for the head to stop, `/picture` pauses face tracking and waits for a still head and drops the first frame, and the host retakes a blurry photo once and tells the model if it is still blurry. Photos taken right after a head move scored 76-200 on the sharpness measure, still ones 290-1250.
 - `look_at(x, y)`: the model returns a point in the last photo; the bridge converts it to head angles using the camera field of view.
 - Verify-after-act: for moves and gestures with a visible effect, take a photo and let the model judge success before continuing.
 - Optional depth frames from the 3D camera for distance questions.
+- **Follow me** (asked for on the robot 2026-10-01: "can you follow me back into my office?"; Pepper had no way to). Candidates: NAOqi's `ALTracker` in `Move` mode (follows a face or person with the base, keeping a set distance), or the host steering short base moves from the world model's direction and distance. Safety first: slow speed (at most 0.3 m/s), a minimum distance of about 0.8 m, the sonar guard and NAOqi collision avoidance stay on, stop at once on "stop", on touching the head, when the person is lost for more than a couple of seconds, or after a time limit; only on explicit request, never on its own. Test in the open room first.
 
-Acceptance: "look at the person on the left", "is the door open?", "go towards the chair" work reliably.
+Acceptance: "look at the person on the left", "is the door open?", "go towards the chair", "come to me" and "follow me" work reliably. ("Come to me" uses the person's direction in the "Around you" line since 2026-10-01: turn by that angle, then drive.)
 
 ## Milestone 4: world model (continuous perception)
 
