@@ -7,6 +7,8 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 ## Unreleased
 
 - **Look back after looking away**: after a turn that moved the head ("look left, what's there?"), Pepper faces the person again: face tracking resumes at once instead of after 8 s, or the head turns to the nearest person, or, with nobody in view, looks out at the room. Reported from a second Pepper.
+- **Photos show where Pepper looked**: on the robot, face tracking locked on a person pulled the head back from 70° to the face within a second, before the photo was taken, even while paused; the bridge now switches tracking off for deliberate head moves (8 s) and photos (1 s). The bridge reports the measured head angles, the model is told when its head did not arrive, and the state block says how old the last photo is and whether the head has moved since (an old photo had been described as the current view). Verified on the robot: the photo after "look left" measured 60° and showed the office.
+- **Photo log** for test sessions: `PHOTO_RECORD_DIR` keeps every photo with its measured head angle and sharpness (local, git-ignored).
 - Contributor guide rewritten (`CONTRIBUTING.md`), `AGENTS.md` for AI coding assistants, issue templates (bug report, robot test report, feature) and a pull request template.
 
 ## 0.4.0 (2026-09-29): greeting newcomers, head reflexes, sharp photos, autostart
