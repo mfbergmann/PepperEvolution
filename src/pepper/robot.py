@@ -10,6 +10,7 @@ provide the boolean-returning convenience layer.
 import asyncio
 import base64
 import io
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
@@ -71,6 +72,8 @@ class Photo:
     camera: int = 0
     sharpness: Optional[float] = None  # variance of the Laplacian at 320 px wide; see photo_sharpness()
     blurry: bool = False
+    taken_at: Optional[float] = None  # time.monotonic() when taken
+    head_yaw: Optional[float] = None  # last commanded head yaw (degrees, left positive) when taken; None = unknown
 
     @property
     def data_url(self) -> str:
@@ -130,6 +133,8 @@ class PepperRobot:
         self.state = RobotState()
         self.animations: List[str] = []
         self.last_photo: Optional[Photo] = None
+        self.last_head_yaw: Optional[float] = None  # last commanded head yaw (any caller), degrees
+        self.last_head_move_at: Optional[float] = None  # time.monotonic() of the last head move
         self.halted = False  # emergency stop pressed; cleared by wake_up()/prepare()
         self.direct_commands_running = 0  # UI/API commands in flight (event reactions wait)
         self.photo_resolution = 2  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
@@ -265,7 +270,10 @@ class PepperRobot:
         self, yaw: float = 0, pitch: float = 0, speed: float = 0.2, wait: bool = True
     ) -> Dict[str, Any]:
         """Turn the head; with ``wait`` the bridge answers once the head has arrived and stopped (sharp photos)."""
-        return await self.bridge.move_head(yaw, pitch, speed, wait=wait)
+        result = await self.bridge.move_head(yaw, pitch, speed, wait=wait)
+        self.last_head_yaw = float(result.get("yaw", yaw)) if isinstance(result, dict) else float(yaw)
+        self.last_head_move_at = time.monotonic()
+        return result
 
     async def neutral_pose(self) -> Dict[str, Any]:
         """Arms and legs back to the standing pose after gestures (the head is left alone)."""
@@ -302,6 +310,8 @@ class PepperRobot:
             if (second.sharpness or 0.0) > photo.sharpness:
                 photo = second
             photo.blurry = photo.sharpness is not None and photo.sharpness < BLURRY_BELOW
+        photo.taken_at = time.monotonic()
+        photo.head_yaw = self.last_head_yaw
         self.last_photo = photo
         return photo
 

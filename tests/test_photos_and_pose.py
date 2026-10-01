@@ -192,3 +192,37 @@ class TestLookBack:
         await manager.process_user_input("stop")
         await asyncio.sleep(0.05)
         assert mock_robot.connection.bridge.move_head.await_count == 1  # only the model's own turn to the left
+
+
+class TestLastPhotoInTheState:
+    def manager(self, mock_robot, mock_ai_provider, face_tracking=False):
+        return AIManager(
+            mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False, face_tracking=face_tracking
+        )
+
+    def test_no_photo_no_line(self, mock_robot, mock_ai_provider):
+        assert "last photo" not in self.manager(mock_robot, mock_ai_provider)._build_system_prompt()[1]["text"]
+
+    async def test_old_photo_taken_looking_left_after_the_head_moved(self, mock_robot, mock_ai_provider):
+        import time
+
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value=picture())
+        await mock_robot.move_head(70, 0)
+        photo = await mock_robot.take_picture()
+        photo.taken_at = time.monotonic() - 30  # half a minute ago, as on the robot
+        await mock_robot.move_head(-30, 0)  # the head turned to the person on the right since
+        line = self.manager(mock_robot, mock_ai_provider)._last_photo_line()
+        assert line.startswith("Your last photo was taken 30 seconds ago with your head turned left.")
+        assert "does not show what is in front of you now" in line
+
+    async def test_fresh_photo_with_the_head_still(self, mock_robot, mock_ai_provider):
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value=picture())
+        await mock_robot.take_picture()
+        line = self.manager(mock_robot, mock_ai_provider)._last_photo_line()
+        assert line == "Your last photo was taken just now."
+
+    async def test_face_tracking_means_the_head_has_moved(self, mock_robot, mock_ai_provider):
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value=picture())
+        await mock_robot.take_picture()
+        line = self.manager(mock_robot, mock_ai_provider, face_tracking=True)._last_photo_line()
+        assert "Your head has moved since" in line

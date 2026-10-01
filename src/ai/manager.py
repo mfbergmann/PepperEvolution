@@ -47,6 +47,15 @@ EVENT_MESSAGES = {
 }
 
 
+def _age(seconds: float) -> str:
+    if seconds < 10:
+        return "just now"
+    if seconds < 60:
+        return f"{int(seconds)} seconds ago"
+    minutes = int(seconds // 60)
+    return "a minute ago" if minutes == 1 else f"{minutes} minutes ago"
+
+
 def _span(seconds: float) -> str:
     """'40 seconds', 'a minute', '5 minutes', 'over an hour' for the greeting prompt."""
     if seconds < 60:
@@ -719,10 +728,40 @@ class AIManager:
         around = self.world.summary() if self.world is not None else ""
         if around:
             dynamic += f"\n{around}"
+        photo_line = self._last_photo_line()
+        if photo_line:
+            dynamic += f"\n{photo_line}"
         return [
             {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": dynamic},
         ]
+
+    def _last_photo_line(self) -> str:
+        """How old the last photo is and where it looked, so an old photo is not described as the view now.
+
+        On the robot, "what do you see?" was answered from a photo taken half a minute earlier with the head
+        turned left, while face tracking had since turned the head to the person on the right.
+        """
+        photo = getattr(self.robot, "last_photo", None)
+        taken_at = getattr(photo, "taken_at", None)
+        if photo is None or taken_at is None:
+            return ""
+        age = time.monotonic() - taken_at
+        yaw = photo.head_yaw
+        if yaw is None:
+            where = ""
+        elif yaw > 15:
+            where = " with your head turned left"
+        elif yaw < -15:
+            where = " with your head turned right"
+        else:
+            where = " looking straight ahead"
+        moved_at = getattr(self.robot, "last_head_move_at", None)
+        moved = self.face_tracking or (moved_at is not None and moved_at > taken_at)
+        line = f"Your last photo was taken {_age(age)}{where}."
+        if moved:
+            line += " Your head has moved since, so it does not show what is in front of you now."
+        return line
 
     def _trim_history(self):
         """Keep the last N user turns, cutting only at real user messages so tool pairs stay intact."""
