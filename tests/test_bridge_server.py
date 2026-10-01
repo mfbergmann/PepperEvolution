@@ -325,6 +325,7 @@ class TestRobotFacade:
         result = robot.move_head(60, 0, 0.2)
         assert result["settled"] is True and result["waited"] > 0.5  # about 1 rad at 0.1 rad per 50 ms reading
         assert abs(motion.head[0] - 1.0472) < 1e-3  # the head really is there
+        assert result["measured"] == [60.0, 0.0]
         assert robot.move_head(0, 0, 0.2, wait=False).get("settled") is None  # reflexes do not wait
 
     def test_move_head_stops_waiting_when_the_head_stopped_short(self, robot):
@@ -354,6 +355,7 @@ class TestRobotFacade:
         )
         result = robot.picture(0, 2)
         assert result["head_still"] is True and abs(motion.head[0] - 0.5) < 1e-6
+        assert result["head"] == [28.6, 0.0]  # measured at the shot: 0.5 rad
         assert [c[0] for c in video.calls].count("getImageRemote") == 2
 
     def test_photo_pauses_face_tracking_and_resumes_it_soon(self, robot, bridge, monkeypatch):

@@ -101,8 +101,18 @@ class ToolExecutor:
         if name == "move_head":
             yaw = self._clamp(inp.get("yaw", 0), -119, 119)
             pitch = self._clamp(inp.get("pitch", 0), -40, 25)
-            await self.robot.move_head(yaw, pitch)
-            return ToolOutcome(True, {"yaw": yaw, "pitch": pitch})
+            result = await self.robot.move_head(yaw, pitch)
+            data: Dict[str, Any] = {"yaw": yaw, "pitch": pitch}
+            measured = result.get("measured") if isinstance(result, dict) else None
+            if isinstance(result, dict) and result.get("settled") is False and measured:
+                # e.g. face tracking pulled the head back, or something blocked it: say where it really points
+                data.update(
+                    settled=False,
+                    measured_yaw=measured[0],
+                    measured_pitch=measured[1],
+                    note="Your head did not reach that position; a photo now shows where it really points.",
+                )
+            return ToolOutcome(True, data)
 
         if name == "turn":
             angle = self._clamp(inp.get("angle", 0), -180, 180)

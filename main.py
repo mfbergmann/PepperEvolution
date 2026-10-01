@@ -80,6 +80,7 @@ class Settings:
     stt_language: str
     voice_input: bool
     voice_record_dir: Optional[str]
+    photo_record_dir: Optional[str]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -121,6 +122,7 @@ class Settings:
             stt_language=(os.getenv("STT_LANGUAGE", "en").strip() or "en"),
             voice_input=env_bool("VOICE_INPUT", False),
             voice_record_dir=os.getenv("VOICE_RECORD_DIR") or None,
+            photo_record_dir=os.getenv("PHOTO_RECORD_DIR") or None,
         )
 
 
@@ -178,6 +180,7 @@ class PepperEvolution:
         if bridge:
             self.logger.warning("PEPPER_FAKE_BRIDGE is set: no robot will be contacted")
         self.robot = PepperRobot(config, bridge=bridge)
+        self.robot.photo_record_dir = s.photo_record_dir  # PHOTO_RECORD_DIR: local test records
 
         provider = build_provider(s)
         self.logger.info(f"AI provider: {provider.__class__.__name__} model={provider.model}")

@@ -226,3 +226,40 @@ class TestLastPhotoInTheState:
         await mock_robot.take_picture()
         line = self.manager(mock_robot, mock_ai_provider, face_tracking=True)._last_photo_line()
         assert "Your head has moved since" in line
+
+
+class TestPhotoLog:
+    async def test_photos_are_saved_with_what_is_known_about_them(self, mock_robot, tmp_path):
+        import json
+
+        mock_robot.photo_record_dir = str(tmp_path / "photos")
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value=dict(picture(), head=[58.9, -1.0]))
+        await mock_robot.move_head(60, 0)
+        await mock_robot.take_picture()
+        files = sorted(p.suffix for p in (tmp_path / "photos").iterdir())
+        assert files == [".jpg", ".json"]
+        meta = json.loads(next((tmp_path / "photos").glob("*.json")).read_text())
+        assert meta["head_commanded_yaw"] == 60 and meta["head_measured"] == [58.9, -1.0] and meta["sharpness"] > 0
+
+    async def test_no_log_unless_asked(self, mock_robot, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value=picture())
+        await mock_robot.take_picture()
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestHeadDidNotArrive:
+    async def test_the_model_hears_where_the_head_really_points(self, mock_robot):
+        mock_robot.connection.bridge.move_head = AsyncMock(
+            return_value={"yaw": 60.0, "pitch": 0.0, "settled": False, "measured": [4.5, -12.0]}
+        )
+        outcome = await ToolExecutor(mock_robot).execute("move_head", {"yaw": 60, "pitch": 0})
+        assert outcome.ok and outcome.data["settled"] is False and outcome.data["measured_yaw"] == 4.5
+        assert "did not reach" in outcome.data["note"]
+
+    async def test_nothing_extra_when_it_arrived(self, mock_robot):
+        mock_robot.connection.bridge.move_head = AsyncMock(
+            return_value={"yaw": 60.0, "pitch": 0.0, "settled": True, "measured": [59.6, 0.2]}
+        )
+        outcome = await ToolExecutor(mock_robot).execute("move_head", {"yaw": 60, "pitch": 0})
+        assert outcome.data == {"yaw": 60.0, "pitch": 0.0}

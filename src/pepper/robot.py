@@ -74,6 +74,7 @@ class Photo:
     blurry: bool = False
     taken_at: Optional[float] = None  # time.monotonic() when taken
     head_yaw: Optional[float] = None  # last commanded head yaw (degrees, left positive) when taken; None = unknown
+    head_measured: Optional[List[float]] = None  # [yaw, pitch] the bridge measured when the frame was taken
 
     @property
     def data_url(self) -> str:
@@ -97,6 +98,29 @@ def photo_sharpness(photo: Photo) -> Optional[float]:
         img = img.resize((320, max(1, int(320 * img.height / img.width))))
     kernel = ImageFilter.Kernel((3, 3), [0, 1, 0, 1, -4, 1, 0, 1, 0], scale=1, offset=128)
     return float(ImageStat.Stat(img.filter(kernel)).var[0])
+
+
+def _record_photo(photo: Photo, directory: str):
+    """Save a photo and what is known about it (development records; keep the folder out of git)."""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
+    folder = Path(directory)
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = folder / datetime.now().strftime("photo_%Y%m%d_%H%M%S_%f")[:-3]
+    ext = ".png" if photo.media_type == "image/png" else ".jpg"
+    stem.with_suffix(ext).write_bytes(base64.b64decode(photo.base64_data))
+    meta = {
+        "camera": photo.camera,
+        "width": photo.width,
+        "height": photo.height,
+        "head_commanded_yaw": photo.head_yaw,
+        "head_measured": photo.head_measured,
+        "sharpness": None if photo.sharpness is None else round(photo.sharpness, 1),
+        "blurry": photo.blurry,
+    }
+    stem.with_suffix(".json").write_text(json.dumps(meta, indent=1))
 
 
 def _to_jpeg_photo(result: Dict[str, Any]) -> Photo:
@@ -138,6 +162,7 @@ class PepperRobot:
         self.halted = False  # emergency stop pressed; cleared by wake_up()/prepare()
         self.direct_commands_running = 0  # UI/API commands in flight (event reactions wait)
         self.photo_resolution = 2  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
+        self.photo_record_dir: Optional[str] = None  # PHOTO_RECORD_DIR: keep every photo locally for testing
         self.last_prepare: Dict[str, Any] = {}
         self.last_eye_color: Optional[str] = None  # colour chosen by the model/user (restored after state signals)
         self.logger = logger.bind(module="PepperRobot")
@@ -313,6 +338,8 @@ class PepperRobot:
         photo.taken_at = time.monotonic()
         photo.head_yaw = self.last_head_yaw
         self.last_photo = photo
+        if self.photo_record_dir:
+            await asyncio.to_thread(_record_photo, photo, self.photo_record_dir)
         return photo
 
     async def _grab_photo(self, camera: int, resolution: int) -> Photo:
@@ -320,6 +347,7 @@ class PepperRobot:
         if not result.get("image"):
             raise BridgeError("Camera returned no image")
         photo = _to_jpeg_photo(result)
+        photo.head_measured = result.get("head")
         photo.sharpness = await asyncio.to_thread(photo_sharpness, photo)
         return photo
 

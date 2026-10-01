@@ -730,8 +730,15 @@ class Robot(object):
         if as_bool(wait, True):
             # setAngles returns at once; wait until the head has arrived and stopped, so a photo taken next is sharp
             settled, waited = self._wait_head_still(motion, (yaw_deg, pitch_deg), HEAD_SETTLE_TIMEOUT)
-            result.update({"settled": settled, "waited": round(waited, 2)})
+            result.update({"settled": settled, "waited": round(waited, 2), "measured": self._measured_head(motion)})
         return result
+
+    def _measured_head(self, motion):
+        """Where the head really points, [yaw, pitch] in degrees (sensors), or None if unreadable."""
+        try:
+            return [round(a, 1) for a in self._head_angles(motion)]
+        except Exception:
+            return None
 
     def _head_angles(self, motion):
         return [math.degrees(a) for a in motion.getAngles(["HeadYaw", "HeadPitch"], True)]
@@ -988,16 +995,20 @@ class Robot(object):
         # A moving head blurs the photo: hold face tracking for the shot and wait for the head to stop.
         tracking_paused = self._pause_tracking_for_photo()
         head_still = None
+        head = None
         try:
             motion = self.svc("ALMotion")
             head_still, _ = self._wait_head_still(motion, None, PHOTO_STILL_TIMEOUT)
+            head = self._measured_head(motion)
             image = self._grab_frame(camera, resolution, color_space)
         finally:
             if tracking_paused:
                 self._schedule_awareness_resume(PHOTO_TRACKING_RESUME)
         if not image:
             raise RuntimeError("camera returned no image")
-        return self._encode_picture(image, camera, resolution, head_still)
+        result = self._encode_picture(image, camera, resolution, head_still)
+        result["head"] = head  # measured [yaw, pitch] when the frame was taken
+        return result
 
     def _grab_frame(self, camera, resolution, color_space):
         """Subscribe, drop the first frame (exposure not settled yet), keep the next one, unsubscribe."""
