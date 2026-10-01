@@ -122,3 +122,73 @@ class TestDirectAnimation:
         response = await execute_command(mock_robot, "animation", {"name": "animations/Stand/Gestures/Hey_1"})
         assert response["success"] and response["result"]["neutral"] == {"joints": 15}
         mock_robot.connection.bridge.neutral_pose.assert_awaited_once()
+
+
+def look_left_then_answer():
+    """A model that turns the head left with a tool, then answers (streamed)."""
+    from src.ai.models import ToolCall
+
+    calls = {"n": 0}
+
+    async def chat(messages, tools=None, system=None, on_text=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return AIResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="move_head", input={"yaw": 60, "pitch": 0})],
+                stop_reason="tool_use",
+                model="claude-sonnet-5-5",
+            )
+        if on_text is not None:
+            await on_text("There's a whiteboard over there.")
+        return AIResponse(text="There's a whiteboard over there.", stop_reason="end_turn", model="claude-sonnet-5-5")
+
+    return chat
+
+
+class TestLookBack:
+    async def manager(self, mock_robot, mock_ai_provider, monkeypatch, people=(), face_tracking=False):
+        from src.world import WorldModel
+
+        monkeypatch.setattr(AIManager, "NEUTRAL_POSE_DELAY", 0.0)
+        world = WorldModel()
+        await world.handle_event("sensors", {"people_count": len(people), "people": list(people)})
+        mock_ai_provider.chat = AsyncMock(side_effect=look_left_then_answer())
+        return AIManager(
+            mock_robot,
+            mock_ai_provider,
+            speak_responses=True,
+            tablet_subtitles=False,
+            world=world,
+            face_tracking=face_tracking,
+        )
+
+    async def test_faces_the_person_again_after_looking_away(self, mock_robot, mock_ai_provider, monkeypatch):
+        person = {"id": 1, "distance": 1.4, "looking": True, "yaw": 10.0, "pitch": -15.0}
+        manager = await self.manager(mock_robot, mock_ai_provider, monkeypatch, people=[person])
+        await manager.process_user_input("Look to your left and tell me what's there.")
+        await asyncio.sleep(0.01)
+        mock_robot.connection.bridge.move_head.assert_awaited_with(10.0, -15.0, 0.3, wait=False)
+
+    async def test_resumes_face_tracking_at_once_when_it_is_on(self, mock_robot, mock_ai_provider, monkeypatch):
+        person = {"id": 1, "distance": 1.4, "looking": True, "yaw": 10.0, "pitch": -15.0}
+        manager = await self.manager(mock_robot, mock_ai_provider, monkeypatch, people=[person], face_tracking=True)
+        await manager.process_user_input("Look to your left and tell me what's there.")
+        await asyncio.sleep(0.01)
+        mock_robot.connection.bridge.set_awareness.assert_awaited_with(
+            True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=["People", "Touch"]
+        )
+
+    async def test_looks_out_at_the_room_when_nobody_is_there(self, mock_robot, mock_ai_provider, monkeypatch):
+        manager = await self.manager(mock_robot, mock_ai_provider, monkeypatch)
+        await manager.process_user_input("Look to your left and tell me what's there.")
+        await asyncio.sleep(0.01)
+        mock_robot.connection.bridge.move_head.assert_awaited_with(0.0, -18.0, 0.3, wait=False)
+
+    async def test_stays_put_after_a_stop(self, mock_robot, mock_ai_provider, monkeypatch):
+        manager = await self.manager(mock_robot, mock_ai_provider, monkeypatch)
+        monkeypatch.setattr(AIManager, "NEUTRAL_POSE_DELAY", 0.02)  # self.manager set 0; a stop must fit in the wait
+        await manager.process_user_input("Look to your left and tell me what's there.")
+        await manager.process_user_input("stop")
+        await asyncio.sleep(0.05)
+        assert mock_robot.connection.bridge.move_head.await_count == 1  # only the model's own turn to the left

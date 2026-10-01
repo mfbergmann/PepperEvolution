@@ -1,37 +1,37 @@
 ---
 name: Bug report
-about: Create a report to help us improve PepperEvolution
-title: '[BUG] '
+about: Something broke or behaved wrongly
+title: ''
 labels: ['bug']
 assignees: ''
-
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+**What happened**
+What you did, and what Pepper (or the host) did.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**What you expected**
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**How to reproduce**
+1.
+2.
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Robot**
+- Pepper body version (e.g. 1.8A):
+- NAOqi version (`curl http://<robot>:8888/health`):
+- Bridge version (same output):
+- Room (office, large open room, distance to people):
 
-**Environment (please complete the following information):**
- - OS: [e.g. macOS, Ubuntu, Windows]
- - Python Version: [e.g. 3.8, 3.9, 3.10]
- - Pepper Robot Version: [e.g. 1.6, 1.7]
- - NAOqi Version: [e.g. 2.5]
- - PepperEvolution Version: [e.g. 0.1.0]
-
-**Additional context**
-Add any other context about the problem here.
+**Host**
+- OS and Python version:
+- PepperEvolution version or commit (`git log --oneline -1`):
+- AI model (`AI_MODEL`, provider if not Claude):
+- Speech-to-text (`STT_BACKEND`, `STT_MODEL`), if relevant:
+- Any settings changed from `env.example`:
 
 **Logs**
-If applicable, please share relevant log files or error messages.
+The relevant part of the host log (`pepper_evolution.log`) and the bridge log (`python robot_bridge/deploy.py --logs`).
+Please remove API keys, names and anything else personal first.
+
+```
+paste logs here
+```

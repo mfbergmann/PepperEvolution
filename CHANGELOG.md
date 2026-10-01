@@ -4,6 +4,11 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Unreleased
+
+- **Look back after looking away**: after a turn that moved the head ("look left, what's there?"), Pepper faces the person again: face tracking resumes at once instead of after 8 s, or the head turns to the nearest person, or, with nobody in view, looks out at the room. Reported from a second Pepper.
+- Contributor guide rewritten (`CONTRIBUTING.md`), `AGENTS.md` for AI coding assistants, issue templates (bug report, robot test report, feature) and a pull request template.
+
 ## 0.4.0 (2026-09-29): greeting newcomers, head reflexes, sharp photos, autostart
 
 - **Sharp photos**: `/move/head` waits until the head has arrived and stopped (about 1.3 s for a 60° turn); `/picture` pauses face tracking for the shot, waits for a still head and drops the first frame; the host scores each photo's sharpness, retakes a blurry one once and tells the model if it is still blurry. Built offline; measurement on the robot next session.

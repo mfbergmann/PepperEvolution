@@ -532,14 +532,17 @@ class AIManager:
     NEUTRAL_POSE_DELAY = 0.5  # seconds after a turn before the arms go back down, unless a new turn has started
 
     def _after_turn(self, result: Dict[str, Any], started: float):
-        """Bring the arms back down after a turn that gestured or played an animation.
+        """Tidy up the body after a turn: arms down after gestures, eyes back on the person after a head move.
 
-        Inline gestures (``^start(...)``) and animations can end with a hand still raised (seen on the robot
-        after a greeting wave).
+        Inline gestures (``^start(...)``) and animations can end with a hand still raised (seen on the robot after
+        a greeting wave). After "look left, what's there?" the head stayed left: with face tracking off nothing
+        brought it back, with it on it took 8 s (reported by a second Pepper's owner).
         """
         spoken = " ".join(result.get("spoken") or [])
-        animated = any(tc.get("name") == "play_animation" for tc in result.get("tool_calls") or [])
-        if "^start(" not in spoken and "^run(" not in spoken and not animated:
+        tools = [tc.get("name") for tc in result.get("tool_calls") or []]
+        gestured = "^start(" in spoken or "^run(" in spoken or "play_animation" in tools
+        moved_head = "move_head" in tools
+        if not gestured and not moved_head:
             return
 
         def stopped() -> bool:  # "stop" means no more movement, not even tidying up
@@ -552,14 +555,34 @@ class AIManager:
             await asyncio.sleep(self.NEUTRAL_POSE_DELAY)
             if self.busy or self.robot.direct_commands_running or self.robot.halted or stopped():
                 return  # the next turn, a command or a stop owns the body now
-            try:
-                await self.robot.neutral_pose()
-            except Exception as exc:  # noqa: BLE001
-                self.logger.debug(f"Could not return to the neutral pose: {exc}")
+            if gestured:
+                try:
+                    await self.robot.neutral_pose()
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.debug(f"Could not return to the neutral pose: {exc}")
+            if moved_head:
+                await self._look_back()
 
-        task = asyncio.create_task(settle(), name="neutral-pose")
+        task = asyncio.create_task(settle(), name="after-turn")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _look_back(self):
+        """After a turn that moved the head: face the nearest person again, or look out at the room."""
+        people = self.world.people if self.world is not None and self.world.count else []
+        try:
+            if self.face_tracking and people and not self._tracking_off:
+                # Re-enabling resumes tracking at once (a head move paused it for 8 s); it finds the face itself.
+                await self.robot.set_awareness(
+                    True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=self.TRACKING_STIMULI
+                )
+            elif people and people[0].yaw is not None:
+                pitch = people[0].pitch if people[0].pitch is not None else self.NEUTRAL_HEAD[1]
+                await self.robot.move_head(people[0].yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+            else:
+                await self.robot.move_head(*self.NEUTRAL_HEAD, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug(f"Could not look back: {exc}")
 
     def look_at_the_room(self):
         """Head to neutral (and face tracking off) as if the room had just emptied."""

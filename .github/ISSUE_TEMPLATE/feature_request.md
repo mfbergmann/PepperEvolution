@@ -1,26 +1,22 @@
 ---
-name: Feature request
-about: Suggest an idea for PepperEvolution
-title: '[FEATURE] '
+name: Feature or idea
+about: Something you would like Pepper to do, or a change you want to make before writing code
+title: ''
 labels: ['enhancement']
 assignees: ''
-
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+**What and why**
+What Pepper should do, and the situation where it matters.
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+**How it could work**
+Your idea for the design, if you have one. Which part would change: the bridge on the robot, the host, the model's tools, the web UI?
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+**Safety**
+Does it make the robot move, or do something on its own? What should stop it? (See `docs/SAFETY.md`.)
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+**People's data**
+Does it store or recognise anything about people (faces, voices, names, recordings)? If so: is it opt-in, what is stored, where, and how is it forgotten? (See `CONTRIBUTING.md`.)
 
-**Use Case**
-How would this feature be used? What problem does it solve?
-
-**Implementation Ideas**
-If you have any ideas about how this could be implemented, please share them.
+**Tested on**
+If you already built it: unit tests, NAOqi's desktop build, or a physical Pepper (which one)?

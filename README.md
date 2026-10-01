@@ -141,6 +141,10 @@ Version 0.3.0; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are als
 
 Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md). The design the project is building towards is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Contributing
+
+Bug reports, test reports from other Peppers, and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report and what a change must keep (the Python 2.7 bridge, the safety ledger, people's data); AI coding assistants should start with [AGENTS.md](AGENTS.md).
+
 ## Credits
 
 PepperEvolution is a research project from [TRiPL Lab](https://tripl.ca/), Toronto Metropolitan University.
