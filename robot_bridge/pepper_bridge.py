@@ -386,6 +386,7 @@ class Robot(object):
         self.halted = False  # set by emergency_stop; motion is refused until wake_up/prepare
         self.extractors = {}  # service name -> subscribed?
         self._awareness_resume = None  # threading.Timer that resumes people tracking after a head move
+        self._tracking_held = False  # face tracking switched off by the bridge for a head move or photo
         self._animations = 0  # animations running now (the neutral pose waits for them)
         self.clock = time.time  # injectable for tests
         self.sleep = time.sleep
@@ -466,7 +467,8 @@ class Robot(object):
             "awake": self._try(lambda: bool(motion.robotIsWakeUp())),
             "language": self._try(lambda: tts.getLanguage(), "unknown"),
             "volume": self._try(lambda: int(round(tts.getVolume() * 100))),
-            "awareness": self._try(lambda: bool(self.svc("ALBasicAwareness").isEnabled())),
+            # held for a head move or photo still counts as on: it comes back by itself
+            "awareness": self._tracking_held or self._try(lambda: bool(self.svc("ALBasicAwareness").isEnabled())),
             "charging": self._charging(),
             "halted": self.halted,
             "bridge_version": BRIDGE_VERSION,
@@ -778,18 +780,27 @@ class Robot(object):
             self.sleep(HEAD_POLL)
 
     # -- awareness vs. explicit head moves --------------------------------------
-    # ALBasicAwareness only pauses itself for Autonomous Life activities, not for raw
-    # setAngles calls (checked on the NAOqi 2.5.10 desktop build), so an enabled
-    # tracker would fight every /move/head. The bridge pauses it and resumes later.
+    # ALBasicAwareness does not yield the head to raw setAngles calls, so an enabled tracker
+    # fights every /move/head. pauseAwareness() is not enough on the robot: on Pepper (NAOqi
+    # 2.5.10) a paused tracker locked on a face still pulled the head from 70 degrees back to the
+    # person within a second, before the photo (2026-10-01; the desktop build does honour the pause).
+    # So the bridge *holds* tracking: switches it off for the move or photo, and back on later.
 
-    def _pause_awareness_for_head_move(self):
+    def _hold_tracking(self, resume_after):
+        """Switch face tracking off for a while if it is on; returns True if this call (or an earlier hold) holds it."""
         ba = self.svc("ALBasicAwareness")
+        if self._tracking_held:
+            self._schedule_awareness_resume(resume_after)
+            return True
         if not self._try(ba.isEnabled, False):
             return False
-        if not self._try(ba.isAwarenessPaused, False):
-            self._try(ba.pauseAwareness)
-        self._schedule_awareness_resume()
+        self._try(lambda: ba.setEnabled(False))
+        self._tracking_held = True
+        self._schedule_awareness_resume(resume_after)
         return True
+
+    def _pause_awareness_for_head_move(self):
+        return self._hold_tracking(AWARENESS_RESUME_AFTER)
 
     def _schedule_awareness_resume(self, delay=None):
         self._cancel_awareness_resume()
@@ -806,11 +817,12 @@ class Robot(object):
 
     def _resume_awareness(self):
         self._awareness_resume = None
+        if not self._tracking_held:
+            return
+        self._tracking_held = False
         try:
-            ba = self.svc("ALBasicAwareness")
-            if ba.isEnabled() and ba.isAwarenessPaused():
-                ba.resumeAwareness()
-                LOGGER.info("people tracking resumed after the head move")
+            self.svc("ALBasicAwareness").setEnabled(True)
+            LOGGER.info("people tracking back on after the head move or photo")
         except Exception as exc:
             LOGGER.debug("could not resume awareness: %s", exc)
 
@@ -839,6 +851,7 @@ class Robot(object):
         """
         self.halted = True
         self._cancel_awareness_resume()
+        self._tracking_held = False  # stays off; /prepare or /awareness turns it back on
         motion = self.svc("ALMotion")
         self._try(lambda: self.svc("ALBehaviorManager").stopAllBehaviors())
         self._try(lambda: self.svc("ALTextToSpeech").stopAll())
@@ -904,6 +917,7 @@ class Robot(object):
         enabled = as_bool(enabled, True)
         result = {"enabled": enabled}
         self._cancel_awareness_resume()
+        self._tracking_held = False  # an explicit request wins over a hold
         if enabled:
             if tracking_mode is not None:
                 tracking_mode = to_native_str(tracking_mode)
@@ -1003,7 +1017,7 @@ class Robot(object):
             image = self._grab_frame(camera, resolution, color_space)
         finally:
             if tracking_paused:
-                self._schedule_awareness_resume(PHOTO_TRACKING_RESUME)
+                self._schedule_awareness_resume(PHOTO_TRACKING_RESUME)  # counted from the shot, not the start
         if not image:
             raise RuntimeError("camera returned no image")
         result = self._encode_picture(image, camera, resolution, head_still)
@@ -1029,12 +1043,12 @@ class Robot(object):
             self._try(lambda: video.unsubscribe(handle))
 
     def _pause_tracking_for_photo(self):
-        """Pause face tracking for a photo unless it is paused already (then a head move owns the resume)."""
-        ba = self.svc("ALBasicAwareness")
-        if not self._try(ba.isEnabled, False) or self._try(ba.isAwarenessPaused, False):
+        """Hold face tracking for a photo, unless a head move already holds it (then that move owns the resume)."""
+        if self._tracking_held:
             return False
-        self._try(ba.pauseAwareness)
-        return True
+        if not self._try(self.svc("ALBasicAwareness").isEnabled, False):
+            return False
+        return self._hold_tracking(PHOTO_TRACKING_RESUME)
 
     def _encode_picture(self, image, camera, resolution, head_still):
         width, height, raw = image[0], image[1], image[6]

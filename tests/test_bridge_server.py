@@ -370,7 +370,8 @@ class TestRobotFacade:
             else [2, 1, 3, 0, 0, 0, b"\x00" * 6] if method == "getImageRemote" else None
         )
         robot.picture(0, 2)
-        assert ("pauseAwareness", ()) in awareness.calls and scheduled == [bridge.PHOTO_TRACKING_RESUME]
+        assert ("setEnabled", (False,)) in awareness.calls  # off for the shot, not just paused
+        assert scheduled[-1] == bridge.PHOTO_TRACKING_RESUME
 
     def test_neutral_pose_moves_arms_and_legs_not_the_head(self, robot, bridge):
         assert robot.neutral_pose() == {"joints": len(bridge.NEUTRAL_JOINTS)}
@@ -793,42 +794,48 @@ class TestAwareness:
         ba = calls(robot, "ALBasicAwareness")
         assert ba == [("setEnabled", (False,))]
 
-    def test_head_move_pauses_tracking_and_resumes_later(self, bridge, robot, monkeypatch):
+    def test_head_move_holds_tracking_off_and_turns_it_back_on(self, bridge, robot, monkeypatch):
+        # On the robot a merely *paused* tracker still pulled the head back to the face, so a head move
+        # switches tracking off (setEnabled(False)) and on again after the hold.
         import time as _time
 
         monkeypatch.setattr(bridge, "AWARENESS_RESUME_AFTER", 0.05)
         ba = robot.session.service("ALBasicAwareness")
-        state = {"enabled": True, "paused": False}
+        state = {"enabled": True}
         original = ba._respond
 
         def respond(method, args):
             if method == "isEnabled":
                 return state["enabled"]
-            if method == "isAwarenessPaused":
-                return state["paused"]
-            if method == "pauseAwareness":
-                state["paused"] = True
-                return None
-            if method == "resumeAwareness":
-                state["paused"] = False
+            if method == "setEnabled":
+                state["enabled"] = bool(args[0])
                 return None
             return original(method, args)
 
         ba._respond = respond
         result = robot.move_head(30, 0, 0.2)
-        assert result["awareness_paused"] is True and state["paused"] is True
-        robot.move_head(-30, 0, 0.2)  # a second move restarts the timer, no second pause call
-        assert ba.calls.count(("pauseAwareness", ())) == 1
+        assert result["awareness_paused"] is True and state["enabled"] is False
+        assert robot.status()["awareness"] is True  # held, not off: it comes back by itself
+        robot.move_head(-30, 0, 0.2)  # a second move extends the hold, no second switch-off
+        assert ba.calls.count(("setEnabled", (False,))) == 1
         for _ in range(50):
-            if not state["paused"]:
+            if state["enabled"]:
                 break
             _time.sleep(0.01)
-        assert state["paused"] is False and ("resumeAwareness", ()) in ba.calls
+        assert state["enabled"] is True and ("setEnabled", (True,)) in ba.calls
+
+    def test_an_explicit_request_cancels_the_hold(self, bridge, robot):
+        ba = robot.session.service("ALBasicAwareness")
+        original = ba._respond
+        ba._respond = lambda m, a: True if m == "isEnabled" else original(m, a)
+        robot.move_head(30, 0, 0.2)
+        robot.set_awareness(False)  # "stop looking at me" during the hold: stays off
+        assert robot._tracking_held is False and robot._awareness_resume is None
 
     def test_head_move_leaves_disabled_tracking_alone(self, robot):
         result = robot.move_head(10, 0, 0.2)
         assert result["awareness_paused"] is False
-        assert not any(c[0] == "pauseAwareness" for c in calls(robot, "ALBasicAwareness"))
+        assert not any(c[0] in ("pauseAwareness", "setEnabled") for c in calls(robot, "ALBasicAwareness"))
 
     def test_enabling_awareness_resumes_a_paused_tracker(self, robot):
         ba = robot.session.service("ALBasicAwareness")
