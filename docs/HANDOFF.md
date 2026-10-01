@@ -81,6 +81,18 @@ Still to do on the robot: base moves (deferred until there is a bigger space; th
 - Claude Opus 5 at `effort=low` occasionally writes a tool call as XML text; the manager suppresses and retries once.
 - The reactive layer and voice design borrow from Autonomous OS (intent table, state signals, safety ledger); see `RESEARCH_2026-09.md`.
 
+## Session records
+
+Every robot session is recorded in full and reviewed afterwards; real interactions (the 2026-10-01 visitors, for example) are the main source of fixes. How, and the privacy rules, are in `CLAUDE.md` under "Session records". Records so far (local, git-ignored):
+
+| Date | Logs | Audio | Photos |
+|------|------|-------|--------|
+| 2026-09-22 | (host log not kept separately) | `recordings/round1-3*`, `round4-nemotron-office` | `results/models-2026-09-22/` |
+| 2026-09-29 | `results/logs/blind-*.log`, `greeting*-2026-09-29.*`, `results/llm/` | `recordings/round5-blind-*`, `recordings/greeting-2026-09-29` | `results/models-2026-09-29/`, `results/logs/greeting-view*.jpg` |
+| 2026-10-01 | `results/logs/{photos,photos2,photos3,photos4,drive}-2026-10-01.*` (photos4: directing Pepper and the two visitors) | `recordings/2026-10-01/` (28 utterances) | `results/photos-2026-10-01/` (ten-turn measurement), `results/photos/` |
+
+What the records cannot show yet, and the plan to close it, is in GitHub issue #16: one session folder per run instead of hand-named files, per-turn timings (end of speech, transcript, first word, end of reply), people events in the host log, and a review script that turns a session into a readable transcript with timings.
+
 ## How to resume testing
 
 ### Environment

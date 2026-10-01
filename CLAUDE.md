@@ -148,6 +148,15 @@ Copy `env.example` to `.env`. Key variables:
 - Pre-1.0 versions `0.MINOR.PATCH` (one minor per milestone-sized step); `src/__init__.py` `__version__` and `BRIDGE_VERSION` in the bridge must match (tested). Record each version in `CHANGELOG.md` and tag it (`git tag -a v0.X.Y`).
 - `docs/ROADMAP.md` is the source of truth. GitHub milestones M0-M6 and their issues track open work, and the GitHub wiki (`https://github.com/mfbergmann/PepperEvolution.wiki.git`: Home, Roadmap, Architecture, Test-sessions, Versions) summarises it. When a milestone item is finished or added, close or open the issue and update the wiki's status table and Test-sessions page.
 
+## Session records (development practice)
+
+Real interactions on the robot are the main source of fixes, so every robot session is recorded in full and reviewed afterwards (decided 2026-10-01).
+
+- **Record:** give each host run its own `LOG_FILE` under `results/logs/` (e.g. `results/logs/<topic>-<date>.log`) and keep `VOICE_RECORD_DIR` (utterance WAV + transcript) and `PHOTO_RECORD_DIR` (photo + measured head angle + sharpness) on in `.env`. The host log at INFO holds every transcript (`[voice]`), every sentence Pepper says (`Saying:`), every tool call with its full result, greetings and reflexes; the bridge log on the robot (`deploy.py --logs`) holds every endpoint call with its duration.
+- **Group** each session's records in dated folders (`recordings/<date>/`, `results/photos/`, `results/logs/*-<date>.*`).
+- **Review** after the session, before reporting: who said what, what Pepper did and said, timings (transcript to first `Saying:`), failures and refusals. Turn findings into GitHub issues and a dated note in `docs/HANDOFF.md`.
+- **Privacy:** records hold real people's voices and images, often visitors. They stay on this machine, git-ignored (`results/`, `recordings/`), are never pasted into issues, and are used only to improve Pepper.
+
 ## Code Standards
 
 - Python 3.12+ on the host (CI tests 3.12, 3.13); Python 2.7 for `robot_bridge/pepper_bridge.py`

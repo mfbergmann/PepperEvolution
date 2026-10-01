@@ -189,7 +189,7 @@ Goal: Pepper remembers who it talked to and what was said.
 
 - Bridge autostart on robot boot: **built 2026-09-29**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`), tested on NAOqi's desktop build including a cold start; robot check next session. Still to do: a watchdog that restarts a crashed bridge.
 - Latency budget per turn in the log; per-sentence speech timing.
-- Session recording (transcripts, photos, tool calls) for later analysis.
+- **Session recording and review (priority since 2026-10-01; issue #16).** Real interactions are the main source of fixes, so every robot session is recorded and reviewed. Done: transcripts, every sentence Pepper says and full tool results in the host log; utterance audio (`VOICE_RECORD_DIR`); photos with measured head angle (`PHOTO_RECORD_DIR`). To do: one folder per session (`SESSION_DIR`) holding everything; a structured per-turn record (JSON lines: end of speech, transcript, first word, end of reply, tools, interruptions, people events); `scripts/review_session.py` that prints a readable transcript with timings and flags (long replies, slow first words, failed tools, side conversations answered). Records stay local and git-ignored.
 
 ## Testing without the robot
 
