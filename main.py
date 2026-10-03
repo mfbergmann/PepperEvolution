@@ -15,7 +15,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -35,6 +35,7 @@ from src.ai import (  # noqa: E402
 from src.audio import VoiceInput, make_transcriber  # noqa: E402
 from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
+from src.session import SessionRecorder  # noqa: E402
 from src.world import WorldModel  # noqa: E402
 
 
@@ -81,6 +82,7 @@ class Settings:
     voice_input: bool
     voice_record_dir: Optional[str]
     photo_record_dir: Optional[str]
+    session_dir: Optional[str]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -123,6 +125,7 @@ class Settings:
             voice_input=env_bool("VOICE_INPUT", False),
             voice_record_dir=os.getenv("VOICE_RECORD_DIR") or None,
             photo_record_dir=os.getenv("PHOTO_RECORD_DIR") or None,
+            session_dir=os.getenv("SESSION_DIR") or None,
         )
 
 
@@ -152,6 +155,13 @@ class PepperEvolution:
     def __init__(self, settings: Optional[Settings] = None):
         load_dotenv()
         self.settings = settings or Settings.from_env()
+        self.recorder: Optional[SessionRecorder] = None
+        if self.settings.session_dir:
+            # One folder per run holds everything for the review (CLAUDE.md, "Session records").
+            self.recorder = SessionRecorder.start(self.settings.session_dir)
+            self.settings.log_file = self.recorder.path("host.log")
+            self.settings.voice_record_dir = self.recorder.path("audio")
+            self.settings.photo_record_dir = self.recorder.path("photos")
         logger.add(
             self.settings.log_file,
             rotation="10 MB",
@@ -226,6 +236,10 @@ class PepperEvolution:
             )
         self.robot.on_event(self.ai_manager.handle_event)
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
+        if self.recorder is not None:
+            self.ai_manager.recorder = self.recorder
+            self.robot.on_event(self._record_robot_event)
+            self.logger.info(f"Session records: {self.recorder.folder}")
         if self.world.count == 0:
             self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
         self.robot.start_state_loop(interval=10.0)
@@ -267,8 +281,35 @@ class PepperEvolution:
                 if task is not None and hasattr(task, "uncancel"):
                     task.uncancel()
 
+    async def _record_robot_event(self, event_type: str, data: Dict[str, Any]):
+        if self.recorder is not None and event_type in ("people", "touch", "bumper"):
+            self.recorder.record_event(event_type, **data)
+
+    async def _save_bridge_log(self):
+        """Best effort: copy the robot's bridge.log into the session folder (needs ssh, like deploy.py)."""
+        if self.recorder is None or self.settings.fake_bridge:
+            return
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(ROOT / "robot_bridge" / "deploy.py"),
+                "--logs",
+                "-n",
+                "5000",
+                "--host",
+                self.settings.pepper_ip,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            with open(self.recorder.path("bridge.log"), "wb") as fh:
+                fh.write(out)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(f"Could not copy the bridge log: {exc}")
+
     async def shutdown(self):
         self.logger.info("Shutting down components...")
+        await self._save_bridge_log()
         if self.voice:
             await self.voice.stop()
         if self.api_server:

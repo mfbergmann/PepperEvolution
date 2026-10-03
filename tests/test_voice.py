@@ -65,7 +65,9 @@ class TestRobotMicrophone:
         assert source.started and voice.started
         await source.push(silence(0.5) + tone(1.0) + silence(1.0))
         await settle(voice, manager)
-        manager.process_user_input.assert_awaited_once_with("wave at me", source="voice", client_id=None)
+        call = manager.process_user_input.await_args
+        assert call.args == ("wave at me",) and call.kwargs["source"] == "voice" and call.kwargs["open_mic"] is True
+        assert isinstance(call.kwargs["heard_at"], float)
         assert voice.transcripts == 1 and voice.utterances == 1 and voice.last_transcript == "wave at me"
         manager.signal_state.assert_any_await("listening")
         assert payloads[-1] == {
@@ -100,7 +102,9 @@ class TestRobotMicrophone:
         await voice.start()
         await source.push(tone(1.2))
         await settle(voice, manager)
-        manager.process_user_input.assert_awaited_once_with("look at me", source="voice", client_id=None)
+        call = manager.process_user_input.await_args
+        assert call.args == ("look at me",) and call.kwargs["source"] == "voice" and call.kwargs["open_mic"] is True
+        assert isinstance(call.kwargs["heard_at"], float)
         assert [p["final"] for p in payloads] == [False, True]
         assert payloads[0]["text"] == "look" and payloads[1]["delivered"] is True
         manager.signal_state.assert_any_await("listening")
@@ -159,7 +163,9 @@ class TestPushToTalk:
         voice = VoiceInput(manager, FakeTranscriber(["hello"]))
         result = await voice.handle_utterance(tone(0.5), client_id="abc")
         assert result == {"text": "hello", "response": {"text": "ok", "spoken": []}}
-        manager.process_user_input.assert_awaited_once_with("hello", source="voice", client_id="abc")
+        call = manager.process_user_input.await_args
+        assert call.args == ("hello",) and call.kwargs["client_id"] == "abc"
+        assert call.kwargs["open_mic"] is False  # push-to-talk is always meant for Pepper
         manager.signal_state.assert_any_await("listening")
         assert voice.utterances == 1 and voice.transcripts == 1
 

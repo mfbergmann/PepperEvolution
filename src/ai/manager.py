@@ -143,6 +143,8 @@ class AIManager:
         self._spoke_this_turn = False
         self._response_callbacks: List[ResponseCallback] = []
         self._partial_callbacks: List[PartialCallback] = []
+        self.recorder: Optional[Any] = None  # SessionRecorder (src/session.py): turns.jsonl and events.jsonl
+        self._rec: Optional[Dict[str, Any]] = None  # the record of the turn being run
 
     # Backwards-compatible alias (older code/tests used context_window = pairs kept)
     @property
@@ -167,8 +169,14 @@ class AIManager:
         speak: Optional[bool] = None,
         source: str = "user",
         client_id: Optional[str] = None,
+        heard_at: Optional[float] = None,
+        open_mic: bool = False,
     ) -> Dict[str, Any]:
         """Process user input through the AI with tool calling.
+
+        ``heard_at`` (``time.monotonic()``) is when voice input delivered the final transcript, for the session record.
+        ``open_mic``: heard by the robot's microphone rather than typed or push-to-talk, so it may not be meant for
+        Pepper (the addressee gate only judges these).
 
         Returns a dict with:
             - text: the AI's reply (animation tags stripped)
@@ -178,21 +186,73 @@ class AIManager:
             - model, stop_reason, usage, rounds, source, client_id
         """
         speak = self.speak_responses if speak is None else speak
+        rec = self._new_record(user_input, source, heard_at)
         if source in ("user", "voice"):
             self._last_talk_at = self._clock()
             intent = match_intent(user_input)
             if intent is not None:
                 # Control phrases never wait behind the model or an in-flight turn.
-                return await self._handle_intent(intent, user_input, speak, source, client_id)
+                result = await self._handle_intent(intent, user_input, speak, source, client_id)
+                rec["intent"] = intent.name
+                self._finish_record(rec, result)
+                return result
         submitted = self._clock()
         async with self._lock:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
                 # Queued behind the turn that "stop" cancelled: the person does not want it any more.
                 self.logger.info(f"[{source}] dropped after a stop: {user_input!r}")
-                return self._bare_result("", source, client_id, "cancelled")
-            result = await self._run_turn(user_input, speak, source, client_id)
+                result = self._bare_result("", source, client_id, "cancelled")
+                self._finish_record(rec, result)
+                return result
+            self._rec = rec
+            try:
+                result = await self._run_turn(user_input, speak, source, client_id)
+            finally:
+                self._rec = None
+        self._finish_record(rec, result)
         self._after_turn(result, submitted)
         return result
+
+    # ------------------------------------------------------------------
+    # Session records (src/session.py)
+    # ------------------------------------------------------------------
+
+    def _new_record(self, text: str, source: str, heard_at: Optional[float]) -> Dict[str, Any]:
+        return {
+            "source": source,
+            "text": text,
+            "heard_at": heard_at,
+            "received_at": self._clock(),
+            "around": self.world.summary() if self.world is not None else "",
+            "tools": [],
+        }
+
+    def _finish_record(self, rec: Dict[str, Any], result: Dict[str, Any]):
+        """Write one line to turns.jsonl: what was heard, decided, done and said, with timings."""
+        if self.recorder is None:
+            return
+        start = rec.get("heard_at") or rec["received_at"]
+        first = rec.pop("first_word_at", None)
+        out = {
+            "source": rec["source"],
+            "text": rec["text"],
+            "heard": self.recorder.wall(rec.get("heard_at")),
+            "received": self.recorder.wall(rec["received_at"]),
+            "first_word_s": round(first - start, 2) if first is not None else None,
+            "duration_s": round(self._clock() - start, 2),
+            "stop_reason": result.get("stop_reason"),
+            "spoken": [strip_animation_tags(s) for s in result.get("spoken") or []],
+            "tools": rec.get("tools", []),
+            "around": rec.get("around", ""),
+        }
+        for key in ("intent", "addressee", "router"):
+            if key in rec:
+                out[key] = rec[key]
+        self.recorder.record_turn(out)
+
+    def _event(self, kind: str, **data: Any):
+        if self.recorder is not None:
+            self.recorder.record_event(kind, **data)
 
     async def _handle_intent(
         self, intent: Intent, user_input: str, speak: bool, source: str, client_id: Optional[str]
@@ -385,7 +445,18 @@ class AIManager:
                     elif self._abort:
                         outcome = self.executor.aborted_outcome()
                     else:
+                        started = self._clock()
                         outcome = await self.executor.execute(tc.name, tc.input)
+                        if self._rec is not None:
+                            self._rec["tools"].append(
+                                {
+                                    "name": tc.name,
+                                    "input": tc.input,
+                                    "ok": outcome.ok,
+                                    "seconds": round(self._clock() - started, 2),
+                                    "result": outcome.summary()[:500],
+                                }
+                            )
                     tool_results.append(outcome.tool_result(tc.id))
                     all_tool_calls.append(
                         {"name": tc.name, "input": tc.input, "result": outcome.summary(), "ok": outcome.ok}
@@ -479,6 +550,8 @@ class AIManager:
         await self._signal(state)
 
     async def _on_sentence(self, sentence: str):
+        if self._rec is not None and "first_word_at" not in self._rec:
+            self._rec["first_word_at"] = self._clock()
         if not self._spoke_this_turn:
             self._spoke_this_turn = True
             if not self._hush and self.robot.last_eye_color == self._eye_color_at_start:
@@ -579,6 +652,7 @@ class AIManager:
     async def _look_back(self):
         """After a turn that moved the head: face the nearest person again, or look out at the room."""
         people = self.world.people if self.world is not None and self.world.count else []
+        self._event("look_back", people=len(people), tracking=self.face_tracking)
         try:
             if self.face_tracking and people and not self._tracking_off:
                 # Re-enabling resumes tracking at once (a head move paused it for 8 s); it finds the face itself.
@@ -617,6 +691,7 @@ class AIManager:
                     await self.robot.set_awareness(False)
                     self._tracking_off = True
                 await self.robot.move_head(*self.NEUTRAL_HEAD, speed=0.15, wait=False)
+                self._event("look_at_room")
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug(f"Could not recentre the head: {exc}")
 
@@ -652,6 +727,7 @@ class AIManager:
 
         if person.yaw is not None:
             self.logger.info(f"Turning towards a newcomer: yaw {person.yaw:.0f}, pitch {pitch:.0f}")
+            self._event("turn_towards", yaw=person.yaw, pitch=pitch, distance=person.distance)
         task = asyncio.create_task(turn(), name="turn-to-arrival")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -688,6 +764,7 @@ class AIManager:
             f"{away} Greet them in one short, friendly sentence, or stay quiet if a greeting doesn't fit."
         )
         self.logger.info(f"Greeting a newcomer at {nearest.distance:.1f} m")
+        self._event("greeting", distance=nearest.distance, looking=nearest.looking)
         task = asyncio.create_task(self._react(prompt, now, kind="greeting"), name="greeting")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
