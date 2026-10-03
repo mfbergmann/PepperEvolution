@@ -63,10 +63,10 @@ class ToolExecutor:
         self.logger = logger.bind(module="ToolExecutor")
         self._already: Optional[Any] = None  # (tool name, task) started by the command router this turn
 
-    def already_started(self, tool_name: str, task: Any):
+    def already_started(self, tool_name: str, task: Any, routed: Any = None):
         """The router started this action before the model was asked: its first call of ``tool_name`` this turn
-        waits for that action instead of doing it twice."""
-        self._already = (tool_name, task)
+        waits for that action instead of doing it twice (or runs normally if the routed action failed)."""
+        self._already = (tool_name, task, routed)
 
     def clear_already_started(self):
         self._already = None
@@ -83,16 +83,18 @@ class ToolExecutor:
         """Execute a tool call; never raises."""
         self.logger.info(f"Tool call: {tool_name}({json.dumps(tool_input, ensure_ascii=False)})")
         if self._already is not None and self._already[0] == tool_name:
-            task = self._already[1]
+            _, task, routed = self._already
             self._already = None
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=10)
             except Exception:  # noqa: BLE001 - the routed action logs its own failure
                 pass
-            self.logger.info(f"Tool {tool_name} -> already done by the command router")
-            return ToolOutcome(
-                True, {"already_done": True, "note": "This was started when the person spoke; it is done."}
-            )
+            if not getattr(routed, "failed", False):
+                self.logger.info(f"Tool {tool_name} -> already done by the command router")
+                return ToolOutcome(
+                    True, {"already_done": True, "note": "This was started when the person spoke; it is done."}
+                )
+            self.logger.info(f"Routed {tool_name} failed; running the model's call")
         try:
             outcome = await self._dispatch(tool_name, tool_input or {})
         except Exception as exc:  # noqa: BLE001 - report to the model instead of crashing the turn

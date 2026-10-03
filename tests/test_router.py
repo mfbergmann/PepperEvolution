@@ -109,3 +109,46 @@ class TestRoutingInTheManager:
         await manager.process_user_input("[Sensor event] Someone walked up.", source="event")
         await asyncio.sleep(0)
         mock_robot.connection.bridge.play_animation.assert_not_awaited()
+
+
+def words_only(text="On my left there's a cabinet."):
+    async def chat(messages, tools=None, system=None, on_text=None):
+        if on_text is not None:
+            await on_text(text)
+        return AIResponse(text=text, stop_reason="end_turn")
+
+    return chat
+
+
+class TestRouterFollowUps:
+    async def test_look_back_after_a_routed_head_move(self, mock_robot, mock_ai_provider, monkeypatch):
+        from src.world import WorldModel
+
+        monkeypatch.setattr(AIManager, "NEUTRAL_POSE_DELAY", 0.0)
+        world = WorldModel()
+        await world.handle_event(
+            "sensors",
+            {"people_count": 1, "people": [{"id": 1, "distance": 1.4, "looking": True, "yaw": 10.0, "pitch": -15.0}]},
+        )
+        mock_ai_provider.chat.side_effect = words_only()
+        manager = routed_manager(mock_robot, mock_ai_provider, "look_left", 0.97)
+        manager.world = world
+        await manager.process_user_input("Look to your left and tell me what's there", source="voice", open_mic=True)
+        for _ in range(5):
+            await asyncio.sleep(0.01)
+        calls = mock_robot.connection.bridge.move_head.await_args_list
+        assert calls[0].args[:2] == (60.0, 0)  # the routed look
+        assert calls[-1].args[:2] == (10.0, -15.0)  # and back to the person, though Claude made no head call
+
+    async def test_a_failed_routed_action_is_not_reported_as_done(self, mock_robot, mock_ai_provider):
+        mock_robot.connection.bridge.move_turn.side_effect = [RuntimeError("robot is resting"), {"ok": True}]
+        mock_ai_provider.chat.side_effect = turn_then_words()
+        manager = routed_manager(mock_robot, mock_ai_provider, "turn_left", 0.95)
+        result = await manager.process_user_input("Turn left ninety degrees", source="voice", open_mic=True)
+        assert mock_robot.connection.bridge.move_turn.await_count == 2  # the model's own call really ran
+        assert "already_done" not in result["tool_calls"][0]["result"]
+
+    async def test_nothing_is_routed_while_resting(self, mock_robot, mock_ai_provider):
+        mock_robot.state.awake = False
+        manager = routed_manager(mock_robot, mock_ai_provider, "wave", 0.99)
+        assert await manager._choose_action("", "Give us a wave", {}) is None

@@ -255,13 +255,17 @@ class AIManager:
                 self._finish_record(rec, result)
                 return result
             self._rec = rec
+            self.executor.clear_already_started()  # never carry an absorption over from another turn
+            pending = rec.pop("_absorb", None)
+            if pending is not None:
+                self.executor.already_started(*pending)
             try:
                 result = await self._run_turn(user_input, speak, source, client_id)
             finally:
                 self._rec = None
                 self.executor.clear_already_started()
         self._finish_record(rec, result)
-        self._after_turn(result, submitted)
+        self._after_turn(result, submitted, rec)
         return result
 
     # ------------------------------------------------------------------
@@ -300,15 +304,22 @@ class AIManager:
         routed = plan_action(action, p, text)
         if routed is None:
             return None  # e.g. a drive: Claude decides, with the bridge's guards
-        if routed.intent is None and (self.busy or self.robot.direct_commands_running or self.robot.halted):
-            return None  # a turn or a command owns the body; Claude will get to it in order
+        if routed.intent is None and (
+            self.busy
+            or self.robot.direct_commands_running
+            or self.robot.halted
+            or getattr(self.robot.state, "awake", None) is False
+        ):
+            return None  # a turn or a command owns the body, or the motors are off: Claude handles it
         return routed
 
     def _start_routed(self, routed: Routed, rec: Dict[str, Any]):
         """Start a routed action now; the model's first call of the same tool waits for it instead of repeating."""
         self.logger.info(f"Routed at once: {routed.description} (p={routed.probability:.2f})")
         start = rec.get("heard_at") or rec["received_at"]
-        rec["router"].update(executed=True, action=routed.description, started_s=round(self._clock() - start, 3))
+        rec["router"].update(
+            executed=True, action=routed.description, tool=routed.tool, started_s=round(self._clock() - start, 3)
+        )
         self.robot.direct_commands_running += 1  # reflexes stand back while it runs
 
         async def run():
@@ -321,6 +332,8 @@ class AIManager:
                     await self.robot.play_animation(routed.args["name"])
                     await self.robot.neutral_pose()
             except Exception as exc:  # noqa: BLE001
+                routed.failed = True
+                rec["router"]["failed"] = str(exc)
                 self.logger.warning(f"Routed action {routed.action} failed: {exc}")
             finally:
                 self.robot.direct_commands_running -= 1
@@ -329,7 +342,7 @@ class AIManager:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         if routed.tool is not None:
-            self.executor.already_started(routed.tool, task)
+            rec["_absorb"] = (routed.tool, task, routed)  # registered with the executor once the turn starts
 
     def _look_at_speaker(self):
         """After side talk Pepper does not answer, it still looks at the person, as anyone would."""
@@ -781,7 +794,7 @@ class AIManager:
 
     NEUTRAL_POSE_DELAY = 0.5  # seconds after a turn before the arms go back down, unless a new turn has started
 
-    def _after_turn(self, result: Dict[str, Any], started: float):
+    def _after_turn(self, result: Dict[str, Any], started: float, rec: Optional[Dict[str, Any]] = None):
         """Tidy up the body after a turn: arms down after gestures, eyes back on the person after a head move.
 
         Inline gestures (``^start(...)``) and animations can end with a hand still raised (seen on the robot after
@@ -791,7 +804,9 @@ class AIManager:
         spoken = " ".join(result.get("spoken") or [])
         tools = [tc.get("name") for tc in result.get("tool_calls") or []]
         gestured = "^start(" in spoken or "^run(" in spoken or "play_animation" in tools
-        moved_head = "move_head" in tools
+        routed = (rec or {}).get("router") or {}
+        # a head move the router started counts too: the model is told not to repeat it
+        moved_head = "move_head" in tools or (routed.get("executed") and routed.get("tool") == "move_head")
         if not gestured and not moved_head:
             return
 

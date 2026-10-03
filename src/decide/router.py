@@ -140,6 +140,7 @@ class Routed:
     tool: Optional[str]  # move_head, turn, play_animation; None for intents
     args: Dict[str, Any]
     intent: Optional[str] = None  # "stop" / "quiet": run through the intent path instead
+    failed: bool = False  # set when the action could not be done (then the model's own call runs normally)
 
 
 def plan(action: str, probability: float, text: str) -> Optional[Routed]:
