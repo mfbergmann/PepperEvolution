@@ -51,6 +51,8 @@ Turns raw sensing into facts: speech into text, NAOqi's people detection into "s
 
 **Status:** speech-to-text is built and verified (Milestone 2). People events are debounced on the bridge with distance, gaze and zone per person, and feed the world model (2026-09-23). The vision pass is planned (Milestone 4).
 
+**Situation judgements ("system one", tested 2026-10-03).** Before the mind is called, small local decision models answer fixed questions about the situation with probabilities instead of prose, the way the bridge exposes the robot's hardware as a set of predefined options: is this utterance addressed to Pepper? is someone waving, pointing, holding something up? is the photo blurred, does it show what was asked for? Code acts on the probabilities (answer, stay quiet, look, call the mind), and the mind is only woken for what needs judgement or words. They never speak or move the robot themselves. Candidates: Ollama's decision models on the Creative AI Hub (Nimble, text; Clef Flash and Clef, text and images; the `/v1/systemone` API, which follows TypeSafe's Jev API). First measurements on Pepper's own data: "addressed to Pepper?" 21 of 22 utterances from a real session with two visitors (a name-matching rule: 9 of 22) in 0.05-0.09 s; four questions about a camera frame in 0.25 s, with 38/40 person, 9/9 facing, 39/40 blur and 24/30 scene answers right. Kept local, so frames and voices stay on our hardware.
+
 ### 3. World model: the shared state
 
 One structure on the host that holds what Pepper currently believes about its surroundings: who is present (with first-seen and last-seen times, distance zone, whether they are looking at Pepper, a name once identity exists), the latest scene summary and when it was made, recent events (arrivals, touches, what was just said), and the state of the conversation. It is plain data in our own code, not inside any model, which is what lets every other part read it and lets models be swapped freely.
@@ -81,7 +83,8 @@ A single conversational model holds the dialogue, decides what to do, calls tool
 | People and face detection, tracking | on the robot (NAOqi) | continuous | NAOqi's own |
 | Speech to text | host CPU | about 0.3 s of compute per audio second, final about 0.2 s after you stop | NVIDIA Nemotron speech streaming via sherpa-onnx (chosen 2026-09-22: 6 % word errors in the open room vs 37 % for the older zipformer) |
 | Scene description for the world model | Creative AI Hub server (planned), over the tailnet | every 10-20 s | an open vision-language model on local GPUs, chosen by comparison; a cloud model as fallback |
-| Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model: Sonnet 5 at medium effort, chosen by comparison on 2026-09-22 |
+| Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model: Sonnet 5.5 at medium effort (chosen by comparison on 2026-09-29; Sonnet 5 before) |
+| Situation judgements (addressed to Pepper? waving? photo usable?) | Creative AI Hub (Alien3, RTX 5090), over the tailnet | 0.05-0.25 s per judgement | local decision models: Nimble (text), Clef Flash (text and images), tested 2026-10-03 |
 | Reflection (should I act?) | cloud | every tens of seconds | a small, cheap model, or the mind at low effort |
 
 The rule behind the table: specialised models may observe and summarise, but only the mind speaks and acts. That keeps speed where it matters without splitting Pepper into several personalities.
