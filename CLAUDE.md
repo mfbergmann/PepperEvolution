@@ -165,7 +165,7 @@ Real interactions on the robot are the main source of fixes, so every robot sess
 - **Record:** give each host run its own `LOG_FILE` under `results/logs/` (e.g. `results/logs/<topic>-<date>.log`) and keep `VOICE_RECORD_DIR` (utterance WAV + transcript) and `PHOTO_RECORD_DIR` (photo + measured head angle + sharpness) on in `.env`. The host log at INFO holds every transcript (`[voice]`), every sentence Pepper says (`Saying:`), every tool call with its full result, greetings and reflexes; the bridge log on the robot (`deploy.py --logs`) holds every endpoint call with its duration.
 - **Group** each session's records in dated folders (`recordings/<date>/`, `results/photos/`, `results/logs/*-<date>.*`).
 - **Review** after the session, before reporting: who said what, what Pepper did and said, timings (transcript to first `Saying:`), failures and refusals. Turn findings into GitHub issues and a dated note in `docs/HANDOFF.md`.
-- **Privacy:** records hold real people's voices and images, often visitors. They stay on this machine, git-ignored (`results/`, `recordings/`), are never pasted into issues, and are used only to improve Pepper.
+- **Privacy:** records hold real people's voices and images, often visitors. They stay on this machine, git-ignored (`results/`, `recordings/`), are never pasted into issues, and are used only to improve Pepper. Put up the printable notice `docs/signs/recording-notice.pdf` (source: `.html` next to it) wherever Pepper records people.
 
 ## Code Standards
 

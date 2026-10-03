@@ -66,7 +66,7 @@ If the GPU machine is down or slow, each judgement gives up after 0.8 s and Pepp
 
 ## Privacy
 
-In both profiles Claude receives what Pepper hears (as text) and the photos it takes when asked. With profile 2, camera frames for the judgements and the text of every utterance (including side talk that is never answered) go to your GPU machine and stay there; nothing from the judgements goes to a cloud service. Session records (`SESSION_DIR`) keep voices, photos and transcripts on the host for review; keep them out of git (see `CLAUDE.md`, "Session records").
+In both profiles Claude receives what Pepper hears (as text) and the photos it takes when asked. With profile 2, camera frames for the judgements and the text of every utterance (including side talk that is never answered) go to your GPU machine and stay there; nothing from the judgements goes to a cloud service. Session records (`SESSION_DIR`) keep voices, photos and transcripts on the host for review; keep them out of git (see `CLAUDE.md`, "Session records"). A printable notice for people near Pepper, in Pepper's own words, is in `docs/signs/recording-notice.pdf`.
 
 ## Not built yet
 
