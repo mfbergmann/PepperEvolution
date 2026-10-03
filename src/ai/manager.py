@@ -133,6 +133,7 @@ class AIManager:
         self.addressee_threshold = addressee_threshold
         self.addressee_looking_threshold = addressee_looking_threshold  # lower bar when someone looks at Pepper
         self._heard: Deque[str] = deque(maxlen=6)  # recent final transcripts, answered or not (gate context)
+        self._camera_reacted: Dict[str, float] = {}
         self.router = router  # start Pepper's first action at once from a spoken command (issue #21)
         self.router_threshold = router_threshold
         self._tracking_off = False  # we switched it off for an empty room
@@ -270,7 +271,10 @@ class AIManager:
     async def _meant_for_pepper(self, heard_before: List[str], text: str, rec: Dict[str, Any]) -> bool:
         started = self._clock()
         p = await judge_addressee(self.decider, heard_before, text)
-        looking = bool(self.world is not None and any(person.looking for person in self.world.people))
+        looking = bool(
+            self.world is not None
+            and (any(person.looking for person in self.world.people) or self.world.sees("facing"))
+        )
         verdict = addressed(p, self.addressee_threshold, looking, self.addressee_looking_threshold)
         rec["addressee"] = {
             "p": None if p is None else round(p, 3),
@@ -708,6 +712,9 @@ class AIManager:
 
     async def handle_event(self, event_type: str, data: Dict[str, Any]):
         """React to touch/bumper events with a short spoken response (rate-limited)."""
+        if event_type == "vision":
+            self._react_to_camera(data)
+            return
         if event_type == "people":
             self._try_greeting()  # a pending arrival may qualify now (they looked over or came closer)
             if not data.get("count"):
@@ -733,6 +740,34 @@ class AIManager:
         self._last_event_reaction = now
         prompt = f"[Sensor event] {message} React in one short sentence, or stay quiet if it doesn't warrant a reply."
         task = asyncio.create_task(self._react(prompt, now), name="event-reaction")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    CAMERA_MESSAGES = {
+        "waving": "Someone in front of you is waving at you.",
+        "showing": "Someone is holding something up to show you.",
+    }
+    CAMERA_COOLDOWN = 30.0  # seconds between reactions to the same kind of camera event
+
+    def _react_to_camera(self, data: Dict[str, Any]):
+        """A camera judgement held for two frames (src/perception/vision.py): let the mind react, briefly."""
+        what = data.get("what", "")
+        message = self.CAMERA_MESSAGES.get(what)
+        if message is None:
+            return
+        now = self._clock()
+        self._event("camera_event", what=what, p=data.get("p"))
+        if self.busy or self.robot.direct_commands_running or self.robot.halted:
+            return
+        last = self._camera_reacted.get(what)
+        if last is not None and now - last < self.CAMERA_COOLDOWN:
+            return
+        self._camera_reacted[what] = now
+        prompt = (
+            f"[Sensor event] {message} React briefly and naturally (take a photo if you need to see what it is), "
+            "or stay quiet if it doesn't warrant a reply."
+        )
+        task = asyncio.create_task(self._react(prompt, now, kind="camera"), name="camera-reaction")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 

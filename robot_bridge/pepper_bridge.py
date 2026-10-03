@@ -176,7 +176,13 @@ NEUTRAL_JOINTS = (
     ("KneePitch", -0.01),
 )
 NEUTRAL_SPEED = 0.2  # fraction of maximum joint speed
-BRIDGE_SERVICE_NAME = "PepperBridge"  # registered with NAOqi so ALServiceManager sees the autostarted service
+BRIDGE_SERVICE_NAME = "PepperBridge"
+# /ws/camera: small frames for the host's situation judgements (a local vision model about once a second).
+# One subscription with a fixed name, so one left behind by a crash can be cleared (NAOqi caps subscribers).
+STREAM_NAME = "pepper_bridge_stream"
+STREAM_RESOLUTION = 1  # QVGA, 320x240: 12 KB as JPEG, and the judgement is faster than on VGA
+STREAM_MAX_FPS = 5.0
+STREAM_JPEG_QUALITY = 75  # registered with NAOqi so ALServiceManager sees the autostarted service
 
 # ISO codes -> NAOqi language names. Full names pass through unchanged.
 LANGUAGE_NAMES = {
@@ -1363,8 +1369,90 @@ class AudioTap(object):
             LOGGER.debug("audio frame dropped: %s", exc)
 
 
+class CameraStream(object):
+    """One persistent camera subscription feeding every /ws/camera client from a worker thread.
+
+    Unlike /picture it does not touch face tracking or wait for a still head: it streams what the camera sees,
+    for judgements like "is someone waving?". Frames stay in memory; the host decides what, if anything, to keep.
+    """
+
+    def __init__(self, session, clock=time.time, sleep=time.sleep):
+        self.session = session
+        self.fps = 1.0
+        self.frames = 0
+        self.last_error = None
+        self._running = False
+        self._thread = None
+        self._clock = clock
+        self._sleep = sleep
+
+    def clear_stale(self):
+        """Unsubscribe instances a crashed bridge left behind (called on connecting to NAOqi)."""
+        try:
+            self.session.service("ALVideoDevice").unsubscribeAllInstances(STREAM_NAME)
+        except Exception as exc:
+            LOGGER.debug("no stale camera stream to clear: %s", exc)
+
+    def start(self, fps):
+        self.fps = clamp(as_float(fps, 1.0), 0.2, STREAM_MAX_FPS)
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop)
+        self._thread.daemon = True
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def _loop(self):
+        video = self.session.service("ALVideoDevice")
+        handle = None
+        try:
+            handle = video.subscribeCamera(STREAM_NAME, 0, STREAM_RESOLUTION, 11, int(STREAM_MAX_FPS))
+            if not handle:
+                raise RuntimeError("ALVideoDevice refused the stream subscription")
+            LOGGER.info("camera stream started (%.1f fps)", self.fps)
+            while self._running:
+                started = self._clock()
+                image = video.getImageRemote(handle)
+                if image:
+                    try:
+                        video.releaseImage(handle)
+                    except Exception:
+                        pass
+                    data = self.encode(image)
+                    if data:
+                        self.frames += 1
+                        main_ioloop().add_callback(CameraWebSocket.broadcast, data)
+                self._sleep(max(0.0, 1.0 / self.fps - (self._clock() - started)))
+        except Exception as exc:
+            self.last_error = "%s" % exc
+            LOGGER.warning("camera stream stopped: %s", exc)
+            main_ioloop().add_callback(CameraWebSocket.close_all, self.last_error)
+        finally:
+            self._running = False
+            if handle:
+                try:
+                    video.unsubscribe(handle)
+                except Exception:
+                    pass
+            LOGGER.info("camera stream ended after %d frames", self.frames)
+
+    @staticmethod
+    def encode(image):
+        if PILImage is None:
+            return None
+        width, height, raw = image[0], image[1], image[6]
+        img = PILImage.frombytes("RGB", (width, height), bytes(bytearray(raw)))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=STREAM_JPEG_QUALITY)
+        return buf.getvalue()
+
+
 ROBOT = Robot(NAOQI)
 AUDIO = AudioTap(NAOQI)
+CAMERA = CameraStream(NAOQI)
 
 
 # ---------------------------------------------------------------------------
@@ -1950,6 +2038,74 @@ class AudioWebSocket(tornado.websocket.WebSocketHandler):
                 pass
 
 
+class CameraWebSocket(tornado.websocket.WebSocketHandler):
+    """Camera stream (/ws/camera?fps=1): a JSON ``hello`` text frame, then one binary JPEG per frame (320x240)."""
+
+    clients = set()
+
+    def check_origin(self, origin):
+        return True
+
+    def open(self):
+        if options.api_key:
+            key = self.get_argument("api_key", "") or self.request.headers.get("X-API-Key", "")
+            if key != options.api_key:
+                self.send_json({"type": "error", "error": "unauthorized"})
+                self.close()
+                return
+        if PILImage is None:
+            self.send_json({"type": "error", "error": "PIL is not available on the robot; no JPEG frames"})
+            self.close()
+            return
+        CameraWebSocket.clients.add(self)
+        fps = clamp(as_float(self.get_argument("fps", "1"), 1.0), 0.2, STREAM_MAX_FPS)
+        LOGGER.info("camera WS client connected (%d total, %.1f fps)", len(CameraWebSocket.clients), fps)
+        self.send_json({"type": "hello", "version": BRIDGE_VERSION, "fps": fps, "width": 320, "height": 240})
+        _run_in_thread(CAMERA.start, fps)
+
+    def on_close(self):
+        CameraWebSocket.clients.discard(self)
+        LOGGER.info("camera WS client disconnected (%d total)", len(CameraWebSocket.clients))
+        if not CameraWebSocket.clients:
+            CAMERA.stop()
+
+    def on_message(self, message):
+        pass
+
+    def send_json(self, payload):
+        try:
+            self.write_message(json.dumps(payload))
+        except Exception:
+            pass
+
+    def _still_writing(self):
+        try:
+            return self.ws_connection.stream.writing()
+        except Exception:
+            return False
+
+    @classmethod
+    def broadcast(cls, data):
+        """IOLoop thread. A client still writing the previous frame skips this one: frames are disposable."""
+        for client in list(cls.clients):
+            if client._still_writing():
+                continue
+            try:
+                client.write_message(data, binary=True)
+            except Exception:
+                cls.clients.discard(client)
+
+    @classmethod
+    def close_all(cls, error):
+        for client in list(cls.clients):
+            client.send_json({"type": "error", "error": error})
+            cls.clients.discard(client)
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
 def _run_in_thread(fn, *args):
     """Fire-and-forget NAOqi work from the IOLoop thread (errors are logged, never raised)."""
     thread = threading.Thread(target=_safe, args=(fn,) + args)
@@ -2102,6 +2258,7 @@ def make_app():
             (r"/tablet/state", TabletStateHandler),
             (r"/ws/events", EventWebSocket),
             (r"/ws/audio", AudioWebSocket),
+            (r"/ws/camera", CameraWebSocket),
         ]
     )
 
@@ -2119,6 +2276,7 @@ class BridgeService(object):
 def _connect_naoqi_in_background():
     """Connect to NAOqi with retries; start the sensor poller once connected."""
     if NAOQI.connect_with_retry():
+        CAMERA.clear_stale()
         try:
             NAOQI._session.registerService(BRIDGE_SERVICE_NAME, BridgeService())
         except Exception as exc:  # e.g. a second bridge already registered it
@@ -2178,6 +2336,7 @@ def main():
     IOLOOP.start()
     LOGGER.info("Shutting down")
     POLLER.stop()
+    CAMERA.stop()
     if NAOQI.is_connected():
         _safe(AUDIO.unregister)
         _safe(ROBOT.unsubscribe_extractors)

@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 from loguru import logger
 
 ZONE_WORDS = {1: "close", 2: "a little way off", 3: "far away"}
+SEEN_WORDS = {"waving": "someone waving at you", "showing": "someone holding something up to show you"}
 RECENT_CHANGE_SECONDS = 60.0  # arrivals and departures this recent are mentioned
 ARRIVAL_ABSENCE_SECONDS = 20.0  # someone "arrives" only after nobody was in view this long; shorter gaps are
 # the detector losing a person who looked away (seen on the robot), not a new arrival
@@ -94,6 +95,7 @@ class WorldModel:
         self._clock = clock
         self.arrival_absence = arrival_absence
         self.people: List[Person] = []
+        self.seen: Dict[str, Tuple[float, float]] = {}  # camera judgements: what -> (probability, time)
         self.count: Optional[int] = None  # None until the first report
         self.updated_at: Optional[float] = None
         self.last_seen_someone_at: Optional[float] = None
@@ -160,6 +162,19 @@ class WorldModel:
         self.changes.append((now, "arrived"))
         return Arrival(count=count, nearest=self.people[0] if self.people else None, empty_for=empty_for)
 
+    SEEN_FRESH = 5.0  # seconds a camera judgement counts as "now"
+
+    def update_seen(self, probabilities: Dict[str, float], at: Optional[float] = None):
+        """Latest answers from the camera judgements (src/perception/vision.py)."""
+        at = self._clock() if at is None else at
+        for what, p in probabilities.items():
+            self.seen[what] = (p, at)
+
+    def sees(self, what: str, threshold: float = 0.7) -> bool:
+        """True if a recent camera judgement says ``what`` (e.g. "facing") with at least ``threshold``."""
+        p, at = self.seen.get(what, (0.0, -1e9))
+        return p >= threshold and self._clock() - at <= self.SEEN_FRESH
+
     def summary(self) -> str:
         """One sentence for the model's context; empty until the first report."""
         if self.count is None:
@@ -183,6 +198,9 @@ class WorldModel:
         if recent:
             t, kind = recent[-1]
             text += f" Someone {kind} {_ago(now - t)}."
+        camera = [words for what, words in SEEN_WORDS.items() if self.count and self.sees(what)]
+        if camera:
+            text += f" Your camera shows {' and '.join(camera)}."
         return text
 
     @staticmethod

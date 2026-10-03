@@ -37,6 +37,8 @@ from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
 from src.decide import DecisionClient  # noqa: E402
 from src.decide.addressee import MODEL as ADDRESSEE_MODEL  # noqa: E402
+from src.perception import FrameWatcher  # noqa: E402
+from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
 from src.session import SessionRecorder  # noqa: E402
 from src.world import WorldModel  # noqa: E402
 
@@ -90,6 +92,8 @@ class Settings:
     addressee_threshold: float
     router: bool
     router_threshold: float
+    vision_stream: bool
+    vision_fps: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -138,6 +142,8 @@ class Settings:
             addressee_threshold=float(os.getenv("ADDRESSEE_THRESHOLD") or "0.6"),
             router=env_bool("ROUTER", True),
             router_threshold=float(os.getenv("ROUTER_THRESHOLD") or "0.7"),
+            vision_stream=env_bool("VISION_STREAM", True),
+            vision_fps=float(os.getenv("VISION_FPS") or "1"),
         )
 
 
@@ -257,10 +263,25 @@ class PepperEvolution:
             )
         self.robot.on_event(self.ai_manager.handle_event)
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
+        self.vision: Optional[FrameWatcher] = None
+        if self.decider is not None and s.vision_stream and not s.fake_bridge:
+            self.vision = FrameWatcher(
+                config.camera_ws_url,
+                self.decider,
+                self.world,
+                self.ai_manager.handle_event,
+                fps=s.vision_fps,
+                api_key=s.bridge_api_key,
+                recorder=self.recorder,
+                photo_dir=s.photo_record_dir,
+            )
+            self.vision.start()  # streams only while someone is in view
         if self.decider is not None:
-            self.decider.keep_warm([ADDRESSEE_MODEL])  # the first call after an unload takes ~30 s
+            models = [ADDRESSEE_MODEL] + ([VISION_MODEL] if self.vision is not None else [])
+            self.decider.keep_warm(models)  # the first call after an unload takes ~30 s
             self.logger.info(
-                f"Decision models at {self.decider.base_url} (addressee gate: {s.addressee_gate}, router: {s.router})"
+                f"Decision models at {self.decider.base_url} (addressee gate: {s.addressee_gate}, router: {s.router}, "
+                f"camera judgements: {self.vision is not None})"
             )
         if self.recorder is not None:
             self.ai_manager.recorder = self.recorder
@@ -335,6 +356,8 @@ class PepperEvolution:
 
     async def shutdown(self):
         self.logger.info("Shutting down components...")
+        if getattr(self, "vision", None) is not None:
+            await self.vision.stop()
         await self._save_bridge_log()
         if self.decider is not None:
             await self.decider.close()

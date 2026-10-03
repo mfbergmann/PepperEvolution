@@ -1144,3 +1144,62 @@ def test_bridge_and_host_versions_match(bridge):
     from src import __version__
 
     assert bridge.BRIDGE_VERSION == __version__  # the robot cannot import src/, so the number lives twice
+
+
+class TestCameraStream:
+    """/ws/camera: one persistent subscription, JPEG frames, released when the last client leaves."""
+
+    def make(self, bridge, robot, monkeypatch, frames=3):
+        sent, scheduled = [], []
+
+        class Loop:
+            def add_callback(self, fn, *args):
+                scheduled.append(fn.__name__)
+                if fn.__name__ == "broadcast":
+                    sent.append(args[0])
+
+        monkeypatch.setattr(bridge, "main_ioloop", lambda: Loop())
+        video = robot.session.service("ALVideoDevice")
+        rgb = b"\x80" * (32 * 24 * 3)
+        video._respond = lambda method, args: (
+            "pepper_bridge_stream_0"
+            if method == "subscribeCamera"
+            else [32, 24, 3, 0, 0, 0, rgb] if method == "getImageRemote" else None
+        )
+        naps = []
+
+        def sleep(seconds):
+            naps.append(seconds)
+            if len(naps) >= frames:
+                stream.stop()
+
+        stream = bridge.CameraStream(robot.session, clock=lambda: 100.0, sleep=sleep)
+        return stream, video, sent, naps, scheduled
+
+    def test_frames_are_jpeg_at_the_asked_rate_and_the_camera_is_released(self, bridge, robot, monkeypatch):
+        stream, video, sent, naps, _ = self.make(bridge, robot, monkeypatch)
+        stream.fps = 2.0
+        stream._running = True
+        stream._loop()
+        assert len(sent) == 3 and all(f[:2] == b"\xff\xd8" for f in sent)  # JPEG
+        assert naps == [0.5, 0.5, 0.5]
+        names = [c[0] for c in video.calls]
+        assert names[0] == "subscribeCamera" and video.calls[0][1][0] == "pepper_bridge_stream"
+        assert names[-1] == "unsubscribe" and names.count("releaseImage") == 3
+
+    def test_fps_is_capped(self, bridge, robot):
+        stream = bridge.CameraStream(robot.session)
+        stream._running = True  # do not start a thread
+        stream.start(50)
+        assert stream.fps == bridge.STREAM_MAX_FPS
+
+    def test_stale_subscriptions_are_cleared(self, bridge, robot):
+        bridge.CameraStream(robot.session).clear_stale()
+        assert ("unsubscribeAllInstances", ("pepper_bridge_stream",)) in robot.session.service("ALVideoDevice").calls
+
+    def test_a_refused_subscription_closes_the_clients(self, bridge, robot, monkeypatch):
+        stream, video, sent, _, scheduled = self.make(bridge, robot, monkeypatch)
+        video._respond = lambda method, args: None  # subscribeCamera refused
+        stream._running = True
+        stream._loop()
+        assert sent == [] and "close_all" in scheduled and stream.last_error

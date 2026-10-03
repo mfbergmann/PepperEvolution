@@ -37,6 +37,10 @@ class ConnectionConfig:
     def audio_ws_url(self) -> str:
         return f"ws://{self.ip}:{self.bridge_port}/ws/audio"
 
+    @property
+    def camera_ws_url(self) -> str:
+        return f"ws://{self.ip}:{self.bridge_port}/ws/camera"
+
 
 class PepperConnection:
     """Manages the connection to Pepper via the bridge server."""
