@@ -10,10 +10,12 @@ import asyncio
 import random
 import time
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+from collections import deque
+from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Set
 
 from loguru import logger
 
+from ..decide import addressed, judge_addressee
 from ..pepper.robot import PepperRobot, Photo
 from .intents import Intent, IntentExecutor, match_intent
 from .models import ERROR_TEXT, SYSTEM_PROMPT, AIProvider, AIResponse
@@ -98,6 +100,10 @@ class AIManager:
         greet_max_distance: float = 3.0,
         greet_quiet_after_talk: float = 30.0,
         face_tracking: bool = False,
+        decider: Optional[Any] = None,
+        addressee_gate: bool = True,
+        addressee_threshold: float = 0.6,
+        addressee_looking_threshold: float = 0.4,
     ):
         self.robot = robot
         self.world = world  # WorldModel: its summary goes into the state block on every turn
@@ -116,6 +122,12 @@ class AIManager:
         # NAOqi face tracking (ALBasicAwareness) on while someone is in view, off while the room is empty:
         # left on, it parks the head looking down, where the camera cannot see the next person coming.
         self.face_tracking = face_tracking
+        # Situation judgements (src/decide): fast local decision models, consulted before the mind (issue #20)
+        self.decider = decider  # DecisionClient, or None
+        self.addressee_gate = addressee_gate  # open-mic speech is only answered when it seems meant for Pepper
+        self.addressee_threshold = addressee_threshold
+        self.addressee_looking_threshold = addressee_looking_threshold  # lower bar when someone looks at Pepper
+        self._heard: Deque[str] = deque(maxlen=6)  # recent final transcripts, answered or not (gate context)
         self._tracking_off = False  # we switched it off for an empty room
         self.history_turns = history_turns  # user turns kept in context
         self.image_history = image_history  # photos kept in context (older ones become text)
@@ -188,14 +200,25 @@ class AIManager:
         speak = self.speak_responses if speak is None else speak
         rec = self._new_record(user_input, source, heard_at)
         if source in ("user", "voice"):
-            self._last_talk_at = self._clock()
             intent = match_intent(user_input)
             if intent is not None:
-                # Control phrases never wait behind the model or an in-flight turn.
+                # Control phrases never wait behind the model, an in-flight turn or a judgement.
+                self._last_talk_at = self._clock()
+                self._heard.append(user_input)
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
                 return result
+            heard_before = list(self._heard)
+            self._heard.append(user_input)
+            if open_mic and self.decider is not None and self.addressee_gate:
+                if not await self._meant_for_pepper(heard_before, user_input, rec):
+                    # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
+                    result = self._bare_result("", source, client_id, "not_addressed")
+                    self._finish_record(rec, result)
+                    self._look_at_speaker()
+                    return result
+            self._last_talk_at = self._clock()
         submitted = self._clock()
         async with self._lock:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
@@ -212,6 +235,44 @@ class AIManager:
         self._finish_record(rec, result)
         self._after_turn(result, submitted)
         return result
+
+    # ------------------------------------------------------------------
+    # Situation judgements (src/decide)
+    # ------------------------------------------------------------------
+
+    async def _meant_for_pepper(self, heard_before: List[str], text: str, rec: Dict[str, Any]) -> bool:
+        started = self._clock()
+        p = await judge_addressee(self.decider, heard_before, text)
+        looking = bool(self.world is not None and any(person.looking for person in self.world.people))
+        verdict = addressed(p, self.addressee_threshold, looking, self.addressee_looking_threshold)
+        rec["addressee"] = {
+            "p": None if p is None else round(p, 3),
+            "someone_looking": looking,
+            "addressed": verdict,
+            "seconds": round(self._clock() - started, 3),
+        }
+        if not verdict:
+            self.logger.info(f"Not answering (p={p:.2f}, looking={looking}): {text!r}")
+        return verdict
+
+    def _look_at_speaker(self):
+        """After side talk Pepper does not answer, it still looks at the person, as anyone would."""
+        if self.face_tracking or self.world is None or not self.world.people:
+            return  # face tracking already does this
+        person = self.world.people[0]
+        if person.yaw is None or self.busy or self.robot.direct_commands_running or self.robot.halted:
+            return
+        pitch = person.pitch if person.pitch is not None else self.NEUTRAL_HEAD[1]
+
+        async def look():
+            try:
+                await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.debug(f"Could not look at the speaker: {exc}")
+
+        task = asyncio.create_task(look(), name="look-at-speaker")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     # ------------------------------------------------------------------
     # Session records (src/session.py)

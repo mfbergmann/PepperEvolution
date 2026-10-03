@@ -35,6 +35,8 @@ from src.ai import (  # noqa: E402
 from src.audio import VoiceInput, make_transcriber  # noqa: E402
 from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
+from src.decide import DecisionClient  # noqa: E402
+from src.decide.addressee import MODEL as ADDRESSEE_MODEL  # noqa: E402
 from src.session import SessionRecorder  # noqa: E402
 from src.world import WorldModel  # noqa: E402
 
@@ -83,6 +85,9 @@ class Settings:
     voice_record_dir: Optional[str]
     photo_record_dir: Optional[str]
     session_dir: Optional[str]
+    decide_url: Optional[str]
+    addressee_gate: bool
+    addressee_threshold: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -126,6 +131,9 @@ class Settings:
             voice_record_dir=os.getenv("VOICE_RECORD_DIR") or None,
             photo_record_dir=os.getenv("PHOTO_RECORD_DIR") or None,
             session_dir=os.getenv("SESSION_DIR") or None,
+            decide_url=os.getenv("DECIDE_URL") or None,
+            addressee_gate=env_bool("ADDRESSEE_GATE", True),
+            addressee_threshold=float(os.getenv("ADDRESSEE_THRESHOLD") or "0.6"),
         )
 
 
@@ -174,6 +182,10 @@ class PepperEvolution:
         self.api_server: Optional[APIServer] = None
         self.voice: Optional[VoiceInput] = None
         self.world = WorldModel()
+        # Situation judgements on the Creative AI Hub (src/decide); off without DECIDE_URL
+        self.decider: Optional[DecisionClient] = (
+            DecisionClient(self.settings.decide_url) if self.settings.decide_url else None
+        )
 
     async def initialize(self):
         s = self.settings
@@ -203,6 +215,9 @@ class PepperEvolution:
             greet_newcomers=s.greet_newcomers,
             greet_cooldown=s.greet_cooldown,
             face_tracking=s.awareness_on_connect is True,
+            decider=self.decider,
+            addressee_gate=s.addressee_gate,
+            addressee_threshold=s.addressee_threshold,
             led_signals=s.led_state_signals,
             backchannel_after=s.backchannel_after,
             world=self.world,
@@ -236,6 +251,9 @@ class PepperEvolution:
             )
         self.robot.on_event(self.ai_manager.handle_event)
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
+        if self.decider is not None:
+            self.decider.keep_warm([ADDRESSEE_MODEL])  # the first call after an unload takes ~30 s
+            self.logger.info(f"Decision models at {self.decider.base_url} (addressee gate: {s.addressee_gate})")
         if self.recorder is not None:
             self.ai_manager.recorder = self.recorder
             self.robot.on_event(self._record_robot_event)
@@ -310,6 +328,8 @@ class PepperEvolution:
     async def shutdown(self):
         self.logger.info("Shutting down components...")
         await self._save_bridge_log()
+        if self.decider is not None:
+            await self.decider.close()
         if self.voice:
             await self.voice.stop()
         if self.api_server:
