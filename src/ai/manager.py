@@ -16,8 +16,11 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Set
 from loguru import logger
 
 from ..decide import addressed, judge_addressee
+from ..decide.router import Routed
+from ..decide.router import choose as choose_action
+from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
-from .intents import Intent, IntentExecutor, match_intent
+from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from .models import ERROR_TEXT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
@@ -104,6 +107,8 @@ class AIManager:
         addressee_gate: bool = True,
         addressee_threshold: float = 0.6,
         addressee_looking_threshold: float = 0.4,
+        router: bool = True,
+        router_threshold: float = 0.7,
     ):
         self.robot = robot
         self.world = world  # WorldModel: its summary goes into the state block on every turn
@@ -128,6 +133,8 @@ class AIManager:
         self.addressee_threshold = addressee_threshold
         self.addressee_looking_threshold = addressee_looking_threshold  # lower bar when someone looks at Pepper
         self._heard: Deque[str] = deque(maxlen=6)  # recent final transcripts, answered or not (gate context)
+        self.router = router  # start Pepper's first action at once from a spoken command (issue #21)
+        self.router_threshold = router_threshold
         self._tracking_off = False  # we switched it off for an empty room
         self.history_turns = history_turns  # user turns kept in context
         self.image_history = image_history  # photos kept in context (older ones become text)
@@ -211,14 +218,33 @@ class AIManager:
                 return result
             heard_before = list(self._heard)
             self._heard.append(user_input)
-            if open_mic and self.decider is not None and self.addressee_gate:
-                if not await self._meant_for_pepper(heard_before, user_input, rec):
-                    # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
-                    result = self._bare_result("", source, client_id, "not_addressed")
-                    self._finish_record(rec, result)
-                    self._look_at_speaker()
-                    return result
+            gate_on = open_mic and self.decider is not None and self.addressee_gate
+            route_on = self.decider is not None and self.router
+            # Both judgements run at once: ~0.05 s and ~0.15 s on the Creative AI Hub
+            gate_task = asyncio.create_task(self._meant_for_pepper(heard_before, user_input, rec)) if gate_on else None
+            previous = heard_before[-1] if heard_before else ""
+            route_task = asyncio.create_task(self._choose_action(previous, user_input, rec)) if route_on else None
+            meant = await gate_task if gate_task is not None else True
+            routed = await route_task if route_task is not None else None
+            if not meant:
+                # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
+                result = self._bare_result("", source, client_id, "not_addressed")
+                self._finish_record(rec, result)
+                self._look_at_speaker()
+                return result
             self._last_talk_at = self._clock()
+            if routed is not None and routed.intent is not None:
+                intent = next(i for i in INTENTS if i.name == routed.intent)
+                result = await self._handle_intent(intent, user_input, speak, source, client_id)
+                rec["intent"] = intent.name
+                self._finish_record(rec, result)
+                return result
+            if routed is not None:
+                self._start_routed(routed, rec)
+                user_input = (
+                    f"[Already started: {routed.description}. It is under way, so do not do it again; say a few "
+                    f"words and do anything else that was asked.] {user_input}"
+                )
         submitted = self._clock()
         async with self._lock:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
@@ -232,6 +258,7 @@ class AIManager:
                 result = await self._run_turn(user_input, speak, source, client_id)
             finally:
                 self._rec = None
+                self.executor.clear_already_started()
         self._finish_record(rec, result)
         self._after_turn(result, submitted)
         return result
@@ -254,6 +281,51 @@ class AIManager:
         if not verdict:
             self.logger.info(f"Not answering (p={p:.2f}, looking={looking}): {text!r}")
         return verdict
+
+    async def _choose_action(self, previous: str, text: str, rec: Dict[str, Any]) -> Optional[Routed]:
+        """The first physical action to start at once, or ``None`` (Claude handles it all)."""
+        started = self._clock()
+        chosen = await choose_action(self.decider, previous, text)
+        rec["router"] = {"seconds": round(self._clock() - started, 3)}
+        if chosen is None:
+            return None
+        action, p = chosen
+        rec["router"].update(choice=action, p=round(p, 3), executed=False)
+        if p < self.router_threshold:
+            return None
+        routed = plan_action(action, p, text)
+        if routed is None:
+            return None  # e.g. a drive: Claude decides, with the bridge's guards
+        if routed.intent is None and (self.busy or self.robot.direct_commands_running or self.robot.halted):
+            return None  # a turn or a command owns the body; Claude will get to it in order
+        return routed
+
+    def _start_routed(self, routed: Routed, rec: Dict[str, Any]):
+        """Start a routed action now; the model's first call of the same tool waits for it instead of repeating."""
+        self.logger.info(f"Routed at once: {routed.description} (p={routed.probability:.2f})")
+        start = rec.get("heard_at") or rec["received_at"]
+        rec["router"].update(executed=True, action=routed.description, started_s=round(self._clock() - start, 3))
+        self.robot.direct_commands_running += 1  # reflexes stand back while it runs
+
+        async def run():
+            try:
+                if routed.tool == "move_head":
+                    await self.robot.move_head(routed.args["yaw"], routed.args["pitch"])
+                elif routed.tool == "turn":
+                    await self.robot.turn(routed.args["angle"])
+                elif routed.tool == "play_animation":
+                    await self.robot.play_animation(routed.args["name"])
+                    await self.robot.neutral_pose()
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(f"Routed action {routed.action} failed: {exc}")
+            finally:
+                self.robot.direct_commands_running -= 1
+
+        task = asyncio.create_task(run(), name=f"routed-{routed.action}")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        if routed.tool is not None:
+            self.executor.already_started(routed.tool, task)
 
     def _look_at_speaker(self):
         """After side talk Pepper does not answer, it still looks at the person, as anyone would."""

@@ -6,6 +6,7 @@ an Anthropic ``tool_result`` block - including an image block for photos, so
 the model can actually see what the camera saw.
 """
 
+import asyncio
 import difflib
 import json
 from dataclasses import dataclass, field
@@ -60,6 +61,15 @@ class ToolExecutor:
     def __init__(self, robot: PepperRobot):
         self.robot = robot
         self.logger = logger.bind(module="ToolExecutor")
+        self._already: Optional[Any] = None  # (tool name, task) started by the command router this turn
+
+    def already_started(self, tool_name: str, task: Any):
+        """The router started this action before the model was asked: its first call of ``tool_name`` this turn
+        waits for that action instead of doing it twice."""
+        self._already = (tool_name, task)
+
+    def clear_already_started(self):
+        self._already = None
 
     @staticmethod
     def halted_outcome() -> ToolOutcome:
@@ -72,6 +82,17 @@ class ToolExecutor:
     async def execute(self, tool_name: str, tool_input: Dict[str, Any]) -> ToolOutcome:
         """Execute a tool call; never raises."""
         self.logger.info(f"Tool call: {tool_name}({json.dumps(tool_input, ensure_ascii=False)})")
+        if self._already is not None and self._already[0] == tool_name:
+            task = self._already[1]
+            self._already = None
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=10)
+            except Exception:  # noqa: BLE001 - the routed action logs its own failure
+                pass
+            self.logger.info(f"Tool {tool_name} -> already done by the command router")
+            return ToolOutcome(
+                True, {"already_done": True, "note": "This was started when the person spoke; it is done."}
+            )
         try:
             outcome = await self._dispatch(tool_name, tool_input or {})
         except Exception as exc:  # noqa: BLE001 - report to the model instead of crashing the turn

@@ -88,6 +88,8 @@ class Settings:
     decide_url: Optional[str]
     addressee_gate: bool
     addressee_threshold: float
+    router: bool
+    router_threshold: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -134,6 +136,8 @@ class Settings:
             decide_url=os.getenv("DECIDE_URL") or None,
             addressee_gate=env_bool("ADDRESSEE_GATE", True),
             addressee_threshold=float(os.getenv("ADDRESSEE_THRESHOLD") or "0.6"),
+            router=env_bool("ROUTER", True),
+            router_threshold=float(os.getenv("ROUTER_THRESHOLD") or "0.7"),
         )
 
 
@@ -218,6 +222,8 @@ class PepperEvolution:
             decider=self.decider,
             addressee_gate=s.addressee_gate,
             addressee_threshold=s.addressee_threshold,
+            router=s.router,
+            router_threshold=s.router_threshold,
             led_signals=s.led_state_signals,
             backchannel_after=s.backchannel_after,
             world=self.world,
@@ -253,7 +259,9 @@ class PepperEvolution:
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
         if self.decider is not None:
             self.decider.keep_warm([ADDRESSEE_MODEL])  # the first call after an unload takes ~30 s
-            self.logger.info(f"Decision models at {self.decider.base_url} (addressee gate: {s.addressee_gate})")
+            self.logger.info(
+                f"Decision models at {self.decider.base_url} (addressee gate: {s.addressee_gate}, router: {s.router})"
+            )
         if self.recorder is not None:
             self.ai_manager.recorder = self.recorder
             self.robot.on_event(self._record_robot_event)

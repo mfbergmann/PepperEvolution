@@ -3,7 +3,6 @@ Tests for situation judgements (src/decide): the client fails open, the addresse
 """
 
 import json
-from unittest.mock import AsyncMock
 
 import httpx
 
@@ -117,9 +116,16 @@ class TestGateInTheManager:
 
     async def test_stop_and_typed_and_push_to_talk_skip_the_gate(self, mock_robot, mock_ai_provider):
         manager = await gated_manager(mock_robot, mock_ai_provider, 0.01)
-        manager.decider.ask = AsyncMock(side_effect=AssertionError("must not be judged"))
+        asked = []
+
+        async def ask(model, state, questions, images=None, timeout=None):
+            asked.append(next(iter(questions)))
+            return {"action": {"choice": "talk", "probabilities": {"talk": 0.9}}}
+
+        manager.decider.ask = ask
         stop = await manager.process_user_input("Pepper, stop", source="voice", open_mic=True)
-        assert stop["intent"] == "stop"
+        assert stop["intent"] == "stop" and asked == []  # the exact-phrase path comes before any judgement
         typed = await manager.process_user_input("what's the capital of France?", source="user")
         ptt = await manager.process_user_input("tell me a joke", source="voice", open_mic=False)
         assert typed["stop_reason"] != "not_addressed" and ptt["stop_reason"] != "not_addressed"
+        assert "to_pepper" not in asked  # only the router judged them, not the addressee gate
