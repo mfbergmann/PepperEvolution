@@ -81,6 +81,31 @@ Still to do on the robot: base moves (deferred until there is a bigger space; th
 - Claude Opus 5 at `effort=low` occasionally writes a tool call as XML text; the manager suppresses and retries once.
 - The reactive layer and voice design borrow from Autonomous OS (intent table, state signals, safety ledger); see `RESEARCH_2026-09.md`.
 
+## Plan for the robot session on Tuesday 2026-10-06
+
+Theme: **System one in the loop.** Fast local decision models (#20) judge the situation, the bridge acts at once, Claude does the words. Everything is recorded and reviewed (#16). Best in the open room, ideally with two or three people.
+
+**Build before Tuesday (offline, tested on the desktop NAOqi and with recorded data):**
+
+| # | What | Issue | Done when |
+|---|------|-------|-----------|
+| A | Session records: one folder per host run (`SESSION_DIR`), a per-turn JSON-lines record (end of speech, transcript ready, router and addressee decisions, first word, end of reply, tools, interruptions, people state), and `scripts/review_session.py` printing a timed transcript with flags | #16 | replaying the 2026-10-01 logs through the review script shows the visitor problem at a glance |
+| B | Addressee gate: Nimble judges every voice turn ("addressed to Pepper?"); above the threshold Pepper answers, below it Pepper only looks at the speaker; gaze from the people detector as extra evidence; `ADDRESSEE_GATE`, threshold in `.env` | #19, #20 | the 2026-10-01 utterances replayed through the gate give the offline 21/22 |
+| C | Command router: Nimble picks the first physical action; head moves, gestures, turns in place, stop and be quiet start at once (p ≥ 0.7), amounts from a small parser, Claude told what already started; drives still via Claude | #21 | the 40-utterance test passes through the real code path; on the desktop NAOqi a routed turn starts within 0.3 s of the transcript |
+| D | Frame stream: the bridge keeps one camera subscription and streams small frames (320×240 JPEG) over a WebSocket while someone is in view; the host sends about one a second to Clef Flash (waving? holding something up? facing Pepper?) into the world model, with events on threshold crossings; logged | #11, #20 | end to end on the desktop NAOqi (black frames) with timings; Clef path timed on saved photos |
+| E | Bump to 0.5.0 if A-D land (bridge changes in D), redeploy | | `deploy.py` shows 0.5.0 |
+
+**Tests on Tuesday (in this order; each recorded and reviewed the same day):**
+1. Start-up: Pepper boots, bridge up by itself, start the host with a session folder. 2 min.
+2. "Come to me" from about 30 degrees off to one side, 2 m away (the direction fix from 2026-10-01): Pepper should turn towards you, then drive. 3 tries.
+3. Router: ten direct commands, half of them paraphrased ("glance right", "face the other way", "give us a wave", "nod if you hear me", "turn left ninety degrees"). Measure end of speech to movement start (target under 0.5 s, against about 3.5 s before), wrong actions (target 0), and that Claude's words match the action.
+4. Addressee gate: two people talk to each other near Pepper for two minutes (about Pepper too), then one turns to Pepper and asks something. Count: side talk answered (target 0 or 1), direct questions missed (target 0).
+5. Frame stream: at 1 frame per second, then 2, measure frame to judgement time, Wi-Fi and robot CPU. Then wave at Pepper, hold up an object, and turn away: time from the gesture to Pepper's reaction (target about 1 s).
+6. A free conversation with whoever is around, for the records.
+7. Review: run the review script, file what it shows, update the wiki Test-sessions page.
+
+**Next milestones after Tuesday:** finish Milestone 4 (vision pass into the world model, #11; the detail tool, #12), get the spoken loop under 2 s and barge-in (#3, #4), verify-after-act and `look_at` (#7, #6), then follow me (#18) and memory of people (Milestone 5, opt-in only).
+
 ## Session records
 
 Every robot session is recorded in full and reviewed afterwards; real interactions (the 2026-10-01 visitors, for example) are the main source of fixes. How, and the privacy rules, are in `CLAUDE.md` under "Session records". Records so far (local, git-ignored):
