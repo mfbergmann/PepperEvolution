@@ -109,6 +109,9 @@ PepperEvolution/
 
 ## Configuration
 
+Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains the cloud-only setup (an Anthropic key and a laptop) and the lab setup (plus a GPU machine for fast local judgements), and what each piece adds.
+
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PEPPER_IP` | `10.0.100.100` | Robot IP |
@@ -123,6 +126,8 @@ PepperEvolution/
 | `SPEAK_RESPONSES` / `TABLET_SUBTITLES` / `REACT_TO_TOUCH` | `true` | Behaviour switches |
 | `GREET_NEWCOMERS` / `GREET_COOLDOWN` | `true` / `90` | Greet someone who walks up (within 3 m looking at Pepper, or 1.8 m) after nobody was in view for 20 s; seconds between greetings |
 | `LED_STATE_SIGNALS` / `BACKCHANNEL_AFTER` | `true` / `2.0` | Eye colour state signals; seconds before a spoken filler |
+| `DECIDE_URL` | | Fast local judgements on a GPU machine (Ollama with `nimble`, `clef-flash`): who is Pepper being spoken to, which action to start at once, what the camera shows. Empty = off; see [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) |
+| `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`) |
 | `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |
 | `VOICE_INPUT` | `false` | Also stream the robot's microphone (hold-to-talk in the UI works without it) |

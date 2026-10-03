@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <!-- Installed by deploy.py (install-autostart option): ALServiceManager starts the service at boot. -->
-<package version="0.4.0" uuid="pepper-bridge-autostart">
+<package version="0.5.0" uuid="pepper-bridge-autostart">
     <names>
         <name lang="en_US">Pepper Bridge autostart</name>
     </names>

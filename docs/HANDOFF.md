@@ -85,7 +85,11 @@ Still to do on the robot: base moves (deferred until there is a bigger space; th
 
 Theme: **System one in the loop.** Fast local decision models (#20) judge the situation, the bridge acts at once, Claude does the words. Everything is recorded and reviewed (#16). Best in the open room, ideally with two or three people.
 
-**Build before Tuesday (offline, tested on the desktop NAOqi and with recorded data):**
+**Status 2026-10-03: A-E built** (0.5.0, commits 7e06db4 to the 0.5.0 release; details in CHANGELOG.md). Offline results: gate 21/22 at 53 ms and router 19/20 startable commands with no false starts at 123 ms, both replayed through the production code against Alien3; the camera stream end to end on the desktop NAOqi at 1 and 3 fps with no dropped frames, about 145 ms per judgement; review script tested on a synthetic session. Not testable offline: waving (no saved photo has it), the robot's CPU and Wi-Fi under the stream.
+
+**On Tuesday before the tests:** `python robot_bridge/deploy.py` (0.5.0, adds `/ws/camera`), then `python robot_bridge/deploy.py --install-autostart` once more (the package version moved to 0.5.0). Check Alien3's private Ollama answers: `curl http://alien3:11435/api/version`. Start the host as usual; `.env` has `SESSION_DIR`, `DECIDE_URL` and the new switches on. Review afterwards with `python scripts/review_session.py results/sessions/<folder> --out review.md`.
+
+**Built before Tuesday (offline, tested on the desktop NAOqi and with recorded data):**
 
 | # | What | Issue | Done when |
 |---|------|-------|-----------|
@@ -103,6 +107,7 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 5. Frame stream: at 1 frame per second, then 2, measure frame to judgement time, Wi-Fi and robot CPU. Then wave at Pepper, hold up an object, and turn away: time from the gesture to Pepper's reaction (target about 1 s).
 6. A free conversation with whoever is around, for the records.
 7. Review: run the review script, file what it shows, update the wiki Test-sessions page.
+8. Also measure: the robot's CPU (`top` over ssh) and the Wi-Fi while the camera stream runs at 1 and 2 frames a second; and one deliberate minute with Alien3 unreachable (stop the private Ollama: `ssh mberg@alien3 'kill $(cat ~/.ollama-private/serve.pid)'`, then `~/.ollama-private/start.sh`) to confirm Pepper falls back to answering everything with no errors.
 
 **Next milestones after Tuesday:** finish Milestone 4 (vision pass into the world model, #11; the detail tool, #12), get the spoken loop under 2 s and barge-in (#3, #4), verify-after-act and `look_at` (#7, #6), then follow me (#18) and memory of people (Milestone 5, opt-in only).
 

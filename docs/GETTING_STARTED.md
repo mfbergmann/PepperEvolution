@@ -1,5 +1,7 @@
 # Getting Started with PepperEvolution
 
+
+Which setup? [SETUP_PROFILES.md](SETUP_PROFILES.md) compares running with only cloud models (Claude plus a laptop) and the lab setup with a local GPU machine for fast judgements.
 ## Prerequisites
 
 - SoftBank Pepper robot with NAOqi 2.5 on the network (default `10.0.100.100`, ssh `nao`/`nao`)
@@ -47,7 +49,7 @@ The fuller, ordered checklist for the first session (what to verify endpoint by 
    ```bash
    python robot_bridge/deploy.py
    ```
-   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=0.4.0`. Right after a robot boot
+   Expected last lines: `Bridge is healthy: robot=<name> naoqi=2.5.x version=0.5.0`. Right after a robot boot
    this can take up to about two minutes while NAOqi finishes starting (deploy prints `waiting for NAOqi` meanwhile).
    If it fails, `python robot_bridge/deploy.py --logs` shows `bridge.log` from the robot.
    Once it works, `python robot_bridge/deploy.py --install-autostart` makes NAOqi start the bridge at every boot,
