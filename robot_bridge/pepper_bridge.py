@@ -192,7 +192,11 @@ HAND_TOUCH_KEY = "Device/SubDeviceList/RHand/Touch/Back/Sensor/Value"
 # Reaching the touch sensor on the back of the hand is awkward in a real handshake (2026-10-08), so a hand that is
 # gripped and moved also counts: any of these joints pushed this far from where the held arm settled.
 HANDSHAKE_JOINTS = ["RShoulderPitch", "RShoulderRoll", "RElbowRoll", "RElbowYaw", "RWristYaw"]
-HANDSHAKE_MOVED = 0.035  # radians (2 degrees); real handshakes moved the arm 3.0-3.6 degrees (2026-10-08)
+HANDSHAKE_MOVED = 0.07  # radians (4 degrees): NAOqi's arm collision protection (always on) nudged the held arm
+# 2.3 degrees when a hand reached for it without touching (2026-10-08), as much as a firm handshake moved it; so
+# movement alone only counts for a real shake, and the motor current is the main signal:
+HANDSHAKE_CURRENT_DROP = 0.5  # amperes below the settled holding current (about 1.3 A held out; 0.26 A when a
+# firm handshake took the arm's weight)
 # After the arm reaches the pose it keeps settling (sagging under gravity) by about 3 degrees for up to a second,
 # as much as a real handshake moved it (2026-10-08: two false starts 0.1-0.3 s after the hand went out). So wait for
 # a still arm first, and let the reference follow slow drift: only a quick push away from it counts.
@@ -1168,10 +1172,14 @@ class Robot(object):
         moved = clamp(as_float(moved, HANDSHAKE_MOVED), 0.01, 0.5)
         started = self.clock()
         baseline = self._settled_arm(motion)
+        holding = self._shoulder_current(memory)  # the motor holding the arm up, untouched
         taken = False
         how = None
         largest = 0.0
         current_peak = 0.0
+        current_low = holding if holding is not None else 0.0
+        below = 0
+        trace = []  # (seconds, largest joint move in degrees, shoulder current) for tuning
         while not self.halted and self.clock() - started < hold:
             try:
                 if as_float(memory.getData(HAND_TOUCH_KEY), 0.0) > 0.5:
@@ -1179,16 +1187,24 @@ class Robot(object):
                     break
             except Exception:
                 break
-            try:  # recorded for tuning only; never ends the wait
-                current_peak = max(current_peak, abs(as_float(memory.getData(SHOULDER_CURRENT_KEY), 0.0)))
-            except Exception:
-                pass
+            current = self._shoulder_current(memory)
+            if current is not None:
+                current_peak = max(current_peak, current)
+                current_low = min(current_low, current)
+                # someone holding the hand takes the arm's weight: the holding current drops
+                below = below + 1 if holding is not None and current < holding - HANDSHAKE_CURRENT_DROP else 0
+                if below >= 2:
+                    taken, how = True, "weight taken"
+                    break
             angles = self._arm_angles(motion)
+            deviation = 0.0
             if baseline and angles:
                 deviation = max(abs(a - b) for a, b in zip(angles, baseline))
                 largest = max(largest, deviation)
+                if len(trace) < 200:
+                    trace.append([round(self.clock() - started, 1), round(math.degrees(deviation), 2), current])
                 if deviation >= moved:
-                    taken, how = True, "moved"
+                    taken, how = True, "shaken"
                     break
                 # follow slow drift (the arm sagging), so only a quick push counts
                 baseline = [b + HANDSHAKE_DRIFT * (a - b) for a, b in zip(angles, baseline)]
@@ -1210,7 +1226,16 @@ class Robot(object):
             "waited": round(waited, 2),
             "largest_move_deg": round(math.degrees(largest), 1),
             "shoulder_current_peak": round(current_peak, 3),
+            "shoulder_current_low": round(current_low, 3),
+            "shoulder_current_holding": None if holding is None else round(holding, 3),
+            "trace": trace,
         }
+
+    def _shoulder_current(self, memory):
+        try:
+            return round(abs(as_float(memory.getData(SHOULDER_CURRENT_KEY), 0.0)), 3)
+        except Exception:
+            return None
 
     def _settled_arm(self, motion):
         """The arm's angles once it has stopped moving (or after HANDSHAKE_SETTLE_MAX), as the reference."""

@@ -1235,14 +1235,31 @@ class TestOfferHand:
         drift = [0.35] * 5 + [0.35 + 0.0005 * i for i in range(100)]  # 3 degrees over 10 s, slowly
         assert self.run_with_arm(bridge, robot, drift, hold=8)["taken"] is False
 
-    def test_a_slow_firm_grip_still_counts(self, bridge, robot):
-        grip = [0.35] * 8 + [0.35] * 10 + [0.35 + 0.006 * i for i in range(12)]  # 4 degrees over 1.2 s
-        assert self.run_with_arm(bridge, robot, grip)["taken"] is True
+    def test_a_reach_nudge_is_not_a_handshake(self, bridge, robot):
+        # the arm collision protection moved the untouched arm 2.3 degrees as a hand came near (2026-10-08)
+        nudge = [0.35] * 8 + [0.35] * 10 + [0.35 + 0.004 * i for i in range(10)] + [0.39] * 100
+        assert self.run_with_arm(bridge, robot, nudge, hold=6)["taken"] is False
+
+    def test_a_hand_taking_the_arms_weight_counts(self, bridge, robot):
+        mem = robot.session._session.memory
+        currents = iter([1.35] * 15 + [0.3] * 10)
+        mem_get = robot.session._session.service("ALMemory")._respond
+
+        def respond(method, args):
+            if method == "getData" and args[0] == bridge.SHOULDER_CURRENT_KEY:
+                return next(currents, 0.3)
+            return mem_get(method, args)
+
+        robot.session._session.service("ALMemory")._respond = respond
+        mem[bridge.HAND_TOUCH_KEY] = 0.0
+        result = self.run_with_arm(bridge, robot, [0.35] * 100)
+        assert result["taken"] is True and result["how"] == "weight taken"
+        assert result["shoulder_current_holding"] == 1.35 and result["trace"]
 
     def test_a_gripped_and_moved_hand_counts(self, bridge, robot):
-        shake = [0.35] * 8 + [0.35] * 20 + [0.43, 0.30, 0.43]  # settled, then a person shakes it
+        shake = [0.35] * 8 + [0.35] * 20 + [0.45, 0.28, 0.45]  # settled, then a person shakes it
         result = self.run_with_arm(bridge, robot, shake)
-        assert result["taken"] is True and result["how"] == "moved" and result["largest_move_deg"] >= 3.0
+        assert result["taken"] is True and result["how"] == "shaken" and result["largest_move_deg"] >= 4.0
 
     def test_hand_held_out_then_shaken_when_taken(self, bridge, robot):
         mem = robot.session._session.memory
