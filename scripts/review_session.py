@@ -50,7 +50,8 @@ def median(values: List[float]) -> str:
 def turn_lines(turn: Dict[str, Any]) -> List[str]:
     out = []
     src = turn.get("source", "?")
-    lines = [f"{clock(turn.get('at', ''))}  [{src}] {turn.get('text', '')}"]
+    began = turn.get("heard") or turn.get("received") or turn.get("at", "")
+    lines = [f"{clock(began)}  [{src}] {turn.get('text', '')}"]
     gate = turn.get("addressee")
     if gate:
         verdict = "answered" if gate.get("addressed") else "NOT answered (side talk)"
@@ -100,7 +101,9 @@ def event_line(event: Dict[str, Any]) -> str:
 def review(folder: str) -> str:
     turns = load(os.path.join(folder, "turns.jsonl"))
     events = load(os.path.join(folder, "events.jsonl"))
-    timeline = [(t.get("at", ""), "turn", t) for t in turns] + [(e.get("at", ""), "event", e) for e in events]
+    # a turn is written when it ends; place it where it began (heard, or received when typed)
+    timeline = [(t.get("heard") or t.get("received") or t.get("at", ""), "turn", t) for t in turns]
+    timeline += [(e.get("at", ""), "event", e) for e in events]
     timeline.sort(key=lambda item: item[0])
     out = [f"# Session {os.path.basename(os.path.normpath(folder))}", ""]
     last_people = None

@@ -704,6 +704,11 @@ class AIManager:
     # ------------------------------------------------------------------
 
     async def _speak_sentence(self, sentence: str):
+        if getattr(self.robot, "holding_pose", 0):
+            # A held pose (the handshake): body language and gesture tags would move the arm out of it, as on the
+            # robot 2026-10-08 ("My hand is out" waved the hand away from where it was held).
+            await self.robot.speak(strip_animation_tags(sentence), animated=False)
+            return
         await self.robot.speak(sentence, animated=True)
 
     async def _backchannel(self, speaker: SpeechStreamer):

@@ -159,6 +159,7 @@ class PepperRobot:
         self.last_photo: Optional[Photo] = None
         self.last_head_yaw: Optional[float] = None  # last commanded head yaw (any caller), degrees
         self.last_head_move_at: Optional[float] = None  # time.monotonic() of the last head move
+        self.holding_pose = 0  # poses being held (a handshake): speech must not gesture over them
         self.halted = False  # emergency stop pressed; cleared by wake_up()/prepare()
         self.direct_commands_running = 0  # UI/API commands in flight (event reactions wait)
         self.photo_resolution = 2  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
@@ -305,7 +306,11 @@ class PepperRobot:
 
         15 s by default: 8 s was too short on the robot (2026-10-08).
         """
-        return await self.bridge.offer_hand(hold)
+        self.holding_pose += 1  # Pepper's animated speech would move the arm out of the handshake
+        try:
+            return await self.bridge.offer_hand(hold)
+        finally:
+            self.holding_pose -= 1
 
     async def neutral_pose(self) -> Dict[str, Any]:
         """Arms and legs back to the standing pose after gestures (the head is left alone)."""

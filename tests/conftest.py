@@ -130,6 +130,7 @@ def mock_robot(mock_connection):
     robot.last_head_yaw = None
     robot.last_head_move_at = None
     robot.photo_record_dir = None
+    robot.holding_pose = 0
     robot.halted = False
     robot.direct_commands_running = 0
     robot.photo_resolution = 2

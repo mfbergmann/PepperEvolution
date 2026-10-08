@@ -197,3 +197,27 @@ class TestOnTheRobotFixes:
         manager._last_answered_at = manager._clock()  # Pepper just answered someone
         second = await manager.process_user_input("God, if you could hear me", source="voice", open_mic=True)
         assert second["stop_reason"] != "not_addressed"
+
+
+class TestHandshakeSpeech:
+    async def test_speech_during_a_handshake_does_not_gesture(self, mock_robot, mock_ai_provider):
+        mock_ai_provider.chat.side_effect = words_only("^start(animations/Stand/Gestures/Hey_1) My hand is out.")
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=False)
+        mock_robot.holding_pose = 1
+        await manager.process_user_input("Shake my hand", source="user")
+        call = mock_robot.connection.bridge.speak.await_args
+        assert call.args[0] == "My hand is out." and call.kwargs["animated"] is False
+        mock_robot.holding_pose = 0
+        await manager.process_user_input("Hello", source="user")
+        assert mock_robot.connection.bridge.speak.await_args.kwargs["animated"] is True
+
+    async def test_offer_hand_marks_the_pose_as_held(self, mock_robot):
+        seen = []
+
+        async def offer(hold):
+            seen.append(mock_robot.holding_pose)
+            return {"taken": True, "waited": 2.0}
+
+        mock_robot.connection.bridge.offer_hand = offer
+        await mock_robot.offer_hand()
+        assert seen == [1] and mock_robot.holding_pose == 0
