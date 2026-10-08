@@ -189,6 +189,10 @@ OFFER_HAND_JOINTS = (
 OFFER_HAND_SPEED = 0.25
 OFFER_HAND_MAX_HOLD = 15.0  # seconds
 HAND_TOUCH_KEY = "Device/SubDeviceList/RHand/Touch/Back/Sensor/Value"
+# Reaching the touch sensor on the back of the hand is awkward in a real handshake (2026-10-08), so a hand that is
+# gripped and moved also counts: any of these joints pushed this far from where the held arm settled.
+HANDSHAKE_JOINTS = ["RShoulderPitch", "RShoulderRoll", "RElbowRoll", "RElbowYaw", "RWristYaw"]
+HANDSHAKE_MOVED = 0.05  # radians (about 3 degrees); the result reports the largest movement seen, for tuning
 BRIDGE_SERVICE_NAME = "PepperBridge"
 # /ws/camera: small frames for the host's situation judgements (a local vision model about once a second).
 # One subscription with a fixed name, so one left behind by a crash can be cleared (NAOqi caps subscribers).
@@ -1144,7 +1148,7 @@ class Robot(object):
         motion.angleInterpolationWithSpeed(names, [a for _, a in NEUTRAL_JOINTS], NEUTRAL_SPEED)
         return {"joints": len(names)}
 
-    def offer_hand(self, hold=8.0):
+    def offer_hand(self, hold=8.0, moved=HANDSHAKE_MOVED):
         """Hold the right hand out for a handshake; when someone takes it, shake gently, then arms back down.
 
         Returns whether the hand was taken and how long Pepper waited. An emergency stop ends the wait at once.
@@ -1155,15 +1159,27 @@ class Robot(object):
         names = [n for n, _ in OFFER_HAND_JOINTS]
         motion.angleInterpolationWithSpeed(names, [a for _, a in OFFER_HAND_JOINTS], OFFER_HAND_SPEED)
         memory = self.svc("ALMemory")
+        moved = clamp(as_float(moved, HANDSHAKE_MOVED), 0.01, 0.5)
+        self.sleep(0.3)  # let the arm settle; its resting error is the baseline, not a handshake
+        baseline = self._arm_angles(motion)
         started = self.clock()
         taken = False
+        how = None
+        largest = 0.0
         while not self.halted and self.clock() - started < hold:
             try:
                 if as_float(memory.getData(HAND_TOUCH_KEY), 0.0) > 0.5:
-                    taken = True
+                    taken, how = True, "touch"
                     break
             except Exception:
                 break
+            current = self._arm_angles(motion)
+            if baseline and current:
+                deviation = max(abs(c - b) for c, b in zip(current, baseline))
+                largest = max(largest, deviation)
+                if deviation >= moved:
+                    taken, how = True, "moved"
+                    break
             self.sleep(0.1)
         waited = self.clock() - started
         if taken and not self.halted:
@@ -1176,7 +1192,18 @@ class Robot(object):
             self.sleep(0.4)
         if not self.halted:
             self.neutral_pose()
-        return {"taken": taken, "waited": round(waited, 2)}
+        return {
+            "taken": taken,
+            "how": how,
+            "waited": round(waited, 2),
+            "largest_move_deg": round(math.degrees(largest), 1),
+        }
+
+    def _arm_angles(self, motion):
+        try:
+            return [float(a) for a in motion.getAngles(HANDSHAKE_JOINTS, True)]
+        except Exception:
+            return None
 
     def list_animations(self):
         behaviors = self.svc("ALBehaviorManager").getInstalledBehaviors()
@@ -1683,7 +1710,7 @@ class MoveHeadHandler(JSONHandler):
 class OfferHandHandler(JSONHandler):
     @async_handler
     def post(self):
-        return self.run_in_thread(ROBOT.offer_hand, self.arg("hold", 8.0))
+        return self.run_in_thread(ROBOT.offer_hand, self.arg("hold", 8.0), self.arg("moved", HANDSHAKE_MOVED))
 
 
 class NeutralPoseHandler(JSONHandler):

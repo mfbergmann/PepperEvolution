@@ -1206,6 +1206,20 @@ class TestCameraStream:
 
 
 class TestOfferHand:
+    def test_a_gripped_and_moved_hand_counts(self, bridge, robot):
+        mem = robot.session._session.memory
+        mem[bridge.HAND_TOUCH_KEY] = 0.0  # nobody reaches the sensor on the back of the hand
+        motion = robot.svc("ALMotion")
+        readings = iter([[0.35, -0.12, 0.3, 1.27, 0.0]] * 4 + [[0.43, -0.12, 0.3, 1.27, 0.0]] * 10)
+        original = motion._respond
+        motion._respond = lambda m, a: (
+            next(readings) if m == "getAngles" and "RShoulderPitch" in a[0] else original(m, a)
+        )
+        robot.sleep = lambda s: None
+        result = robot.offer_hand(8)
+        assert result["taken"] is True and result["how"] == "moved"
+        assert result["largest_move_deg"] == 4.6  # 0.08 rad: the shoulder pushed up by the handshake
+
     def test_hand_held_out_then_shaken_when_taken(self, bridge, robot):
         mem = robot.session._session.memory
         mem[bridge.HAND_TOUCH_KEY] = 0.0

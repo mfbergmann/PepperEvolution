@@ -339,8 +339,8 @@ class AIManager:
                     shake = await self.robot.offer_hand()
                     taken = bool(shake.get("taken")) if isinstance(shake, dict) else None
                     waited = shake.get("waited") if isinstance(shake, dict) else None
-                    rec["router"]["result"] = {"taken": taken, "waited": waited}
-                    self._event("handshake", taken=taken, waited=waited)
+                    rec["router"]["result"] = shake if isinstance(shake, dict) else {"taken": taken}
+                    self._event("handshake", **(shake if isinstance(shake, dict) else {"taken": taken}))
                     self.logger.info(f"Handshake: taken={taken}, waited {waited} s")
                 elif routed.tool == "play_animation":
                     await self.robot.play_animation(routed.args["name"])
