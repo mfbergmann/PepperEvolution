@@ -4,10 +4,22 @@ Written 2026-09-13, updated 2026-09-22 after the first session with the physical
 
 ## State of the code
 
-- `main` is pushed with CI green on Python 3.12 and 3.13. Milestones: `0e9ff49` (0.2.0: reactive layer + voice input), `070bd5d` (bridge tested against NAOqi's desktop build), and the 2026-09-22 commit with the fixes from the first session on the robot. The robot runs that bridge now.
-- Host: FastAPI app on one port (REST, `/ws`, web UI with hold-to-talk), Claude Opus 5 with streaming tool calls, replies spoken sentence by sentence, local intents ("stop" cancels the model call and remaining tools in milliseconds), eye-LED state signals, backchannel fillers, optional voice input (`src/audio/`, sherpa-onnx or faster-whisper).
-- Bridge (`robot_bridge/pepper_bridge.py`, Python 2.7 + Tornado 3.1.1, runs on the robot): every NAOqi call on a worker thread, `/ws/events`, `/ws/audio` microphone stream muted while the robot speaks, awareness options, sonar guard, emergency stop that rests the robot and blocks motion until wake-up.
-- 415 tests (`pytest tests/`), plus the bridge suite under the robot's interpreter, plus opt-in tests against a real NAOqi.
+*Updated 2026-10-08.* `main` is at 0.5.1 (tag `v0.5.1`) with CI green on Python 3.12 and 3.13, and the robot runs the 0.5.1 bridge, which starts by itself at boot.
+
+- **Host** (`src/`, Python 3.12+):
+  - FastAPI on one port (REST, `/ws`, web UI with hold-to-talk).
+  - Claude Sonnet 5.5 at medium effort with streaming tool calls, replies spoken sentence by sentence with gestures and tablet captions.
+  - Local intents ("stop" cancels a turn in milliseconds), eye-LED state signals, fillers.
+  - Voice input through the robot's microphone with NVIDIA's Nemotron streaming recogniser (`src/audio/`).
+  - The world model (`src/world/`): who is in view, arrivals, greetings, the "Around you" line.
+  - Local decision models on a GPU machine (`src/decide/`: addressee gate, command router; `src/perception/`: camera judgements).
+  - Session records (`src/session.py`, `scripts/review_session.py`).
+- **Bridge** (`robot_bridge/pepper_bridge.py`, Python 2.7 + Tornado 3.1.1, on the robot):
+  - Every NAOqi call runs on a worker thread.
+  - Streams: `/ws/events`, `/ws/audio` (muted while Pepper speaks), `/ws/camera` (small frames while someone is in view).
+  - Poses: head moves that wait for a still head, photos with the measured head angle, `/posture/neutral`, `/pose/offer_hand`.
+  - Safety: sonar guard, emergency stop that rests and blocks motion; autostart package.
+- **Tests:** about 590 (`pytest tests/`), plus the bridge suite under the robot's interpreter and opt-in tests against a real or virtual NAOqi.
 
 ## What has been verified, and where
 
@@ -18,9 +30,10 @@ Written 2026-09-13, updated 2026-09-22 after the first session with the physical
 | Microphone stream (`/ws/audio`) | yes (fake pumps frames) | no (`ALAudioDevice` absent on the desktop build; the error path is clean) | yes, 85 ms frames, muted while speaking |
 | Sonar / touch / bumpers / battery values, camera content, tablet, installed animations | fake values only | no hardware layer (values are 0, no packages) | sonar, battery, camera, tablet, 396 animations yes; touch and bumpers not yet |
 | Host stack with the real model (tool calls, streaming speech, "stop" mid-turn, LED sequence, fillers) | yes (`scripts/smoke_host.py --fake`) | yes (`scripts/smoke_host.py --bridge http://127.0.0.1:8899`) | yes (`--no-move`) |
-| Voice input with a real recogniser (sherpa-onnx / faster-whisper) | fake transcriber only | no | **no** |
+| Voice input with a real recogniser (sherpa-onnx / faster-whisper) | fake transcriber only | no | yes, Nemotron streaming through the robot's microphone since 2026-09-22 |
+| Camera stream, local judgements, router, addressee gate, session records | fakes and recorded data | camera stream end to end (black frames) | yes, 2026-10-08 |
 
-**First contact with the physical robot happened on 2026-09-22** (see "First session with the robot" below). Everything except base moves, touch events and voice recognition has now been checked on Pepper itself.
+**First contact with the physical robot happened on 2026-09-22** (see "First session with the robot" below). Since then every layer has been checked on Pepper itself, including base moves, voice and touch; the sessions are summarised below and on the wiki's Test-sessions page.
 
 ## First session with the robot (2026-09-22)
 
@@ -81,7 +94,7 @@ Still to do on the robot: base moves (deferred until there is a bigger space; th
 - Claude Opus 5 at `effort=low` occasionally writes a tool call as XML text; the manager suppresses and retries once.
 - The reactive layer and voice design borrow from Autonomous OS (intent table, state signals, safety ledger); see `RESEARCH_2026-09.md`.
 
-## Plan for the robot session on Tuesday 2026-10-06
+## Plan for the robot session on Tuesday 2026-10-06 (held on 2026-10-08; results in the next section)
 
 Theme: **System one in the loop.** Fast local decision models (#20) judge the situation, the bridge acts at once, Claude does the words. Everything is recorded and reviewed (#16). Best in the open room, ideally with two or three people.
 
@@ -145,7 +158,7 @@ Every robot session is recorded in full and reviewed afterwards; real interactio
 | 2026-10-01 | `results/logs/{photos,photos2,photos3,photos4,drive}-2026-10-01.*` (photos4: directing Pepper and the two visitors) | `recordings/2026-10-01/` (28 utterances) | `results/photos-2026-10-01/` (ten-turn measurement), `results/photos/` |
 | 2026-10-08 | `results/sessions/2026-10-08_*` (12 runs, each with `review.md` where reviewed), `results/logs/host*-2026-10-08.stdout`, `results/logs/robot-load-2026-10-08.txt` | in each session folder | in each session folder |
 
-What the records cannot show yet, and the plan to close it, is in GitHub issue #16: one session folder per run instead of hand-named files, per-turn timings (end of speech, transcript, first word, end of reply), people events in the host log, and a review script that turns a session into a readable transcript with timings.
+Since 0.5 (issue #16, done), `SESSION_DIR` puts everything from one run in one folder, with per-turn timings and decisions (`turns.jsonl`) and events (`events.jsonl`); `scripts/review_session.py <folder> --out review.md` turns it into a timed transcript with flags.
 
 ## How to resume testing
 
@@ -154,11 +167,11 @@ What the records cannot show yet, and the plan to close it, is in GitHub issue #
 ```bash
 cd ~/Projects/PepperEvolution
 python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt   # the last session used a temporary venv; make your own
-pytest tests/ -q                                                                        # ~415 tests, ~25 s
+pytest tests/ -q                                                                        # ~590 tests, ~25 s
 PEPPER_BRIDGE_PYTHON=~/.local/share/mise/installs/python/2.7.18/bin/python pytest tests/test_bridge_integration.py -q   # robot's interpreter
 ```
 
-`.env` holds the Anthropic key and `AI_MODEL=claude-opus-5`; never commit it. Lint with `black`, `flake8`, `mypy` (120 columns). Commit messages end with the `Co-Authored-By` and `Claude-Session` trailers used in `git log`.
+`.env` holds the Anthropic key, `AI_MODEL=claude-sonnet-5-5`, `AI_EFFORT=medium` and the lab switches (`SESSION_DIR`, `DECIDE_URL=http://alien3:11435`, `PEPPER_AWARENESS=true`, voice); never commit it. Lint with `black`, `flake8`, `mypy` (120 columns). Commit messages end with the `Co-Authored-By` and `Claude-Session` trailers used in `git log`.
 
 ### Virtual Pepper (real NAOqi, no robot)
 
@@ -175,7 +188,11 @@ scripts/virtual_pepper.sh stop
 
 `~/.local/opt/pepper-sim/probe.py` and `probe2.py` are throwaway Python 2.7 scripts that talk to NAOqi directly (`PYTHONPATH=<pynaoqi>/lib/python2.7/site-packages LD_LIBRARY_PATH=<pynaoqi>/lib python2.7 probe.py`); handy for checking a NAOqi method before adding it to the bridge.
 
-### First session with the physical robot
+### A session with the physical robot
+
+Pepper is set up and needs no Milestone 0 steps any more: power it on, wait for the bridge to come up by itself (`python robot_bridge/deploy.py --status`; after a code change, `python robot_bridge/deploy.py`, and `--install-autostart` when the version changes), check the private Ollama on Alien3 (`curl http://alien3:11435/api/version`; restart with `ssh mberg@alien3 ~/.ollama-private/start.sh`), then `python main.py`. Review afterwards with `python scripts/review_session.py results/sessions/<folder> --out review.md`. To shut down: put Pepper in rest, `python robot_bridge/deploy.py --stop`, then `qicli call ALSystem.shutdown` over ssh.
+
+The first session, for reference:
 
 Follow Milestone 0 in `ROADMAP.md` (15 steps). In short: robot on, `ping 10.0.100.100`, `python robot_bridge/deploy.py` (ssh nao/nao), curl `/status` and `/sensors`, `POST /prepare`, speech, animations (`GET /animations` to learn what is installed), head and base moves with the sonar guard, emergency stop and recovery, `examples/event_monitor.py`, `examples/mic_monitor.py --speak` (confirms the microphone mutes while Pepper talks), then `python main.py` and the first prompts, then voice. `PEPPER_VIRTUAL_BRIDGE=http://10.0.100.100:8888 pytest tests/test_virtual_naoqi.py -v -s` runs the same endpoint checks against the robot (it drives 10 cm forward and back; use a clear floor).
 
@@ -185,13 +202,13 @@ The previous session's standing instruction from the user: once Pepper is on the
 
 `pip install -r requirements-voice.txt`, download the sherpa-onnx streaming zipformer named in `GETTING_STARTED.md`, set `STT_BACKEND=sherpa` and `STT_MODEL=<model dir>`; hold-to-talk needs the UI at `http://localhost:8000`; `VOICE_INPUT=true` adds the robot microphone; `VOICE_RECORD_DIR=recordings` saves each utterance as a WAV with the live transcript beside it (`.hyp.txt`), in streaming mode too since 2026-09-22; add corrected `.ref.txt` files and run `scripts/compare_stt.py` to compare recognisers.
 
-## Decisions waiting on the live session
+## Decisions settled on the robot
 
-- `PEPPER_AWARENESS` default is `false`; try head tracking (roadmap step 12) and decide whether the 8 s resume after a head move feels right, and whether the `Sound` stimulus makes the head twitch during conversation.
-- Microphone mute tail (0.4 s) and the energy endpointer thresholds for the whisper path; whether a neural VAD is needed.
-- Filler delay (2 s), LED colours in daylight, speech volume, the 0.45 m obstacle threshold, `bodyLanguageMode` for animated speech, which animations are installed.
-- Barge-in (a spoken "stop" while Pepper talks) is not possible with the mute as designed; decide after seeing how much Pepper hears of itself.
+- Face tracking on while someone is in view (`PEPPER_AWARENESS=true`), off for an empty room; the `Sound` stimulus stays off; the bridge holds tracking off for 8 s after a deliberate head move and 1 s around a photo.
+- The microphone mute tail (0.4 s) works with Nemotron; the energy endpointer is only used by the whisper path.
+- The filler delay (2 s) and speech volume are fine; LED colours in daylight not judged yet (#2).
+- Barge-in (#4) is still open: the microphone is muted while Pepper speaks.
 
-## Next milestones after M0
+## Next
 
-the spoken-turn model comparison (roadmap, next test session), M3 vision grounding (`look_at(x, y)` from a point in the last photo, verify-after-act), M4 world model (debounced people events, periodic scene understanding, an "around you" line in the model's context, greeting newcomers), M5 memory and people identity, M6 operations (bridge autostart, latency budget, session recording). Small reactive-layer leftovers: chest LED for errors, an idle "thinking" gesture, queue policy for speech that arrives while a turn runs.
+The memory architecture comes first (Milestones 4 and 5: one structure for people, places and events, which #27, #12, #24, #11, #13 and #14 build on), then the next robot session: side talk with two people (#19, #25), cut-off sentences (#26), shorter replies, and remembering where people were (#27). `ROADMAP.md` has the full plan.

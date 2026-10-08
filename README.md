@@ -9,7 +9,10 @@ A cloud-AI control system for SoftBank Pepper robots. A small bridge server on t
 - **Sees** – `take_photo` returns the camera image to the model, so "what do you see?" gets a real answer.
 - **Feels** – head/hand touches and bumpers stream from the robot and trigger short reactions.
 - **Listens** – optional voice input: hold-to-talk in the browser, or the robot's own microphone streamed from the bridge (muted while Pepper speaks), recognised on the host with sherpa-onnx or faster-whisper.
-- **Reacts without thinking** – "stop", "be quiet", "wake up", "look at me" are handled locally in milliseconds, mid-reply; the eyes show listening / thinking / speaking; a short filler covers long model pauses; optionally the head follows people through NAOqi's own awareness.
+- **Reacts without thinking** – "stop", "be quiet", "wake up", "look at me" are handled locally in milliseconds, mid-reply; the eyes show listening / thinking / speaking; a short filler covers long model pauses; the head turns to newcomers and follows people through NAOqi's own face tracking.
+- **Notices people** – a world model on the host keeps who is in view (distance, direction, gaze), greets someone who walks up, and tells the model each turn who is around and where.
+- **Judges the situation fast (optional, a local GPU machine)** – small local decision models decide in about 0.15 s whether speech was meant for Pepper (side talk gets no reply), which physical action to start at once (Pepper moves about 0.25 s after the transcript while Claude prepares the words), and whether someone in view is waving or showing something. Without the GPU machine everything still works, slower. See [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md).
+- **Is recorded for review** – with `SESSION_DIR`, every run keeps its log, audio, photos and a per-turn record locally; `scripts/review_session.py` turns it into a timed transcript with flags.
 - **Stays safe** – moves are clamped and sonar-checked, the bridge never blocks so emergency stop always gets through, and the robot is put into a known state (Autonomous Life off, motors on) when the host connects.
 - **Works without the robot** – `PEPPER_FAKE_BRIDGE=true` runs the whole stack with a simulated robot.
 
@@ -63,13 +66,15 @@ Pepper Robot (NAOqi 2.5, Python 2.7)        Host (Python 3.12+)
 │ robot_bridge/pepper_bridge.py│◄─────────►│ BridgeClient (httpx)               │
 │ Tornado 3.1.1 :8888          │           │ EventStream (websockets)           │
 │ REST + /ws/events + /ws/audio│ WebSocket │ AudioStream → VoiceInput (STT)     │
-│ + tablet page; NAOqi calls   │◄─────────►│ PepperRobot                        │
-│ run on worker threads        │           │ AIManager + intents + ToolExecutor │
-│                              │           │ FastAPI :8000 (REST, /ws, web UI)  │
+│ + /ws/camera + tablet page;  │◄─────────►│ PepperRobot, WorldModel            │
+│ NAOqi calls run on worker    │           │ AIManager + intents + ToolExecutor │
+│ threads                      │           │ FastAPI :8000 (REST, /ws, web UI)  │
 └──────────────────────────────┘           └────────────────────────────────────┘
-                                                        ▲ streaming + tool calling
-                                                 Anthropic Claude API
+                                             ▲ streaming + tool calling   ▲ /v1/systemone (optional)
+                                       Anthropic Claude API      GPU machine: Ollama decision models
 ```
+
+The design it is building towards (reflexes, continuous perception, a shared world model, one mind that speaks) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Project structure
 
@@ -82,13 +87,17 @@ PepperEvolution/
 │   ├── pepper/             # BridgeClient, FakeBridgeClient, EventStream, AudioStream, PepperRobot
 │   ├── ai/                 # tools, Anthropic/OpenAI providers, speech streaming, intents, ToolExecutor, AIManager
 │   ├── audio/              # voice input: PCM helpers, endpointer, sherpa/whisper transcribers, VoiceInput
+│   ├── world/              # WorldModel: who is around, arrivals, the "Around you" line
+│   ├── decide/             # local decision models: client (fails open), addressee gate, command router
+│   ├── perception/         # camera stream judged about once a second
+│   ├── session.py          # session records (SESSION_DIR)
 │   ├── communication/      # FastAPI app: REST, /ws hub, direct commands
 │   ├── sensors/, actuators/# thin convenience wrappers
 ├── web/index.html          # Browser control panel (served at /)
 ├── examples/               # basic_chat.py (terminal), event_monitor.py, mic_monitor.py
-├── tests/                  # ~380 tests incl. running the real bridge with tests/fakenaoqi
-├── docs/                   # GETTING_STARTED.md, BRIDGE_API.md, SAFETY.md, ROADMAP.md, RESEARCH_2026-09.md
-├── scripts/start.sh        # deploy + start (or --fake)
+├── tests/                  # ~590 tests incl. running the real bridge with tests/fakenaoqi
+├── docs/                   # HANDOFF, ARCHITECTURE, ROADMAP, SETUP_PROFILES, GETTING_STARTED, BRIDGE_API, SAFETY, research notes, signs/
+├── scripts/                # start.sh, review_session.py, smoke_host.py, compare_models.py, virtual_pepper.sh, ...
 └── main.py                 # Host application entry point
 ```
 
@@ -98,6 +107,7 @@ PepperEvolution/
 |------|-------------|
 | `speak` | Say something now, before a slow action or in another language (normal replies are spoken automatically) |
 | `play_animation` | Wave, bow, nod, shake head, think, explain, happy, ... |
+| `offer_hand` | Hold the right hand out for a handshake (up to 15 s), shake it when taken, then lower it |
 | `move_head` | Look in a direction |
 | `turn` / `move_forward` | Turn in place, drive short distances (sonar-checked, max 2 m) |
 | `set_posture` | Stand, StandInit, StandZero, Crouch |
@@ -119,15 +129,17 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `BRIDGE_API_KEY` | | Optional bridge auth |
 | `PEPPER_FAKE_BRIDGE` | `false` | Simulated robot |
 | `PEPPER_AUTONOMOUS_LIFE` | `disabled` | Autonomous Life state set on connect (`keep` to leave it) |
-| `AI_MODEL` | `claude-opus-5` | AI model (`claude-*` or `gpt-*`) |
-| `AI_EFFORT` | `low` | Claude reasoning effort |
+| `AI_MODEL` | `claude-sonnet-5-5` | AI model (`claude-*`, `gpt-*`, or a local model with `OLLAMA_URL`) |
+| `AI_EFFORT` | `medium` | Claude reasoning effort |
 | `ANTHROPIC_API_KEY` | | Required for Claude |
 | `OPENAI_API_KEY` | | Required for GPT |
 | `SPEAK_RESPONSES` / `TABLET_SUBTITLES` / `REACT_TO_TOUCH` | `true` | Behaviour switches |
 | `GREET_NEWCOMERS` / `GREET_COOLDOWN` | `true` / `90` | Greet someone who walks up (within 3 m looking at Pepper, or 1.8 m) after nobody was in view for 20 s; seconds between greetings |
 | `LED_STATE_SIGNALS` / `BACKCHANNEL_AFTER` | `true` / `2.0` | Eye colour state signals; seconds before a spoken filler |
 | `DECIDE_URL` | | Fast local judgements on a GPU machine (Ollama with `nimble`, `clef-flash`): who is Pepper being spoken to, which action to start at once, what the camera shows. Empty = off; see [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) |
+| `ADDRESSEE_GATE` / `ROUTER` / `VISION_STREAM` | `true` | With `DECIDE_URL`: answer only speech meant for Pepper; start simple actions at once; judge camera frames while someone is in view (`ADDRESSEE_THRESHOLD`, `ROUTER_THRESHOLD`, `VISION_FPS` tune them) |
 | `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`) |
+| `PHOTO_RECORD_DIR` / `VOICE_RECORD_DIR` | | Keep photos (with head angle and sharpness) / utterance audio for testing; inside `SESSION_DIR` when that is set |
 | `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |
 | `VOICE_INPUT` | `false` | Also stream the robot's microphone (hold-to-talk in the UI works without it) |
@@ -142,7 +154,7 @@ PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -
 python scripts/smoke_host.py --fake            # the whole host stack with the real model, no robot
 ```
 
-Version 0.3.0; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
+Version 0.5.1; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
 
 Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md). The design the project is building towards is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

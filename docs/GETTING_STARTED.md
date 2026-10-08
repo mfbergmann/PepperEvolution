@@ -133,7 +133,7 @@ NAOqi 2.5 services (ALMotion, ALTextToSpeech, ALAnimatedSpeech, ALVideoDevice, A
 ## Running tests
 
 ```bash
-pytest tests/ -q          # ~380 tests, no robot; includes starting the real bridge with a fake NAOqi
+pytest tests/ -q          # ~590 tests, no robot; includes starting the real bridge with a fake NAOqi
 PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py   # the bridge under the robot's Python 2.7 + Tornado 3.1.1
 ```
 

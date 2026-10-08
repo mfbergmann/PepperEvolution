@@ -29,8 +29,8 @@ class TestSettings:
             monkeypatch.delenv(key, raising=False)
         s = main.Settings.from_env()
         assert s.pepper_ip == "10.0.100.100"
-        assert s.ai_model == "claude-opus-5"
-        assert s.ai_effort == "low"
+        assert s.ai_model == "claude-sonnet-5-5"
+        assert s.ai_effort == "medium"
         assert s.autonomous_life == "disabled"
         assert s.speak_responses is True and s.fake_bridge is False
         assert s.api_port == 8000

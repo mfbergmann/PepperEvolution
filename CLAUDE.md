@@ -33,7 +33,7 @@ python examples/mic_monitor.py --speak    # microphone level meter from /ws/audi
 
 ### Test
 ```bash
-pytest tests/ -q                                   # ~380 tests, no robot needed (~20 s)
+pytest tests/ -q                                   # ~590 tests, no robot needed (~25 s)
 pytest tests/test_bridge_server.py -q              # bridge Robot facade against a fake NAOqi
 pytest tests/test_bridge_integration.py -q         # starts the real bridge process with tests/fakenaoqi
 PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py   # under the robot's interpreter
@@ -118,8 +118,8 @@ Copy `env.example` to `.env`. Key variables:
 | `PREPARE_ON_CONNECT` | `true` | On connect: set Autonomous Life, wake up, set awareness |
 | `PEPPER_AUTONOMOUS_LIFE` | `disabled` | State to set on connect (`keep` = leave alone) |
 | `REST_ON_EXIT` | `false` | Put the robot to rest when the host exits |
-| `AI_MODEL` | `claude-opus-5` | `claude-*` (Anthropic) or `gpt-*` (OpenAI) |
-| `AI_EFFORT` | `low` | Claude effort for 4.6+ models: low/medium/high |
+| `AI_MODEL` | `claude-sonnet-5-5` | `claude-*` (Anthropic), `gpt-*` (OpenAI), or a local model with `OLLAMA_URL` |
+| `AI_EFFORT` | `medium` | Claude effort for 4.6+ models: low/medium/high |
 | `AI_MAX_TOKENS` | `16000` | Per-response token cap (thinking counts against it; responses stream) |
 | `ANTHROPIC_API_KEY` | | Required for Claude models |
 | `SPEAK_RESPONSES` | `true` | Speak replies aloud while streaming |

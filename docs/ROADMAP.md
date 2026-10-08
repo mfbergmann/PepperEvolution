@@ -4,14 +4,25 @@ Last updated: September 2026. The design these milestones build towards is in [A
 
 ## Where we are
 
-0.1 was a complete rewrite of the bridge and the host (September 2026, first labelled v2.1); 0.2 added the reactive layer (Milestone 1) and voice input (Milestone 2) on top, borrowing the design of the local intent table, state signals and safety ledger from Autonomous OS (see the research notes). Everything has been verified off-robot only:
+*Updated 2026-10-08, version 0.5.1.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in six robot sessions so far: the office, the open space outside it, and an evening with two visitors. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
 
-- About 380 tests, including the real bridge process running under a fake NAOqi that also pumps microphone frames.
-- The bridge suite also passes under Python 2.7.18 + Tornado 3.1.1, the robot's own environment.
-- Live runs against the Anthropic API with the simulated robot (tool calls, photo description, touch reactions, streaming speech).
-- Adversarial multi-agent reviews; every confirmed finding fixed with a regression test.
+What works on the robot today:
+- **Conversation by voice** through Pepper's own microphone. NVIDIA's Nemotron streaming recogniser runs on the host's CPU, and Claude Sonnet 5.5 answers about 2 s after the transcript; it speaks sentence by sentence with gestures and tablet captions.
+- **Reflexes without a model:** "stop" and the other control phrases in milliseconds, eye-colour states, fillers, the head turning to newcomers, face tracking while someone is in view, looking out at the room when nobody is.
+- **A world model** of who is in view (distance, direction, gaze) that greets people who walk up and tells the model each turn who is around and where.
+- **Fast local judgements** on a GPU machine (Milestone 4 groundwork, 0.5):
+  - whether speech was meant for Pepper (side talk gets no reply);
+  - which simple action to start at once (Pepper moves about 0.25 s after the transcript while Claude prepares the words);
+  - whether someone in view is waving or showing something.
+  All of them fail open: without the GPU machine Pepper behaves as before, just slower.
+- **Sharp photos,** a handshake that holds and notices being taken, short drives and turns with the sonar guard, the bridge starting by itself at boot, and session records with a review script.
 
-**It has never been run on the physical robot.** Milestone 0 is that first contact.
+What is not there yet:
+- **Memory:** Pepper forgets a person once they leave the camera's view, and it remembers nothing across sessions (Milestones 4 and 5; the memory design comes first).
+- **Spatial grounding:** "come to me", pointing, looking at a point in a photo, follow me (Milestone 3).
+- **Conversation:** replies that are still too long, sentences cut in two at pauses, side talk with two people still to be tested, and barge-in (Milestone 2).
+
+Off the robot, about 590 tests run in CI (including the real bridge process under a fake NAOqi and the bridge suite under Python 2.7 + Tornado 3.1.1); NAOqi's desktop build runs as a headless virtual Pepper; and recorded sessions can be replayed.
 
 ## Strategy in one paragraph
 
@@ -49,7 +60,7 @@ Five bugs only the hardware showed were fixed on the day (deploy path, emergency
 
 Goal: Pepper looks alive while Claude is thinking, without any model call.
 
-- [x] Gaze: `/prepare` can enable `ALBasicAwareness` head-only tracking (people, sound, touch stimuli); NAOqi pauses it while `move_head` runs and resumes right afterwards. Off by default (`PEPPER_AWARENESS`) until the live session shows whether the resume undoes the model's "look left" too quickly; "look at me" / "look ahead" toggle it.
+- [x] Gaze: `/prepare` can enable `ALBasicAwareness` head-only tracking (people and touch stimuli). On the robot it runs while someone is in view and is switched off for an empty room (`PEPPER_AWARENESS=true` in the lab since 2026-09-29). The bridge holds it off for deliberate head moves (8 s) and photos (1 s), because a tracker locked on a face pulls the head back even while paused. "Look at me" / "look ahead" toggle it.
 - [x] State signalling: eye LEDs blue / purple / white for listening / thinking / speaking, restored to the last chosen colour after the turn (`LED_STATE_SIGNALS`).
 - [x] Backchannels: a short verbal filler after `BACKCHANNEL_AFTER` (2 s) without model text, user turns only.
 - [x] Local intents: stop / emergency stop / quiet / wake up / rest / look at me / look ahead, matched before the turn lock and executed in milliseconds; "stop" cancels the remaining tool calls of a running turn and silences it (`src/ai/intents.py`).
@@ -57,7 +68,9 @@ Goal: Pepper looks alive while Claude is thinking, without any model call.
 - [ ] Chest LED for errors; an idle "thinking" gesture (animation) instead of, or in addition to, the filler.
 - [x] `move_head` pauses awareness and a bridge-side timer resumes it 8 s later, so the model's gaze commands hold (found on the virtual robot: NAOqi only pauses tracking for its own activities).
 - [x] Spoken touch reactions on the robot: one short reply per touch, gestures chosen by the model, a double touch gives one reply.
-- [ ] Tune on the robot: filler delay, LED colours in daylight, whether the `Sound` stimulus makes the head twitch during conversation, the 8 s resume delay.
+- [x] Head reflexes (2026-09-29): turn to a newcomer at once, look out at the room 3 s after the last person leaves; greeting is in Milestone 4.
+- [x] Command router (0.5, issue #21): a local decision model picks the first physical action from Pepper's fixed list, and head moves, gestures, turns in place and the handshake start about 0.25 s after the transcript; Claude still does the words. On the robot 2026-10-08: 32 actions started, one wrong ("turn back" → turn around).
+- [ ] Tune on the robot: filler delay, LED colours in daylight (#2). The `Sound` stimulus is left off; the 8 s hold after a head move works.
 
 Acceptance: perceived latency in a conversation drops; no model calls are made by this layer.
 
@@ -69,14 +82,20 @@ Goal: people talk to Pepper instead of typing.
 - [x] Host: `src/audio/` with two backends behind one interface: `sherpa-onnx` streaming transducer with its own endpointing (recommended; partial transcripts, ~80 MB zipformer or the 2026 Nemotron streaming model), and `faster-whisper` per utterance behind an energy endpointer. Finals go to `process_user_input(source="voice")`; control phrases are intents.
 - [x] Turn taking: hold-to-talk in the web UI (browser microphone, raw PCM to `POST /voice/utterance`); the robot microphone path is opt-in with `VOICE_INPUT`.
 - [x] Transcript logging (`VOICE_RECORD_DIR`) for tuning on real audio.
-- [x] Measured on the robot: 7-12.5 s from the final transcript to the first sound at first; after the "speak first" prompt and filler changes, 2.6-3.9 s, plus about 1 s of end-of-speech silence before the transcript. Target is still under 2 s from end of speech; the model comparison below is the next step.
+- [x] Measured on the robot: 7-12.5 s from the final transcript to the first sound at first; after the "speak first" prompt and filler changes, 2.6-3.9 s; with Sonnet 5.5 (2026-10-08) a median of about 2 s, plus 1 s of end-of-speech silence before the transcript. Target is still under 2 s from end of speech (#3).
+- [x] Addressee gate (0.5, #19): open-microphone speech is answered only when it seems meant for Pepper. Alone with Pepper, anything said in a conversation is answered (0.5.1). Still to test with two people; the judgement should also see what Pepper just said (#25).
+- [ ] Sentences cut in two at a pause longer than 1 s (#26): wait for the rest when a sentence is clearly unfinished.
+- [ ] Shorter replies in conversation (#19): 4-5 sentence answers are common and people talk over them.
 - [x] Acceptance met: a five-turn spoken conversation with tool use (head turns, photos, gestures, the quiet intent) through Pepper's own microphone, twice.
 - [ ] Barge-in: let a spoken "stop" interrupt while Pepper is speaking. Today the bridge mutes the microphone for the whole reply (sentences follow each other with a 0.4 s tail), so a spoken "stop" only lands between turns; typed, button and hold-to-talk stops work at any time. Needs either echo cancellation on the host (the bridge would have to stream during speech) or keyword spotting on the muted-out audio; not planned before M0 shows how much Pepper hears of itself.
 - [ ] A neural VAD (Silero/TEN through sherpa-onnx) in front of the whisper path if the energy detector proves too crude in the lab.
 
 Acceptance: a five-turn spoken conversation with tool use, end to end.
 
-## Next test session: model comparison for spoken turns
+## Model comparison for spoken turns (done 2026-09-22 and 2026-09-29)
+
+Decision: **Claude Sonnet 5.5 at medium effort** for spoken turns (blind spoken rounds on the robot, 2026-09-29), now the default. The plan as it was written follows, then the results.
+
 
 Goal: pick the model (and effort) that gives the best spoken conversation on Pepper, now that the recogniser and the "speak first" prompt have taken latency from 7-12.5 s to 2.6-3.9 s after the transcript (2026-09-22). The remaining time is mostly the model's first round.
 
@@ -89,7 +108,7 @@ Goal: pick the model (and effort) that gives the best spoken conversation on Pep
 - Method: the same scripted set on the robot for every candidate, run through `scripts/smoke_host.py` (typed, repeatable) and then a short guided spoken run for the finalists. Prompts cover greeting, "look left", "what do you see" (photo), a gesture request, a multi-step request, a stop mid-turn, and a factual question.
 - Measure per turn: time to first sound and to first real words after the transcript, total turn time, tool calls made and whether they were right (silent tool calls before speaking count against), phantom tool calls, spoken length, and cost from the usage block. Judge the photo descriptions for accuracy against the actual image.
 - Decide: a default for spoken turns, and whether typed turns (web UI) should keep a stronger model. `AIManager` could route by `source` if the split is worth it.
-- Also try the recogniser's end-of-speech silence at 0.6 s instead of 1.0 s (`rule2_min_trailing_silence`), checking that people are not cut off mid-sentence.
+- Also try the recogniser's end-of-speech silence at 0.6 s instead of 1.0 s (`rule2_min_trailing_silence`), checking that people are not cut off mid-sentence. (Dropped 2026-10-08: sentences are already cut at 1.0 s; see #26.)
 - Speech-to-text comparison, alongside: run the spoken part with `VOICE_RECORD_DIR=recordings` (each utterance is saved as a WAV with the live transcript beside it), correct a copy of each transcript into a `.ref.txt`, and compare offline with `scripts/compare_stt.py recordings --sherpa <zipformer dir> --sherpa <nemotron dir> --whisper small`. Candidates: today's 2023 streaming zipformer (about 80 MB of weights), NVIDIA's Nemotron speech streaming 0.6B int8 (2026, about 630 MB, same library and API, more accurate), faster-whisper `small` per utterance, and, if local accuracy disappoints, a hosted recogniser with its own end-of-turn detection (Deepgram, AssemblyAI; needs an account and sends audio off the machine). Judge word error rate on your own voice in that room, recognition time, and end-of-turn delay.
 
 ### Results, typed phase (2026-09-22, `scripts/compare_models.py`, seven prompts per configuration on the robot)
@@ -154,11 +173,13 @@ Goal: Claude can act on what it sees, not just describe it.
 - **Handshake** (built 2026-10-08): Pepper holds its right hand out (`/pose/offer_hand`), notices a firm handshake by the shoulder motor's current dropping as a hand takes the arm's weight, a real shake (4° or more) or the back-of-hand touch sensor, speaks without body language while the hand is out, and lowers it after 15 s if nobody takes it. A gentle grip is not detectable from the arm (lower priority, issue #23: judge it with the camera).
 - **Follow me** (asked for on the robot 2026-10-01: "can you follow me back into my office?"; Pepper had no way to). Candidates: NAOqi's `ALTracker` in `Move` mode (follows a face or person with the base, keeping a set distance), or the host steering short base moves from the world model's direction and distance. Safety first: slow speed (at most 0.3 m/s), a minimum distance of about 0.8 m, the sonar guard and NAOqi collision avoidance stay on, stop at once on "stop", on touching the head, when the person is lost for more than a couple of seconds, or after a time limit; only on explicit request, never on its own. Test in the open room first.
 
-Acceptance: "look at the person on the left", "is the door open?", "go towards the chair", "come to me" and "follow me" work reliably. ("Come to me" uses the person's direction in the "Around you" line since 2026-10-01: turn by that angle, then drive.)
+- **Pointing** (#28): Pepper cannot aim a point yet; its canned gestures look like ordinary talking hands on the robot (2026-10-08), so the model now says so instead of claiming to point. To build: an aimed arm pose from a direction.
+
+Acceptance: "look at the person on the left", "is the door open?", "go towards the chair", "come to me" and "follow me" work reliably. "Come to me" uses the person's direction in the "Around you" line since 2026-10-01 (turn by that angle, then drive). On the robot (2026-10-08) it got there only after several tries, because the detector keeps losing people (#24: voice direction and a camera fallback, and #27: remembering where people were).
 
 ## Milestone 4: world model (continuous perception)
 
-Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Today the camera is used only when the model calls `take_photo`, people events reach the web UI but not the AI, and the model's state block does not include who is present.
+Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Status 2026-10-08: the "now" part is built (layer 1 below, plus camera judgements about once a second while someone is in view); what is missing is memory: people are forgotten once they leave the camera's view (#27), there is no scene description (#11), no detail tool (#12) and nothing persists across sessions (Milestone 5). The memory architecture is being designed first, so that these pieces share one structure.
 
 Two layers feeding one host-side world model:
 
@@ -172,7 +193,7 @@ The world model (host, in memory): people with first-seen / last-seen, zone and 
 
 Constraints: frames are kept in memory only, never written to disk, and Pepper shows that it is looking (for example an eye or chest LED state) while the camera is in use; the scene summaries in the world model are text. Knowing *who* someone is (face or voice identity) is Milestone 5 and builds on this.
 
-Situation judgements (tested 2026-10-03, issue #20): local decision models answer fixed questions before the mind is called. Setup: a private Ollama 0.35.1 on Alien3 (`http://alien3:11435`, the shared service on :11434 is too old and needs root to upgrade), models `nimble` and `clef-flash`. Results on Pepper's own data: "is this addressed to Pepper?" right for 21 of 22 utterances from the 2026-10-01 session with two visitors (Nimble 0.05 s, Clef Flash 0.09 s; a name-matching rule 9 of 22; the miss was "Emer, can you come to me" with the name misheard); four questions per camera frame in 0.25 s (person 38/40, the two misses were people shown on a TV screen; facing 9/9; blur 39/40; scene 24/30, mostly ambiguous labels). Command routing (issue #21): Nimble picking the first physical action from a fixed list of 17 plus "talk" got 26 of 28 direct commands right at a 0.7 threshold, with no wrong actions and no action on a question or conversation, in about 0.15 s; Clef Flash was weaker on text alone. Next (robot session 2026-10-06, `docs/HANDOFF.md`): session records, the addressee gate, the command router and a camera frame stream to Clef Flash about once a second.
+Situation judgements (tested 2026-10-03, issue #20): local decision models answer fixed questions before the mind is called. Setup: a private Ollama 0.35.1 on Alien3 (`http://alien3:11435`, the shared service on :11434 is too old and needs root to upgrade), models `nimble` and `clef-flash`. Results on Pepper's own data: "is this addressed to Pepper?" right for 21 of 22 utterances from the 2026-10-01 session with two visitors (Nimble 0.05 s, Clef Flash 0.09 s; a name-matching rule 9 of 22; the miss was "Emer, can you come to me" with the name misheard); four questions per camera frame in 0.25 s (person 38/40, the two misses were people shown on a TV screen; facing 9/9; blur 39/40; scene 24/30, mostly ambiguous labels). Command routing (issue #21): Nimble picking the first physical action from a fixed list of 17 plus "talk" got 26 of 28 direct commands right at a 0.7 threshold, with no wrong actions and no action on a question or conversation, in about 0.15 s; Clef Flash was weaker on text alone. Built in 0.5 and tested on the robot 2026-10-08 (`docs/HANDOFF.md`, "Robot session 2026-10-08"): the addressee gate, the command router (Milestone 1) and a camera frame stream judged by Clef Flash about once a second while someone is in view (a wave gets a reply about 3.6 s later; the stream costs the robot 5-22 % of a core).
 
 Compute for this milestone (2026-09-23): the Creative AI Hub at TMU (RCC230) has an always-on AI server (hal-9000: 2 x RTX 6000 Ada, 48 GB each, 128 GB RAM, 10 GbE, Ubuntu, Ollama already serving local models) and five workstations (alien1-5: RTX 5090 32 GB, Core Ultra 9, 64 GB; one on Ubuntu 24.04, being moved to Ubuntu). Plan: run the periodic vision pass as a service on the server (through its Ollama API or a vLLM server), reached from the host over the TRiPL tailnet; only the host needs to reach it, not Pepper. A 32 GB workstation is enough for fine-tuning jobs (below) and experiments. Before relying on it: agree usage with the Hub (shared machines), check that the host reaches it over the tailnet with low latency, and keep recordings of people in a private account on it. Blackwell cards (RTX 5090) need CUDA 12.8 or newer builds of PyTorch and onnxruntime.
 
@@ -190,9 +211,9 @@ Goal: Pepper remembers who it talked to and what was said.
 
 ## Milestone 6: robustness and operations
 
-- Bridge autostart on robot boot: **built 2026-09-29**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`), tested on NAOqi's desktop build including a cold start; robot check next session. Still to do: a watchdog that restarts a crashed bridge.
+- Bridge autostart on robot boot: **done**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`); verified on the robot after a reboot (2026-10-01) and a cold power-on (2026-10-08). Still to do: a watchdog that restarts a crashed bridge (#15).
 - Latency budget per turn in the log; per-sentence speech timing.
-- **Session recording and review (priority since 2026-10-01; issue #16).** Real interactions are the main source of fixes, so every robot session is recorded and reviewed. Done: transcripts, every sentence Pepper says and full tool results in the host log; utterance audio (`VOICE_RECORD_DIR`); photos with measured head angle (`PHOTO_RECORD_DIR`). To do: one folder per session (`SESSION_DIR`) holding everything; a structured per-turn record (JSON lines: end of speech, transcript, first word, end of reply, tools, interruptions, people events); `scripts/review_session.py` that prints a readable transcript with timings and flags (long replies, slow first words, failed tools, side conversations answered). Records stay local and git-ignored.
+- **Session recording and review (issue #16): done in 0.5.** Every robot session is recorded and reviewed, because real interactions are the main source of fixes. `SESSION_DIR` gives one folder per run with the host and bridge logs, utterance audio, photos with the measured head angle, `turns.jsonl` (per turn: end of speech, the judgements, the router's action and timing, tools, first word, what Pepper said) and `events.jsonl` (people, greetings, camera events, handshakes). `scripts/review_session.py` prints a timed transcript with flags (slow first words, long replies, unanswered speech, failed tools). Records stay local and git-ignored (`CLAUDE.md`, "Session records").
 
 ## Testing without the robot
 

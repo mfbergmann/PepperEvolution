@@ -109,7 +109,7 @@ class Settings:
             bridge_action_timeout=float(os.getenv("BRIDGE_ACTION_TIMEOUT", "120")),
             fake_bridge=env_bool("PEPPER_FAKE_BRIDGE", False),
             ai_model=os.getenv("AI_MODEL", DEFAULT_ANTHROPIC_MODEL),
-            ai_effort=(os.getenv("AI_EFFORT", "low").strip().lower() or None),
+            ai_effort=(os.getenv("AI_EFFORT", "medium").strip().lower() or None),
             ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "16000")),
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,

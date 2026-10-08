@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from loguru import logger
 
-DEFAULT_ANTHROPIC_MODEL = "claude-opus-5"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"  # chosen for spoken turns in blind rounds on the robot (2026-09-29)
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_EFFORT = "low"  # a talking robot is latency-sensitive; raise via AI_EFFORT
 DEFAULT_MAX_TOKENS = 16000  # streamed, so a large cap costs nothing; thinking tokens count against it

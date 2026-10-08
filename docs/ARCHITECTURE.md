@@ -12,14 +12,14 @@ Pepper's body runs a thin bridge that exposes its hardware as bounded, documente
 flowchart TB
     subgraph Robot["Pepper (NAOqi 2.5, Python 2.7)"]
         HW["Motors, sonar, touch, bumpers,\ncamera, microphones, tablet, LEDs"]
-        BR["Bridge: REST + /ws/events + /ws/audio\nsafety bounds, e-stop, sonar guard,\nmic mute while speaking"]
+        BR["Bridge: REST + /ws/events + /ws/audio + /ws/camera\nsafety bounds, e-stop, sonar guard,\nmic mute while speaking"]
         NQ["NAOqi skills: animations, moveTo,\nawareness tracking, people and face detection"]
         HW --- NQ --- BR
     end
 
     subgraph Host["Host (Python 3.12+)"]
         RX["1. Reflexes (no model)\nlocal intents, LED state, fillers,\ntouch-reaction rate limits"]
-        PE["2. Perception (continuous)\nspeech-to-text, people events,\nperiodic vision pass"]
+        PE["2. Perception (continuous)\nspeech-to-text, people events,\ncamera judgements, local decision models"]
         WM[("3. World model\npeople, scene, recent events,\nconversation state")]
         MI["4. Mind (one conversational model)\ntalks, plans, calls tools"]
         RF["Reflection loop (slow, planned)\nshould Pepper act unprompted?"]
@@ -49,7 +49,7 @@ Things a person expects instantly and that must never wait for a model call: "st
 
 Turns raw sensing into facts: speech into text, NAOqi's people detection into "someone arrived", camera frames into a short scene description. It runs all the time, independently of whether anyone is talking to Pepper, and each part uses the fastest tool that is good enough: NAOqi's on-robot detectors are free; speech-to-text runs locally (sherpa-onnx); the periodic vision pass uses a fast vision model at a low rate (every 10 to 20 s, and at once when the people count changes). Perception writes to the world model and emits events; it never speaks.
 
-**Status:** speech-to-text is built and verified (Milestone 2). People events are debounced on the bridge with distance, gaze and zone per person, and feed the world model (2026-09-23). The vision pass is planned (Milestone 4).
+**Status:** speech-to-text is built and verified (Milestone 2). People events are debounced on the bridge with distance, gaze, zone and direction per person, and feed the world model (since 2026-09-23). Camera judgements (waving, showing something, facing Pepper) run about once a second while someone is in view (0.5, verified on the robot 2026-10-08). A scene description for the world model is still to come (Milestone 4, #11).
 
 **Situation judgements ("system one", tested 2026-10-03).** Before the mind is called, small local decision models answer fixed questions about the situation with probabilities instead of prose, the way the bridge exposes the robot's hardware as a set of predefined options: is this utterance addressed to Pepper? is someone waving, pointing, holding something up? is the photo blurred, does it show what was asked for? Code acts on the probabilities (answer, stay quiet, look, call the mind), and the mind is only woken for what needs judgement or words. They never speak or move the robot themselves. Candidates: Ollama's decision models on the Creative AI Hub (Nimble, text; Clef Flash and Clef, text and images; the `/v1/systemone` API, which follows TypeSafe's Jev API). First measurements on Pepper's own data: "addressed to Pepper?" 21 of 22 utterances from a real session with two visitors (a name-matching rule: 9 of 22) in 0.05-0.09 s; four questions about a camera frame in 0.25 s, with 38/40 person, 9/9 facing, 39/40 blur and 24/30 scene answers right. Command routing: picking the first physical action from Pepper's fixed list (17 actions plus "talk") got 26 of 28 direct commands right at a 0.7 threshold with no false actions, in about 0.15 s with Nimble; the bridge can then start the action while Claude prepares the words, so Pepper moves about 0.3 s after you stop speaking instead of 3-4 s. A camera frame costs about 0.25 s end to end (estimated: grab, Wi-Fi, 0.15 s of Clef Flash at 320×240), so a judgement every second is practical while someone is in view; NAOqi's own people detection stays the always-on trigger. Kept local, so frames and voices stay on our hardware. **Built 2026-10-03 (0.5.0), tested on the robot 2026-10-08 (0.5.1):** the addressee gate, the command router and camera judgements about once a second while someone is in view (`src/decide/`, `src/perception/`), all failing open to the old behaviour when the GPU machine is unreachable. How to run with or without the GPU machine: `docs/SETUP_PROFILES.md`.
 
@@ -62,13 +62,13 @@ One structure on the host that holds what Pepper currently believes about its su
 - The reflection loop reads it to decide whether to act.
 - Memory persists selected parts across sessions.
 
-**Status:** first slice built (2026-09-23): `src/world/model.py` tracks who is in view (distance, gaze, how long, recent arrivals and departures) and the mind gets an "Around you" sentence on every turn. Scene descriptions, a detail tool and memory come next.
+**Status:** the "now" part is built and verified on the robot. `src/world/model.py` tracks who is in view (distance, gaze, direction with the turn that faces them, how long, recent arrivals and departures) and what the camera judgements see. It raises arrivals, which drive the head-turn reflex and the greeting, and the mind gets an "Around you" sentence on every turn. Missing: memory of anything out of view (a person is forgotten when they leave the camera, #27), scene descriptions (#11), a detail tool (#12), and persistence across sessions (Milestone 5). The memory architecture is designed next, so that these pieces share one structure.
 
 ### 4. Mind: one voice
 
 A single conversational model holds the dialogue, decides what to do, calls tools and speaks. One model rather than several keeps one personality and one line of context: the person is talking to one Pepper. Its reply streams sentence by sentence to the robot's voice, gestures go inline in the speech, and it is told to start answering in words before acting.
 
-**Status:** built (Claude, configurable with `AI_MODEL` / `AI_EFFORT`). Five configurations were compared on the robot on 2026-09-22; Sonnet 5 at medium effort is the working choice.
+**Status:** built (Claude, configurable with `AI_MODEL` / `AI_EFFORT`). Configurations were compared on the robot on 2026-09-22 and 2026-09-29; Sonnet 5.5 at medium effort is the choice and the default. An open model through Ollama (`OLLAMA_URL`) works but did not yet look before describing.
 
 ### Beyond the four layers
 
