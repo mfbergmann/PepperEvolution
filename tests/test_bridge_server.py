@@ -1206,19 +1206,43 @@ class TestCameraStream:
 
 
 class TestOfferHand:
-    def test_a_gripped_and_moved_hand_counts(self, bridge, robot):
-        mem = robot.session._session.memory
-        mem[bridge.HAND_TOUCH_KEY] = 0.0  # nobody reaches the sensor on the back of the hand
+    def run_with_arm(self, bridge, robot, pitches, hold=8):
+        """offer_hand with the shoulder reading ``pitches`` (radians) one 0.1 s reading after another."""
+        robot.session._session.memory[bridge.HAND_TOUCH_KEY] = 0.0
         motion = robot.svc("ALMotion")
-        readings = iter([[0.35, -0.12, 0.3, 1.27, 0.0]] * 4 + [[0.43, -0.12, 0.3, 1.27, 0.0]] * 10)
-        original = motion._respond
-        motion._respond = lambda m, a: (
-            next(readings) if m == "getAngles" and "RShoulderPitch" in a[0] else original(m, a)
-        )
-        robot.sleep = lambda s: None
-        result = robot.offer_hand(8)
-        assert result["taken"] is True and result["how"] == "moved"
-        assert result["largest_move_deg"] == 4.6  # 0.08 rad: the shoulder pushed up by the handshake
+        readings = iter(pitches)
+        last = [pitches[-1]]
+
+        def respond(method, args, original=motion._respond):
+            if method == "getAngles" and "RShoulderPitch" in args[0]:
+                last[0] = next(readings, last[0])
+                return [last[0], -0.12, 0.3, 1.27, 0.0]
+            return original(method, args)
+
+        motion._respond = respond
+        now = [0.0]
+        robot.clock = lambda: now[0]
+        robot.sleep = lambda s: now.__setitem__(0, now[0] + s)
+        return robot.offer_hand(hold)
+
+    def test_the_arm_settling_is_not_a_handshake(self, bridge, robot):
+        # sagging ~3 degrees over the first second after reaching the pose, as on the robot
+        sag = [0.35 + 0.0055 * i for i in range(10)] + [0.405] * 200
+        result = self.run_with_arm(bridge, robot, sag, hold=5)
+        assert result["taken"] is False
+
+    def test_slow_drift_is_not_a_handshake(self, bridge, robot):
+        drift = [0.35] * 5 + [0.35 + 0.0005 * i for i in range(100)]  # 3 degrees over 10 s, slowly
+        assert self.run_with_arm(bridge, robot, drift, hold=8)["taken"] is False
+
+    def test_a_slow_firm_grip_still_counts(self, bridge, robot):
+        grip = [0.35] * 8 + [0.35] * 10 + [0.35 + 0.006 * i for i in range(12)]  # 4 degrees over 1.2 s
+        assert self.run_with_arm(bridge, robot, grip)["taken"] is True
+
+    def test_a_gripped_and_moved_hand_counts(self, bridge, robot):
+        shake = [0.35] * 8 + [0.35] * 20 + [0.43, 0.30, 0.43]  # settled, then a person shakes it
+        result = self.run_with_arm(bridge, robot, shake)
+        assert result["taken"] is True and result["how"] == "moved" and result["largest_move_deg"] >= 3.0
 
     def test_hand_held_out_then_shaken_when_taken(self, bridge, robot):
         mem = robot.session._session.memory

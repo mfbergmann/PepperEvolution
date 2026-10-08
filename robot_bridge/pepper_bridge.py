@@ -192,7 +192,13 @@ HAND_TOUCH_KEY = "Device/SubDeviceList/RHand/Touch/Back/Sensor/Value"
 # Reaching the touch sensor on the back of the hand is awkward in a real handshake (2026-10-08), so a hand that is
 # gripped and moved also counts: any of these joints pushed this far from where the held arm settled.
 HANDSHAKE_JOINTS = ["RShoulderPitch", "RShoulderRoll", "RElbowRoll", "RElbowYaw", "RWristYaw"]
-HANDSHAKE_MOVED = 0.05  # radians (about 3 degrees); the result reports the largest movement seen, for tuning
+HANDSHAKE_MOVED = 0.035  # radians (2 degrees); real handshakes moved the arm 3.0-3.6 degrees (2026-10-08)
+# After the arm reaches the pose it keeps settling (sagging under gravity) by about 3 degrees for up to a second,
+# as much as a real handshake moved it (2026-10-08: two false starts 0.1-0.3 s after the hand went out). So wait for
+# a still arm first, and let the reference follow slow drift: only a quick push away from it counts.
+HANDSHAKE_SETTLE_MAX = 2.0  # seconds to wait for a still arm before watching
+HANDSHAKE_DRIFT = 0.03  # per 0.1 s reading: how fast the reference follows slow drift (a time constant of ~3 s)
+SHOULDER_CURRENT_KEY = "Device/SubDeviceList/RShoulderPitch/ElectricCurrent/Sensor/Value"
 BRIDGE_SERVICE_NAME = "PepperBridge"
 # /ws/camera: small frames for the host's situation judgements (a local vision model about once a second).
 # One subscription with a fixed name, so one left behind by a crash can be cleared (NAOqi caps subscribers).
@@ -1160,12 +1166,12 @@ class Robot(object):
         motion.angleInterpolationWithSpeed(names, [a for _, a in OFFER_HAND_JOINTS], OFFER_HAND_SPEED)
         memory = self.svc("ALMemory")
         moved = clamp(as_float(moved, HANDSHAKE_MOVED), 0.01, 0.5)
-        self.sleep(0.3)  # let the arm settle; its resting error is the baseline, not a handshake
-        baseline = self._arm_angles(motion)
         started = self.clock()
+        baseline = self._settled_arm(motion)
         taken = False
         how = None
         largest = 0.0
+        current_peak = 0.0
         while not self.halted and self.clock() - started < hold:
             try:
                 if as_float(memory.getData(HAND_TOUCH_KEY), 0.0) > 0.5:
@@ -1173,13 +1179,19 @@ class Robot(object):
                     break
             except Exception:
                 break
-            current = self._arm_angles(motion)
-            if baseline and current:
-                deviation = max(abs(c - b) for c, b in zip(current, baseline))
+            try:  # recorded for tuning only; never ends the wait
+                current_peak = max(current_peak, abs(as_float(memory.getData(SHOULDER_CURRENT_KEY), 0.0)))
+            except Exception:
+                pass
+            angles = self._arm_angles(motion)
+            if baseline and angles:
+                deviation = max(abs(a - b) for a, b in zip(angles, baseline))
                 largest = max(largest, deviation)
                 if deviation >= moved:
                     taken, how = True, "moved"
                     break
+                # follow slow drift (the arm sagging), so only a quick push counts
+                baseline = [b + HANDSHAKE_DRIFT * (a - b) for a, b in zip(angles, baseline)]
             self.sleep(0.1)
         waited = self.clock() - started
         if taken and not self.halted:
@@ -1197,7 +1209,27 @@ class Robot(object):
             "how": how,
             "waited": round(waited, 2),
             "largest_move_deg": round(math.degrees(largest), 1),
+            "shoulder_current_peak": round(current_peak, 3),
         }
+
+    def _settled_arm(self, motion):
+        """The arm's angles once it has stopped moving (or after HANDSHAKE_SETTLE_MAX), as the reference."""
+        started = self.clock()
+        previous = self._arm_angles(motion)
+        still_since = None
+        while previous is not None and self.clock() - started < HANDSHAKE_SETTLE_MAX and not self.halted:
+            self.sleep(0.1)
+            angles = self._arm_angles(motion)
+            if angles is None:
+                return previous
+            if max(abs(a - b) for a, b in zip(angles, previous)) < math.radians(0.3):
+                still_since = still_since or self.clock()
+                if self.clock() - still_since >= 0.3:
+                    return angles
+            else:
+                still_since = None
+            previous = angles
+        return previous
 
     def _arm_angles(self, motion):
         try:
