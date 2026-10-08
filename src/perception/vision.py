@@ -30,7 +30,9 @@ QUESTIONS = {
     "facing": {"type": "noul", "instructions": "Is a person looking towards the camera?"},
 }
 EVENT_KINDS = ("waving", "showing")  # "facing" only informs the world model and the addressee gate
-FIRE_AT = 0.7  # probability that counts as "yes"
+FIRE_AT = {"waving": 0.7, "showing": 0.6}  # probability that counts as "yes", per kind. On the robot (2026-10-08):
+# a wave scored 0.89-0.92, an object held up 0.68-0.77 (missed at 0.7), standing still at most 0.21 waving and
+# 0.35 showing
 CONSECUTIVE = 2  # frames in a row before an event fires
 COOLDOWN = 30.0  # seconds between events of the same kind
 JUDGE_TIMEOUT = 1.0
@@ -156,7 +158,7 @@ class FrameWatcher:
                 )
             for kind in EVENT_KINDS:
                 p = probs.get(kind, 0.0)
-                self._streak[kind] = self._streak[kind] + 1 if p >= FIRE_AT else 0
+                self._streak[kind] = self._streak[kind] + 1 if p >= FIRE_AT[kind] else 0
                 if self._streak[kind] < CONSECUTIVE:
                     continue
                 if now - self._last_fired.get(kind, -1e9) < COOLDOWN:

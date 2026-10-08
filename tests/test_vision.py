@@ -50,6 +50,12 @@ class TestJudgements:
         await feed(w)
         assert events == [{"what": "waving", "p": 0.95}]
 
+    async def test_an_object_held_up_counts_from_0_6(self):
+        clock = [100.0]
+        w, events, _ = watcher([{"showing": 0.69}, {"showing": 0.68}], clock)  # the robot's frames, 2026-10-08
+        await feed(w, 2)
+        assert [e["what"] for e in events] == ["showing"]
+
     async def test_cooldown_between_events_of_a_kind(self):
         clock = [100.0]
         w, events, _ = watcher([{"showing": 0.9}] * 6, clock)
