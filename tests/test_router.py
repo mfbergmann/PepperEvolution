@@ -221,3 +221,22 @@ class TestHandshakeSpeech:
         mock_robot.connection.bridge.offer_hand = offer
         await mock_robot.offer_hand()
         assert seen == [1] and mock_robot.holding_pose == 0
+
+
+class TestHandshakeNotTaken:
+    async def test_the_mind_gets_a_gentle_prompt(self, mock_robot, mock_ai_provider):
+        from unittest.mock import AsyncMock
+
+        async def slow_offer(hold):  # the hold outlasts Claude's short reply, as on the robot
+            await asyncio.sleep(0.05)
+            return {"taken": False, "waited": 15.0}
+
+        mock_robot.connection.bridge.offer_hand = slow_offer
+        mock_ai_provider.chat.side_effect = words_only("Here's my hand!")
+        manager = routed_manager(mock_robot, mock_ai_provider, "shake_hand", 0.98)
+        await manager.process_user_input("Let's shake on it", source="voice", open_mic=True)
+        manager.process_user_input = AsyncMock(return_value={})
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+        prompt = manager.process_user_input.await_args.args[0]
+        assert prompt.startswith("[Sensor event] You held your hand out for a handshake")

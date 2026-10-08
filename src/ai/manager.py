@@ -342,6 +342,8 @@ class AIManager:
                     rec["router"]["result"] = shake if isinstance(shake, dict) else {"taken": taken}
                     self._event("handshake", **(shake if isinstance(shake, dict) else {"taken": taken}))
                     self.logger.info(f"Handshake: taken={taken}, waited {waited} s")
+                    if taken is False:
+                        self._handshake_not_taken()
                 elif routed.tool == "play_animation":
                     await self.robot.play_animation(routed.args["name"])
                     await self.robot.neutral_pose()
@@ -375,6 +377,20 @@ class AIManager:
         except Exception as exc:  # noqa: BLE001
             self.logger.debug(f"Could not turn to the speaker: {exc}")
         return "Looking at you."
+
+    def _handshake_not_taken(self):
+        """Nobody took the routed handshake (a gentle grip is not detectable yet): let the mind close it kindly.
+
+        Only the mind speaks (docs/ARCHITECTURE.md), so this is a short sensor event it may answer or ignore."""
+        if self.busy or self.robot.halted:
+            return
+        prompt = (
+            "[Sensor event] You held your hand out for a handshake, but you did not feel anyone take it, so you "
+            "lowered it. Say something brief and friendly (they may have shaken it gently), or stay quiet."
+        )
+        task = asyncio.create_task(self._react(prompt, self._clock(), kind="handshake"), name="handshake-close")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _look_at_speaker(self):
         """After side talk Pepper does not answer, it still looks at the person, as anyone would."""
