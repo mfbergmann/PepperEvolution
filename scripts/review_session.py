@@ -58,6 +58,7 @@ def turn_lines(turn: Dict[str, Any]) -> List[str]:
         verdict = "answered" if gate.get("addressed") else "NOT answered (side talk)"
         looking = ", someone looking" if gate.get("someone_looking") else ""
         looking += ", in a conversation" if gate.get("in_conversation") else ""
+        looking += ", alone with Pepper" if gate.get("alone") else ""
         lines.append(f"      gate: p={gate.get('p')} {verdict}{looking} ({gate.get('seconds')} s)")
     router = turn.get("router")
     if router and router.get("choice"):

@@ -181,3 +181,41 @@ class TestGateInTheManager:
         ptt = await manager.process_user_input("tell me a joke", source="voice", open_mic=False)
         assert typed["stop_reason"] != "not_addressed" and ptt["stop_reason"] != "not_addressed"
         assert "to_pepper" not in asked  # only the router judged them, not the addressee gate
+
+
+class TestAlone:
+    """Side talk needs someone to talk to (robot 2026-10-08: alone with Pepper, 12 of 38 replies went unanswered)."""
+
+    async def test_most_in_view_remembers_a_crowd_for_a_while(self):
+        now = [0.0]
+        world = WorldModel(clock=lambda: now[0])
+        assert world.most_in_view(60) == 0
+        two = [{"id": 1}, {"id": 2}]
+        world.update_people(2, two)
+        now[0] = 10.0
+        world.update_people(1, two[:1])
+        assert world.most_in_view(60) == 2
+        now[0] = 75.0
+        assert world.most_in_view(60) == 1
+
+    async def test_alone_in_a_conversation_is_answered(self, mock_robot, mock_ai_provider):
+        person = {"id": 1, "distance": 1.4, "looking": True}
+        manager = await gated_manager(mock_robot, mock_ai_provider, 0.061, people=[person])
+        manager._last_answered_at = manager._clock()  # "Am I facing you now?" ... "Yeah, pretty good, good enough"
+        rec = {}
+        assert await manager._meant_for_pepper([], "Yeah, pretty good good enough", rec) is True
+        assert rec["addressee"]["alone"] is True and rec["addressee"]["p"] == 0.061
+
+    async def test_alone_but_not_in_a_conversation_still_judged(self, mock_robot, mock_ai_provider):
+        manager = await gated_manager(mock_robot, mock_ai_provider, 0.07)
+        result = await manager.process_user_input("That", source="voice", open_mic=True)
+        assert result["stop_reason"] == "not_addressed"
+
+    async def test_someone_else_seen_recently_keeps_the_gate(self, mock_robot, mock_ai_provider):
+        people = [{"id": 1, "distance": 1.4, "looking": True}, {"id": 2, "distance": 2.0, "looking": False}]
+        manager = await gated_manager(mock_robot, mock_ai_provider, 0.061, people=people)
+        manager.world.update_people(1, people[:1])  # the second visitor turned away: the detector lost them
+        manager._last_answered_at = manager._clock()
+        rec = {}
+        assert await manager._meant_for_pepper([], "Is actually a good analogy", rec) is False
+        assert rec["addressee"]["alone"] is False

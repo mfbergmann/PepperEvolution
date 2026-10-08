@@ -107,6 +107,7 @@ class WorldModel:
         self.last_seen_someone_at: Optional[float] = None
         self.empty_since: Optional[float] = None  # when the view last became empty; -inf if empty since start-up
         self.changes: Deque[Tuple[float, str]] = deque(maxlen=20)  # (time, "arrived" | "left")
+        self._crowd: Deque[Tuple[float, int]] = deque(maxlen=50)  # (time, count) when two or more were in view
         self._arrival_callbacks: List[ArrivalCallback] = []
         self.logger = logger.bind(module="WorldModel")
 
@@ -144,6 +145,8 @@ class WorldModel:
         self.count = count
         self.people = [Person.from_dict(p) for p in people]
         self.updated_at = now
+        if count >= 2:
+            self._crowd.append((now, count))
         if count > 0:
             self.last_seen_someone_at = now
             self.empty_since = None
@@ -167,6 +170,12 @@ class WorldModel:
             return None
         self.changes.append((now, "arrived"))
         return Arrival(count=count, nearest=self.people[0] if self.people else None, empty_for=empty_for)
+
+    def most_in_view(self, within: float) -> int:
+        """The most people in view at once over the last ``within`` seconds (0 before the first report)."""
+        now = self._clock()
+        crowd = [n for t, n in self._crowd if now - t <= within]
+        return max([self.count or 0] + crowd)
 
     SEEN_FRESH = 5.0  # seconds a camera judgement counts as "now"
 

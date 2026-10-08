@@ -307,11 +307,18 @@ class AIManager:
         answering = self._last_question_at is not None and self._clock() - self._last_question_at < self.IN_CONVERSATION
         lower = self.AFTER_QUESTION_THRESHOLD if answering else self.addressee_looking_threshold
         verdict = addressed(p, self.addressee_threshold, looking or talking or answering, lower)
+        # Side talk needs someone to talk to. Alone with Pepper on 2026-10-08, 12 of 38 things said to it mid-
+        # conversation scored 0.06-0.35 and went unanswered, three of them answers to its own questions (the model
+        # never sees what Pepper said). In a conversation with nobody else seen for a minute, answer.
+        alone = self.world is not None and self.world.most_in_view(self.ALONE_FOR) <= 1
+        if not verdict and alone and (talking or answering):
+            verdict = True
         rec["addressee"] = {
             "p": None if p is None else round(p, 3),
             "someone_looking": looking,
             "in_conversation": talking,
             "after_question": answering,
+            "alone": alone,
             "addressed": verdict,
             "seconds": round(self._clock() - started, 3),
         }
@@ -836,6 +843,7 @@ class AIManager:
 
     IN_CONVERSATION = 20.0  # seconds after Pepper answered during which the addressee bar stays low
     AFTER_QUESTION_THRESHOLD = 0.2  # the bar right after Pepper asked a question
+    ALONE_FOR = 60.0  # seconds with at most one person in view that make side talk unlikely
 
     CAMERA_MESSAGES = {
         "waving": "Someone in front of you is waving at you.",
