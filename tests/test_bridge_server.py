@@ -1093,6 +1093,24 @@ class TestPeopleDebounce:
             ],
         }
 
+    def test_moving_to_one_side_is_reported(self, bridge, robot, monkeypatch):
+        # "come to me" drove to where the person had stood, because moving sideways was never reported (2026-10-08)
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+
+        def at(yaw, distance=1.1):
+            snap = self.snap(1, (1, True))
+            snap["people"][0].update(yaw=yaw, distance=distance)
+            return snap
+
+        for yaw, dt in ((0.0, 0.0), (0.0, 1.1), (3.0, 0.5), (-2.0, 0.6)):  # small jitter: one report
+            clock[0] += dt
+            poller._people_changes(at(yaw))
+        assert len(events) == 1
+        for dt in (0.0, 1.1):  # stepped 30 degrees to the left and held it
+            clock[0] += dt
+            poller._people_changes(at(30.0))
+        assert len(events) == 2 and events[-1][1]["people"][0]["yaw"] == 30.0
+
     def test_a_change_is_reported_once_it_has_held(self, bridge, robot, monkeypatch):
         poller, events, clock = self.make(bridge, robot, monkeypatch)
         one = self.snap(1, (1, True))

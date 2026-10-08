@@ -240,3 +240,15 @@ class TestHandshakeNotTaken:
             await asyncio.sleep(0.01)
         prompt = manager.process_user_input.await_args.args[0]
         assert prompt.startswith("[Sensor event] You held your hand out for a handshake")
+
+
+class TestRoutedLookAtMe:
+    async def test_the_rest_of_the_request_still_reaches_claude(self, mock_robot, mock_ai_provider):
+        mock_ai_provider.chat.side_effect = words_only("Turning to you and coming over.")
+        manager = routed_manager(mock_robot, mock_ai_provider, "look_at_me", 0.95)
+        result = await manager.process_user_input("Turn toward me and come to me", source="voice", open_mic=True)
+        assert result.get("intent") is None and result["spoken"] == ["Turning to you and coming over."]
+        first_call = mock_ai_provider.chat.call_args_list[0]
+        sent = first_call.kwargs.get("messages") or first_call.args[0]
+        assert "[Already started: looking at the person." in str(sent)
+        mock_robot.connection.bridge.set_awareness.assert_awaited()

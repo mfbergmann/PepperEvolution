@@ -217,6 +217,8 @@ class AIManager:
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
+                if result.get("spoken"):
+                    self._last_answered_at = self._clock()
                 return result
             heard_before = list(self._heard)
             self._heard.append(user_input)
@@ -235,12 +237,23 @@ class AIManager:
                 self._look_at_speaker()
                 return result
             self._last_talk_at = self._clock()
-            if routed is not None and routed.intent is not None:
+            if routed is not None and routed.intent in ("stop", "quiet"):
+                # stopping is the whole request: nothing goes on to the model
                 intent = next(i for i in INTENTS if i.name == routed.intent)
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
                 return result
+            if routed is not None and routed.intent == "look_at_me":
+                # "turn toward me and come to me": look at once, but the rest of the request still goes to the model
+                # (on 2026-10-08 the look_at_me intent ended the turn and the drive never happened)
+                await self.intents.execute(next(i for i in INTENTS if i.name == "look_at_me"))
+                await self._look_at_whoever_spoke()
+                rec["router"].update(executed=True, action=routed.description, tool="look_at_me")
+                user_input = (
+                    "[Already started: looking at the person. Do not do it again; say a few words and do anything "
+                    f"else that was asked.] {user_input}"
+                )
             if routed is not None:
                 self._start_routed(routed, rec)
                 user_input = (

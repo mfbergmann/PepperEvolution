@@ -2325,15 +2325,24 @@ class SensorPoller(object):
 
     @staticmethod
     def _people_signature(snapshot):
+        """Count, zone and gaze, plus coarse direction (15 degree steps) and distance (0.5 m steps): someone who
+        moved to one side must be reported, or "come to me" drives to where they stood (robot, 2026-10-08)."""
         people = snapshot.get("people") or []
-        return (snapshot.get("people_count"), tuple(sorted((p.get("zone"), p.get("looking")) for p in people)))
+
+        def step(value, size):
+            return None if value is None else int(round(as_float(value, 0.0) / size))
+
+        people_steps = [
+            (p.get("zone"), p.get("looking"), step(p.get("yaw"), 15.0), step(p.get("distance"), 0.5)) for p in people
+        ]
+        return (snapshot.get("people_count"), tuple(sorted(people_steps, key=repr)))
 
     def _people_changes(self, snapshot):
         """Report who is around only once it has been stable for PEOPLE_STABLE_SECONDS.
 
         NAOqi's people detector flickers (on Pepper it alternated between 1 and 2 people several
         times a second), and IDs change when tracking is lost, so the signature is the count plus
-        each person's zone and gaze, not the IDs.
+        each person's zone, gaze and coarse position, not the IDs.
         """
         signature = self._people_signature(snapshot)
         now = self._clock()
