@@ -252,3 +252,25 @@ class TestRoutedLookAtMe:
         sent = first_call.kwargs.get("messages") or first_call.args[0]
         assert "[Already started: looking at the person." in str(sent)
         mock_robot.connection.bridge.set_awareness.assert_awaited()
+
+
+class TestAnswerAfterAQuestion:
+    async def test_an_answer_to_peppers_question_is_not_side_talk(self, mock_robot, mock_ai_provider):
+        def handler(request):
+            questions = json.loads(request.content)["questions"]
+            if "to_pepper" in questions:
+                return httpx.Response(200, json={"answers": {"to_pepper": {"type": "noul", "noul": 0.37}}})
+            return httpx.Response(200, json={"answers": {"action": {"choice": "talk", "probabilities": {"talk": 0.8}}}})
+
+        mock_ai_provider.chat.side_effect = words_only("I lost you. Are you to my left or right?")
+        manager = AIManager(
+            mock_robot,
+            mock_ai_provider,
+            speak_responses=True,
+            tablet_subtitles=False,
+            decider=DecisionClient("http://alien3:11435", transport=httpx.MockTransport(handler)),
+        )
+        await manager.process_user_input("Come to me", source="user")  # typed: Pepper answers with a question
+        manager._last_answered_at = None  # only the question should matter now
+        result = await manager.process_user_input("I'm on your right", source="voice", open_mic=True)
+        assert result["stop_reason"] != "not_addressed"

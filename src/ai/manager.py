@@ -135,6 +135,7 @@ class AIManager:
         self._heard: Deque[str] = deque(maxlen=6)  # recent final transcripts, answered or not (gate context)
         self._camera_reacted: Dict[str, float] = {}
         self._last_answered_at: Optional[float] = None  # end of the last user or voice turn Pepper answered
+        self._last_question_at: Optional[float] = None  # end of the last turn in which Pepper asked a question
         self.router = router  # start Pepper's first action at once from a spoken command (issue #21)
         self.router_threshold = router_threshold
         self._tracking_off = False  # we switched it off for an empty room
@@ -281,6 +282,9 @@ class AIManager:
         self._finish_record(rec, result)
         if source in ("user", "voice") and result.get("spoken"):
             self._last_answered_at = self._clock()
+        spoken = result.get("spoken") or []
+        if spoken and strip_animation_tags(spoken[-1]).rstrip().endswith("?"):
+            self._last_question_at = self._clock()  # what comes next is probably the answer
         self._after_turn(result, submitted, rec)
         return result
 
@@ -298,11 +302,16 @@ class AIManager:
         # Pepper answered someone moments ago: the conversation is with Pepper (misheard follow-ups such as
         # "Not if you can hear me" for "Nod if you can hear me" scored 0.4-0.5 on 2026-10-08)
         talking = self._last_answered_at is not None and self._clock() - self._last_answered_at < self.IN_CONVERSATION
-        verdict = addressed(p, self.addressee_threshold, looking or talking, self.addressee_looking_threshold)
+        # Pepper just asked something: the next words are most likely the answer ("I'm on your right" after
+        # "are you to my left or right?" scored 0.37 and was ignored, 2026-10-08)
+        answering = self._last_question_at is not None and self._clock() - self._last_question_at < self.IN_CONVERSATION
+        lower = self.AFTER_QUESTION_THRESHOLD if answering else self.addressee_looking_threshold
+        verdict = addressed(p, self.addressee_threshold, looking or talking or answering, lower)
         rec["addressee"] = {
             "p": None if p is None else round(p, 3),
             "someone_looking": looking,
             "in_conversation": talking,
+            "after_question": answering,
             "addressed": verdict,
             "seconds": round(self._clock() - started, 3),
         }
@@ -826,6 +835,7 @@ class AIManager:
         task.add_done_callback(self._tasks.discard)
 
     IN_CONVERSATION = 20.0  # seconds after Pepper answered during which the addressee bar stays low
+    AFTER_QUESTION_THRESHOLD = 0.2  # the bar right after Pepper asked a question
 
     CAMERA_MESSAGES = {
         "waving": "Someone in front of you is waving at you.",
