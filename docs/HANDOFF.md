@@ -1,6 +1,6 @@
 # Handoff: where the work stopped and how to pick it up
 
-Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
+Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot and 2026-10-08 after the first session with system one in the loop. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
 
 ## State of the code
 
@@ -102,7 +102,7 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 **Tests on Tuesday (in this order; each recorded and reviewed the same day):**
 1. Start-up: Pepper boots, bridge up by itself, start the host with a session folder. 2 min.
 2. "Come to me" from about 30 degrees off to one side, 2 m away (the direction fix from 2026-10-01): Pepper should turn towards you, then drive. 3 tries.
-3. Router: ten direct commands, half of them paraphrased ("glance right", "face the other way", "give us a wave", "nod if you hear me", "turn left ninety degrees"). Measure the time from the transcript to movement start (target about 0.3 s, from `router.started_s` in the record) and from the end of speech (target about 1.3-1.5 s: the recogniser waits 1.0 s of silence before it finishes a sentence; before the router this was about 4 s), wrong actions (target 0), and that Claude's words match the action. If the 1.0 s silence feels long, try the 0.6 s end-of-speech trial from the earlier plan.
+3. Router: ten direct commands, half of them paraphrased ("glance right", "face the other way", "give us a wave", "nod if you hear me", "turn left ninety degrees"). Measure the time from the transcript to movement start (target about 0.3 s, from `router.started_s` in the record) and from the end of speech (target about 1.3-1.5 s: the recogniser waits 1.0 s of silence before it finishes a sentence; before the router this was about 4 s), wrong actions (target 0), and that Claude's words match the action. (2026-10-08: the 0.6 s end-of-speech trial is dropped; sentences are already cut at 1.0 s, see #26.)
 4. Addressee gate: two people talk to each other near Pepper for two minutes (about Pepper too), then one turns to Pepper and asks something. Count: side talk answered (target 0 or 1), direct questions missed (target 0).
 5. Frame stream: at 1 frame per second, then 2, measure frame to judgement time, Wi-Fi and robot CPU. Then wave at Pepper, hold up an object, and turn away: time from the gesture to Pepper's reaction (target about 1 s).
 6. A free conversation with whoever is around, for the records.
@@ -110,6 +110,28 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 8. Also measure: the robot's CPU (`top` over ssh) and the Wi-Fi while the camera stream runs at 1 and 2 frames a second; and one deliberate minute with Alien3 unreachable (stop the private Ollama: `ssh mberg@alien3 'kill $(cat ~/.ollama-private/serve.pid)'`, then `~/.ollama-private/start.sh`) to confirm Pepper falls back to answering everything with no errors.
 
 **Next milestones after Tuesday:** finish Milestone 4 (vision pass into the world model, #11; the detail tool, #12), get the spoken loop under 2 s and barge-in (#3, #4), verify-after-act and `look_at` (#7, #6), then follow me (#18) and memory of people (Milestone 5, opt-in only).
+
+## Robot session 2026-10-08: results (system one in the loop)
+
+The Tuesday plan ran on Thursday 2026-10-08, solo, first in the small office and then in the open space. There were 12 host runs (`results/sessions/2026-10-08_*`) with 111 spoken turns. Everything was reviewed the same day, and the fixes went out between runs (commits 2ac2782 to a623131; CHANGELOG 0.5.1).
+
+| Test | Result |
+|------|--------|
+| 1 Start-up | Bridge 0.5.0 came up by itself after power-on; host and both decision models ready in seconds |
+| 2 Come to me | Got there only after several tries. The people detector loses the person every few seconds and saw only faces. Reports now follow sideways moves (1263bee); the rest is in #24 (voice direction, camera fallback) |
+| 3 Router | 32 actions started, median **0.25 s** after the transcript; no failures. One wrong action: "turn back the way you [came]" → turn around 180° (#21). Handshake rebuilt: `/pose/offer_hand`, held 15 s, taken detected from the shoulder current dropping (firm grip) or a shake; a gentle grip cannot be told apart (#23) |
+| 4 Addressee gate | Side-talk test postponed (no second person). Alone, the gate dropped 12 of 38 utterances in conversation, 3 of them answers to Pepper's questions. Fixed for the one-person case (a623131); the judgement needs Pepper's own last words (#25) |
+| 5 Camera | Wave → event (p 0.89-0.92), Pepper spoke about 3.6 s after the wave began. Holding up an object scored 0.68-0.77 and was missed at 0.7 → threshold 0.6 for "showing", which then fired (a mug). Robot at 1 fps: CPU 60-82 % idle, bridge 5-22 % of a core, about 45-50 KB/s out (`results/logs/robot-load-2026-10-08.txt`). 2 fps not measured |
+| 8 Fail-open minute | Private Ollama stopped: all turns answered, first word about 2 s, no errors; actions through Claude. The log had a warning per camera frame, so the client now reports an outage once and retries every 30 s (3b42cd2) |
+| 6 Free conversation | Ten minutes, first word median 1.9 s. Problems: the gate (above); about 5 sentences cut in two by the 1.0 s end-of-speech silence, which Pepper answered as fragments (#26); 11 of 26 replies were 4-5 sentences long (#19) |
+| Turning to face someone | "Turn toward me" after a 90° turn gave -165 (the model added the earlier turn), and "turn your body towards me" gave 5° while tracking held the head at -44°. Both fixed (3b42cd2): the direction says the turn to make, and photos carry the measured head direction. Re-tested: person at 67°, Pepper turned 70°. Out of view, there is nothing to go on (#27) |
+
+**Changed by this session:**
+- **Drop the 0.6 s end-of-speech trial.** Shorter silence would cut more sentences; #26 proposes waiting longer when a sentence is clearly unfinished.
+- **Side talk needs two people present.** Re-run test 4 with two people before trusting the gate in a crowd.
+- **Session records are working as intended.** Every fix today came from a review of the records.
+
+**Next robot session:** side talk with two people (#19, #25), the continuation rule (#26), remembering where people were (#27), voice direction for "come to me" (#24, #12), shorter replies, and 2 fps camera load.
 
 ## Session records
 
@@ -120,6 +142,7 @@ Every robot session is recorded in full and reviewed afterwards; real interactio
 | 2026-09-22 | (host log not kept separately) | `recordings/round1-3*`, `round4-nemotron-office` | `results/models-2026-09-22/` |
 | 2026-09-29 | `results/logs/blind-*.log`, `greeting*-2026-09-29.*`, `results/llm/` | `recordings/round5-blind-*`, `recordings/greeting-2026-09-29` | `results/models-2026-09-29/`, `results/logs/greeting-view*.jpg` |
 | 2026-10-01 | `results/logs/{photos,photos2,photos3,photos4,drive}-2026-10-01.*` (photos4: directing Pepper and the two visitors) | `recordings/2026-10-01/` (28 utterances) | `results/photos-2026-10-01/` (ten-turn measurement), `results/photos/` |
+| 2026-10-08 | `results/sessions/2026-10-08_*` (12 runs, each with `review.md` where reviewed), `results/logs/host*-2026-10-08.stdout`, `results/logs/robot-load-2026-10-08.txt` | in each session folder | in each session folder |
 
 What the records cannot show yet, and the plan to close it, is in GitHub issue #16: one session folder per run instead of hand-named files, per-turn timings (end of speech, transcript, first word, end of reply), people events in the host log, and a review script that turns a session into a readable transcript with timings.
 

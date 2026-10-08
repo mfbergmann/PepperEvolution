@@ -4,6 +4,21 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## 0.5.1 (2026-10-08): first robot session with system one
+
+Fixes from the robot session on 2026-10-08 (`docs/HANDOFF.md`, "Robot session 2026-10-08"); each was reviewed from the session records and re-tested on the robot the same day unless noted.
+
+- **Handshake that holds**: NAOqi's Give_3 gesture dropped the arm at once. The bridge's `/pose/offer_hand` holds the right hand out for up to 15 s, notices it being taken (the shoulder current drops when a hand takes the arm's weight, or the hand is shaken, or the touch sensor), shakes gently and lowers the arms; Pepper speaks without body language while the hand is out. The router's "shake hands" and a new `offer_hand` tool use it; the result is recorded. A gentle grip is not detectable from the arm (#23).
+- **Command router on the robot**: actions start about 0.25 s after the transcript (32 on the day). A routed "look at me" looks at once and passes the whole request on (it used to end the turn), and routed head moves are followed by the look-back. A failed routed action is no longer reported as done.
+- **Addressee gate**: in a conversation (Pepper answered within 20 s) the bar is 0.4. Right after Pepper asked a question it is 0.2. With at most one person seen for a minute, anything said in a conversation is answered, because alone with Pepper the gate had dropped 12 of 38 things said to it.
+- **Turning to face people**: the "Around you" direction says it is measured from where the body points now and gives the turn ("turn -75 to face them"), since the model had added an earlier turn on top. Photos carry the measured head direction, since face tracking moves the head without commands. The take_photo result says where the head pointed relative to the body. Re-tested: a person at 67°, Pepper turned 70°.
+- **People reports follow sideways moves** (direction and distance steps in the bridge's change detection); "come to me" had driven straight at a position 18 s old.
+- **Camera events**: a threshold per kind; holding something up counts from 0.6 (it scored 0.68-0.77 and was missed at 0.7).
+- **Decision models down**: the client says so once, answers at once for 30 s and retries, instead of a warning per camera frame and a 0.8 s wait per turn when the host is unreachable. A minute with the models stopped: every turn answered, no errors.
+- **Review script**: shows handshakes, whether the speaker was alone with Pepper, and how much of a slow first word was waiting for the previous turn.
+- Measured: the camera stream at 1 fps costs the robot 5-22 % of a core and about 45-50 KB/s.
+- A printable recording notice for people near Pepper (`docs/signs/`).
+
 ## 0.5.0 (2026-10-03): system one in the loop
 
 Built and tested offline (unit tests, NAOqi's desktop build, replays of real sessions against the local models); the robot test is on 2026-10-06 (`docs/HANDOFF.md`, issue #22).
