@@ -18,6 +18,7 @@ class TestToolDefinitions:
         expected = {
             "speak",
             "play_animation",
+            "offer_hand",
             "move_head",
             "turn",
             "move_forward",

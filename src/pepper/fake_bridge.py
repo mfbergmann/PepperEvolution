@@ -149,6 +149,11 @@ class FakeBridgeClient:
     ) -> Dict[str, Any]:
         return self._record("move_head", yaw=yaw, pitch=pitch, speed=speed, wait=wait)
 
+    async def offer_hand(self, hold: float = 8.0) -> Dict[str, Any]:
+        result = self._record("offer_hand", hold=hold)
+        result.update(taken=True, waited=1.0)
+        return result
+
     async def neutral_pose(self) -> Dict[str, Any]:
         return self._record("neutral_pose")
 

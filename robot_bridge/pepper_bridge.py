@@ -176,6 +176,19 @@ NEUTRAL_JOINTS = (
     ("KneePitch", -0.01),
 )
 NEUTRAL_SPEED = 0.2  # fraction of maximum joint speed
+# /pose/offer_hand: the right arm held out forward, palm in and open, for a handshake (NAOqi has no such animation;
+# Give_3 drops the arm straight away). Pepper's hand has a touch sensor on its back: holding it counts as taking it.
+OFFER_HAND_JOINTS = (
+    ("RShoulderPitch", 0.35),  # forward, a little below horizontal (1.59 hangs down)
+    ("RShoulderRoll", -0.12),
+    ("RElbowYaw", 1.27),  # as at rest: palm faces in, thumb up
+    ("RElbowRoll", 0.3),  # nearly straight
+    ("RWristYaw", 0.0),
+    ("RHand", 0.95),  # open
+)
+OFFER_HAND_SPEED = 0.25
+OFFER_HAND_MAX_HOLD = 15.0  # seconds
+HAND_TOUCH_KEY = "Device/SubDeviceList/RHand/Touch/Back/Sensor/Value"
 BRIDGE_SERVICE_NAME = "PepperBridge"
 # /ws/camera: small frames for the host's situation judgements (a local vision model about once a second).
 # One subscription with a fixed name, so one left behind by a crash can be cleared (NAOqi caps subscribers).
@@ -1131,6 +1144,40 @@ class Robot(object):
         motion.angleInterpolationWithSpeed(names, [a for _, a in NEUTRAL_JOINTS], NEUTRAL_SPEED)
         return {"joints": len(names)}
 
+    def offer_hand(self, hold=8.0):
+        """Hold the right hand out for a handshake; when someone takes it, shake gently, then arms back down.
+
+        Returns whether the hand was taken and how long Pepper waited. An emergency stop ends the wait at once.
+        """
+        hold = clamp(as_float(hold, 8.0), 1.0, OFFER_HAND_MAX_HOLD)
+        motion = self.svc("ALMotion")
+        self._ensure_awake(motion)
+        names = [n for n, _ in OFFER_HAND_JOINTS]
+        motion.angleInterpolationWithSpeed(names, [a for _, a in OFFER_HAND_JOINTS], OFFER_HAND_SPEED)
+        memory = self.svc("ALMemory")
+        started = self.clock()
+        taken = False
+        while not self.halted and self.clock() - started < hold:
+            try:
+                if as_float(memory.getData(HAND_TOUCH_KEY), 0.0) > 0.5:
+                    taken = True
+                    break
+            except Exception:
+                break
+            self.sleep(0.1)
+        waited = self.clock() - started
+        if taken and not self.halted:
+            motion.angleInterpolationWithSpeed(["RHand"], [0.5], 0.3)  # a gentle grip
+            pitch = dict(OFFER_HAND_JOINTS)["RShoulderPitch"]
+            motion.angleInterpolation(
+                ["RShoulderPitch"], [[pitch + 0.12, pitch - 0.04, pitch + 0.12, pitch]], [[0.35, 0.7, 1.05, 1.4]], True
+            )
+            motion.angleInterpolationWithSpeed(["RHand"], [0.95], 0.3)  # let go
+            self.sleep(0.4)
+        if not self.halted:
+            self.neutral_pose()
+        return {"taken": taken, "waited": round(waited, 2)}
+
     def list_animations(self):
         behaviors = self.svc("ALBehaviorManager").getInstalledBehaviors()
         names = sorted(b for b in behaviors if str(b).startswith("animations/"))
@@ -1631,6 +1678,12 @@ class MoveHeadHandler(JSONHandler):
         return self.run_in_thread(
             ROBOT.move_head, self.arg("yaw", 0), self.arg("pitch", 0), self.arg("speed", 0.2), self.arg("wait", True)
         )
+
+
+class OfferHandHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(ROBOT.offer_hand, self.arg("hold", 8.0))
 
 
 class NeutralPoseHandler(JSONHandler):
@@ -2238,6 +2291,7 @@ def make_app():
             (r"/emergency_stop", EmergencyStopHandler),
             (r"/posture", PostureHandler),
             (r"/posture/neutral", NeutralPoseHandler),
+            (r"/pose/offer_hand", OfferHandHandler),
             (r"/wake_up", WakeUpHandler),
             (r"/rest", RestHandler),
             (r"/prepare", PrepareHandler),

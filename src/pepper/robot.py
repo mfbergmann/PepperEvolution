@@ -300,6 +300,10 @@ class PepperRobot:
         self.last_head_move_at = time.monotonic()
         return result
 
+    async def offer_hand(self, hold: float = 8.0) -> Dict[str, Any]:
+        """A handshake: the right hand held out until someone takes it (or ``hold`` seconds), then arms down."""
+        return await self.bridge.offer_hand(hold)
+
     async def neutral_pose(self) -> Dict[str, Any]:
         """Arms and legs back to the standing pose after gestures (the head is left alone)."""
         return await self.bridge.neutral_pose()

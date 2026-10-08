@@ -152,3 +152,48 @@ class TestRouterFollowUps:
         mock_robot.state.awake = False
         manager = routed_manager(mock_robot, mock_ai_provider, "wave", 0.99)
         assert await manager._choose_action("", "Give us a wave", {}) is None
+
+
+class TestOnTheRobotFixes:
+    """From the 2026-10-08 session: handshake, look at me, misheard follow-ups."""
+
+    def test_shake_hand_is_a_real_handshake(self):
+        routed = plan("shake_hand", 0.98, "Put your hand out let's shake on it")
+        assert routed.tool == "offer_hand"
+
+    async def test_routed_handshake_holds_the_hand_out(self, mock_robot, mock_ai_provider):
+        mock_robot.connection.bridge.offer_hand = __import__("unittest.mock").mock.AsyncMock(
+            return_value={"taken": True, "waited": 1.2}
+        )
+        mock_ai_provider.chat.side_effect = words_only("Here's my hand, nice to meet you!")
+        manager = routed_manager(mock_robot, mock_ai_provider, "shake_hand", 0.98)
+        await manager.process_user_input("Put your hand out let's shake on it", source="voice", open_mic=True)
+        await asyncio.sleep(0.01)
+        mock_robot.connection.bridge.offer_hand.assert_awaited_once()
+
+    async def test_look_at_me_faces_forward_and_answers_when_nobody_is_detected(self, mock_robot, mock_ai_provider):
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=False)
+        result = await manager.process_user_input("Look at me", source="voice")
+        assert result["intent"] == "look_at_me" and result["spoken"] == ["Looking at you."]
+        mock_robot.connection.bridge.move_head.assert_awaited_with(0.0, -18.0, 0.3, wait=False)
+
+    async def test_a_misheard_follow_up_is_answered_in_a_conversation(self, mock_robot, mock_ai_provider):
+        def handler(request):
+            questions = json.loads(request.content)["questions"]
+            if "to_pepper" in questions:
+                return httpx.Response(200, json={"answers": {"to_pepper": {"type": "noul", "noul": 0.45}}})
+            return httpx.Response(200, json={"answers": {"action": {"choice": "talk", "probabilities": {"talk": 0.8}}}})
+
+        mock_ai_provider.chat.side_effect = words_only("Yes, I can hear you!")
+        manager = AIManager(
+            mock_robot,
+            mock_ai_provider,
+            speak_responses=True,
+            tablet_subtitles=False,
+            decider=DecisionClient("http://alien3:11435", transport=httpx.MockTransport(handler)),
+        )
+        first = await manager.process_user_input("Not if you can hear me", source="voice", open_mic=True)
+        assert first["stop_reason"] == "not_addressed"  # no conversation yet, nobody seen looking
+        manager._last_answered_at = manager._clock()  # Pepper just answered someone
+        second = await manager.process_user_input("God, if you could hear me", source="voice", open_mic=True)
+        assert second["stop_reason"] != "not_addressed"

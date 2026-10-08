@@ -134,6 +134,7 @@ class AIManager:
         self.addressee_looking_threshold = addressee_looking_threshold  # lower bar when someone looks at Pepper
         self._heard: Deque[str] = deque(maxlen=6)  # recent final transcripts, answered or not (gate context)
         self._camera_reacted: Dict[str, float] = {}
+        self._last_answered_at: Optional[float] = None  # end of the last user or voice turn Pepper answered
         self.router = router  # start Pepper's first action at once from a spoken command (issue #21)
         self.router_threshold = router_threshold
         self._tracking_off = False  # we switched it off for an empty room
@@ -265,6 +266,8 @@ class AIManager:
                 self._rec = None
                 self.executor.clear_already_started()
         self._finish_record(rec, result)
+        if source in ("user", "voice") and result.get("spoken"):
+            self._last_answered_at = self._clock()
         self._after_turn(result, submitted, rec)
         return result
 
@@ -279,10 +282,14 @@ class AIManager:
             self.world is not None
             and (any(person.looking for person in self.world.people) or self.world.sees("facing"))
         )
-        verdict = addressed(p, self.addressee_threshold, looking, self.addressee_looking_threshold)
+        # Pepper answered someone moments ago: the conversation is with Pepper (misheard follow-ups such as
+        # "Not if you can hear me" for "Nod if you can hear me" scored 0.4-0.5 on 2026-10-08)
+        talking = self._last_answered_at is not None and self._clock() - self._last_answered_at < self.IN_CONVERSATION
+        verdict = addressed(p, self.addressee_threshold, looking or talking, self.addressee_looking_threshold)
         rec["addressee"] = {
             "p": None if p is None else round(p, 3),
             "someone_looking": looking,
+            "in_conversation": talking,
             "addressed": verdict,
             "seconds": round(self._clock() - started, 3),
         }
@@ -328,6 +335,8 @@ class AIManager:
                     await self.robot.move_head(routed.args["yaw"], routed.args["pitch"])
                 elif routed.tool == "turn":
                     await self.robot.turn(routed.args["angle"])
+                elif routed.tool == "offer_hand":
+                    await self.robot.offer_hand()
                 elif routed.tool == "play_animation":
                     await self.robot.play_animation(routed.args["name"])
                     await self.robot.neutral_pose()
@@ -343,6 +352,24 @@ class AIManager:
         task.add_done_callback(self._tasks.discard)
         if routed.tool is not None:
             rec["_absorb"] = (routed.tool, task, routed)  # registered with the executor once the turn starts
+
+    async def _look_at_whoever_spoke(self) -> str:
+        """For "look at me": face the person if the detector knows where they are, else look straight ahead at
+        face height (on 2026-10-08 in a small office the detector never saw the speaker and nothing moved)."""
+        person = self.world.people[0] if self.world is not None and self.world.people else None
+        try:
+            if person is not None and person.yaw is not None:
+                pitch = person.pitch if person.pitch is not None else self.NEUTRAL_HEAD[1]
+                await self.robot.move_head(person.yaw, pitch, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+            else:
+                await self.robot.move_head(*self.NEUTRAL_HEAD, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+            # face tracking (just switched on by the intent) takes over from here once it sees a face
+            await self.robot.set_awareness(
+                True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=self.TRACKING_STIMULI
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug(f"Could not turn to the speaker: {exc}")
+        return "Looking at you."
 
     def _look_at_speaker(self):
         """After side talk Pepper does not answer, it still looks at the person, as anyone would."""
@@ -417,8 +444,11 @@ class AIManager:
             if chat is not None and not chat.done():
                 chat.cancel()  # do not wait for the model to finish a reply nobody wants
         outcome = await self.intents.execute(intent)
+        ack = intent.ack
+        if intent.name == "look_at_me" and outcome.get("ok"):
+            ack = await self._look_at_whoever_spoke()
         spoken: List[str] = []
-        ack = intent.ack if outcome.get("ok") else "Sorry, that didn't work."
+        ack = ack if outcome.get("ok") else "Sorry, that didn't work."
         if speak and ack and not self.robot.halted:
             try:
                 await self.robot.speak(ack, animated=False)
@@ -755,6 +785,8 @@ class AIManager:
         task = asyncio.create_task(self._react(prompt, now), name="event-reaction")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    IN_CONVERSATION = 20.0  # seconds after Pepper answered during which the addressee bar stays low
 
     CAMERA_MESSAGES = {
         "waving": "Someone in front of you is waving at you.",

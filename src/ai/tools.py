@@ -73,6 +73,13 @@ TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "offer_hand",
+        "description": "Shake hands: hold your right hand out, open, until the person takes it (you feel it on the "
+        "back of your hand), then shake gently and lower your arm. Use this when someone wants to shake hands, "
+        "rather than a gesture animation.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "play_animation",
         "description": "Play a full-body gesture animation. Known animations: " + _animation_help() + ".",
         "input_schema": {

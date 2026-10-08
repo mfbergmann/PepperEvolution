@@ -114,6 +114,17 @@ class ToolExecutor:
             result = await self.robot.speak(text, language=language, animated=animated)
             return ToolOutcome(True, {"spoken": text, "duration": result.get("duration")})
 
+        if name == "offer_hand":
+            result = await self.robot.offer_hand()
+            taken = bool(result.get("taken")) if isinstance(result, dict) else False
+            return ToolOutcome(
+                True,
+                {
+                    "taken": taken,
+                    "note": "They shook your hand." if taken else "Nobody took your hand; your arm is down again.",
+                },
+            )
+
         if name == "play_animation":
             anim_name, error = self._resolve_animation(str(inp.get("name", "")).strip())
             if error:

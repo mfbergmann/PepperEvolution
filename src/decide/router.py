@@ -71,7 +71,6 @@ START_AT_ONCE = {
 ANIMATIONS = {
     "wave": "animations/Stand/Gestures/Hey_1",
     "nod": "animations/Stand/Gestures/Yes_1",
-    "shake_hand": "animations/Stand/Gestures/Give_3",
 }
 
 DEFAULT_TURN = 90.0
@@ -171,6 +170,8 @@ def plan(action: str, probability: float, text: str) -> Optional[Routed]:
         angle = -degrees if action == "turn_right" else degrees
         words = "turning around" if action == "turn_around" else f"turning {action[5:]} {degrees:.0f} degrees"
         return Routed(action, probability, words, "turn", {"angle": angle})
+    if action == "shake_hand":
+        return Routed(action, probability, "holding a hand out to shake", "offer_hand", {})
     if action in ANIMATIONS:
         words = {"wave": "waving", "nod": "nodding", "shake_hand": "offering a hand"}[action]
         return Routed(action, probability, words, "play_animation", {"name": ANIMATIONS[action]})

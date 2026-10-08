@@ -1203,3 +1203,35 @@ class TestCameraStream:
         stream._running = True
         stream._loop()
         assert sent == [] and "close_all" in scheduled and stream.last_error
+
+
+class TestOfferHand:
+    def test_hand_held_out_then_shaken_when_taken(self, bridge, robot):
+        mem = robot.session._session.memory
+        mem[bridge.HAND_TOUCH_KEY] = 0.0
+        naps = []
+
+        def sleep(seconds):
+            naps.append(seconds)
+            if len(naps) == 3:
+                mem[bridge.HAND_TOUCH_KEY] = 1.0  # someone takes the hand
+
+        robot.sleep = sleep
+        result = robot.offer_hand(8)
+        assert result["taken"] is True and result["waited"] < 1.0
+        motion = [c[0] for c in calls(robot, "ALMotion")]
+        assert motion.count("angleInterpolationWithSpeed") >= 4  # out, grip, let go, neutral
+        assert "angleInterpolation" in motion  # the shake
+
+    def test_nobody_takes_it(self, bridge, robot):
+        robot.session._session.memory[bridge.HAND_TOUCH_KEY] = 0.0
+        result = robot.offer_hand(1.0)
+        assert result["taken"] is False and result["waited"] >= 1.0
+        assert "angleInterpolation" not in [c[0] for c in calls(robot, "ALMotion")]  # no shake
+
+    def test_refused_while_resting(self, robot):
+        import pytest
+
+        robot.svc("ALMotion").awake = False
+        with pytest.raises(RuntimeError, match="resting"):
+            robot.offer_hand(5)
