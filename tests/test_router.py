@@ -253,6 +253,33 @@ class TestRoutedLookAtMe:
         assert "[Already started: looking at the person." in str(sent)
         mock_robot.connection.bridge.set_awareness.assert_awaited()
 
+    async def test_the_words_do_not_wait_for_face_tracking(self, mock_robot, mock_ai_provider):
+        # robot 2026-10-08: switching tracking on took 1.5 s, the look started 1.8 s after hearing, the note came twice
+        import asyncio
+
+        tracking_on = asyncio.Event()
+
+        async def slow_awareness(*args, **kwargs):
+            await asyncio.sleep(0.3)
+            tracking_on.set()
+            return {}
+
+        mock_robot.connection.bridge.set_awareness = slow_awareness
+        seen = {}
+
+        async def chat(messages, tools=None, system=None, on_text=None):
+            seen["tracking_on_when_asked"] = tracking_on.is_set()
+            seen["sent"] = str(messages[-1]["content"])
+            return AIResponse(text="There you are!", stop_reason="end_turn")
+
+        mock_ai_provider.chat.side_effect = chat
+        manager = routed_manager(mock_robot, mock_ai_provider, "look_at_me", 0.95)
+        await manager.process_user_input("Can you point at me", source="voice", open_mic=True)
+        assert seen["tracking_on_when_asked"] is False  # the model was asked while the head was still turning
+        assert seen["sent"].count("[Already started") == 1
+        await asyncio.sleep(0.35)
+        assert tracking_on.is_set()
+
 
 class TestAnswerAfterAQuestion:
     async def test_an_answer_to_peppers_question_is_not_side_talk(self, mock_robot, mock_ai_provider):

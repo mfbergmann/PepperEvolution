@@ -248,14 +248,12 @@ class AIManager:
             if routed is not None and routed.intent == "look_at_me":
                 # "turn toward me and come to me": look at once, but the rest of the request still goes to the model
                 # (on 2026-10-08 the look_at_me intent ended the turn and the drive never happened)
-                await self.intents.execute(next(i for i in INTENTS if i.name == "look_at_me"))
-                await self._look_at_whoever_spoke()
-                rec["router"].update(executed=True, action=routed.description, tool="look_at_me")
+                self._start_look_at_me(routed, rec)
                 user_input = (
                     "[Already started: looking at the person. Do not do it again; say a few words and do anything "
                     f"else that was asked.] {user_input}"
                 )
-            if routed is not None:
+            elif routed is not None:
                 self._start_routed(routed, rec)
                 user_input = (
                     f"[Already started: {routed.description}. It is under way, so do not do it again; say a few "
@@ -301,7 +299,11 @@ class AIManager:
         )
         # Pepper answered someone moments ago: the conversation is with Pepper (misheard follow-ups such as
         # "Not if you can hear me" for "Nod if you can hear me" scored 0.4-0.5 on 2026-10-08)
-        talking = self._last_answered_at is not None and self._clock() - self._last_answered_at < self.IN_CONVERSATION
+        alone = self.world is not None and self.world.most_in_view(self.ALONE_FOR) <= 1
+        # alone with Pepper, a pause of half a minute is still the same conversation ("It is a pretty cool space",
+        # 32 s after Pepper described the room, scored 0.22 and was ignored, 2026-10-08)
+        window = self.ALONE_FOR if alone else self.IN_CONVERSATION
+        talking = self._last_answered_at is not None and self._clock() - self._last_answered_at < window
         # Pepper just asked something: the next words are most likely the answer ("I'm on your right" after
         # "are you to my left or right?" scored 0.37 and was ignored, 2026-10-08)
         answering = self._last_question_at is not None and self._clock() - self._last_question_at < self.IN_CONVERSATION
@@ -310,7 +312,6 @@ class AIManager:
         # Side talk needs someone to talk to. Alone with Pepper on 2026-10-08, 12 of 38 things said to it mid-
         # conversation scored 0.06-0.35 and went unanswered, three of them answers to its own questions (the model
         # never sees what Pepper said). In a conversation with nobody else seen for a minute, answer.
-        alone = self.world is not None and self.world.most_in_view(self.ALONE_FOR) <= 1
         if not verdict and alone and (talking or answering):
             verdict = True
         rec["addressee"] = {
@@ -388,6 +389,27 @@ class AIManager:
         task.add_done_callback(self._tasks.discard)
         if routed.tool is not None:
             rec["_absorb"] = (routed.tool, task, routed)  # registered with the executor once the turn starts
+
+    def _start_look_at_me(self, routed: Routed, rec: Dict[str, Any]):
+        """A routed "look at me", in the background: switching face tracking on takes NAOqi about 1.5 s, and the
+        model's words used to wait for it ("Can you point at me", 2026-10-08: 1.8 s before the look, 3.5 s to the
+        first word, and the "already started" note twice)."""
+        self.logger.info(f"Routed at once: {routed.description} (p={routed.probability:.2f})")
+        start = rec.get("heard_at") or rec["received_at"]
+        rec["router"].update(
+            executed=True, action=routed.description, tool="look_at_me", started_s=round(self._clock() - start, 3)
+        )
+
+        async def run():
+            self.robot.direct_commands_running += 1  # reflexes stand back while it runs
+            try:
+                await self._look_at_whoever_spoke()
+            finally:
+                self.robot.direct_commands_running -= 1
+
+        task = asyncio.create_task(run(), name="routed-look_at_me")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _look_at_whoever_spoke(self) -> str:
         """For "look at me": face the person if the detector knows where they are, else look straight ahead at

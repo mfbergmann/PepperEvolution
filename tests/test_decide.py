@@ -219,3 +219,13 @@ class TestAlone:
         rec = {}
         assert await manager._meant_for_pepper([], "Is actually a good analogy", rec) is False
         assert rec["addressee"]["alone"] is False
+
+    async def test_alone_a_pause_of_half_a_minute_is_the_same_conversation(self, mock_robot, mock_ai_provider):
+        person = {"id": 1, "distance": 1.4, "looking": False}
+        manager = await gated_manager(mock_robot, mock_ai_provider, 0.221, people=[person])
+        manager._last_answered_at = manager._clock() - 32  # "It is a pretty cool space", 32 s after the reply
+        rec = {}
+        assert await manager._meant_for_pepper([], "It is a pretty cool space", rec) is True
+        manager.world.update_people(2, [person, {"id": 2}])  # with someone else around, 32 s is too long
+        rec = {}
+        assert await manager._meant_for_pepper([], "It is a pretty cool space", rec) is False
