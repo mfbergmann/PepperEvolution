@@ -143,7 +143,7 @@ class BridgeClient:
         """``wait``: the bridge answers once the head has arrived and stopped (up to 3 s)."""
         return await self._post("/move/head", json={"yaw": yaw, "pitch": pitch, "speed": speed, "wait": wait})
 
-    async def offer_hand(self, hold: float = 8.0) -> Dict[str, Any]:
+    async def offer_hand(self, hold: float = 15.0) -> Dict[str, Any]:
         """Hold the right hand out for a handshake, shake when it is taken (back-of-hand touch), arms back down."""
         return await self._post("/pose/offer_hand", json={"hold": hold}, timeout=self.action_timeout)
 

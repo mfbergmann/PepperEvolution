@@ -55,12 +55,17 @@ def turn_lines(turn: Dict[str, Any]) -> List[str]:
     if gate:
         verdict = "answered" if gate.get("addressed") else "NOT answered (side talk)"
         looking = ", someone looking" if gate.get("someone_looking") else ""
+        looking += ", in a conversation" if gate.get("in_conversation") else ""
         lines.append(f"      gate: p={gate.get('p')} {verdict}{looking} ({gate.get('seconds')} s)")
     router = turn.get("router")
     if router and router.get("choice"):
         started = f", started {router.get('started_s')} s after hearing" if router.get("executed") else ""
         what = f" -> {router.get('action')}" if router.get("executed") else " (left to Claude)"
         lines.append(f"      router: {router['choice']} p={router.get('p')}{what}{started}")
+        if router.get("result"):
+            lines.append(f"      result: {router['result']}")
+        if router.get("failed"):
+            lines.append(f"      FAILED: {router['failed']}")
     if turn.get("intent"):
         lines.append(f"      intent: {turn['intent']}")
     for tool in turn.get("tools", []):
@@ -83,6 +88,8 @@ def event_line(event: Dict[str, Any]) -> str:
         return f"{at}  · people in view: {event.get('count')}"
     if kind == "greeting":
         return f"{at}  · greeting someone at {event.get('distance')} m"
+    if kind == "handshake":
+        return f"{at}  · handshake: {'taken' if event.get('taken') else 'not taken'} after {event.get('waited')} s"
     if kind == "camera_event":
         return f"{at}  · camera: {event.get('what')} (p={event.get('p')})"
     if kind in ("touch", "bumper"):
@@ -127,7 +134,12 @@ def review(folder: str) -> str:
             if not tool.get("ok"):
                 flags.append(f"tool {tool.get('name')} failed: {tool.get('result', '')[:120]}")
         gate = t.get("addressee") or {}
-        if gate.get("addressed") and not gate.get("someone_looking") and (gate.get("p") or 1) < 0.8:
+        if (
+            gate.get("addressed")
+            and not gate.get("someone_looking")
+            and not gate.get("in_conversation")
+            and (gate.get("p") or 1) < 0.8
+        ):
             flags.append(f"answered with nobody looking at Pepper (p={gate.get('p')}): {t.get('text')!r}")
     for t in gated_out:
         flags.append(f"not answered (check it was side talk): {t.get('text')!r} p={t['addressee'].get('p')}")

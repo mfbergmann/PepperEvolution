@@ -117,6 +117,9 @@ class ToolExecutor:
         if name == "offer_hand":
             result = await self.robot.offer_hand()
             taken = bool(result.get("taken")) if isinstance(result, dict) else False
+            self.logger.info(
+                f"Handshake: taken={taken}, waited {result.get('waited') if isinstance(result, dict) else '?'} s"
+            )
             return ToolOutcome(
                 True,
                 {
