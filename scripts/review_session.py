@@ -17,7 +17,8 @@ import json
 import os
 import statistics
 import sys
-from typing import Any, Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 SLOW_FIRST_WORD = 4.0  # seconds from hearing to Pepper's first word
 LONG_REPLY_SENTENCES = 4
@@ -98,6 +99,31 @@ def event_line(event: Dict[str, Any]) -> str:
     return ""
 
 
+def _seconds(at: str) -> Optional[float]:
+    try:
+        return datetime.fromisoformat(at).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def waited_for_previous(turn: Dict[str, Any], turns: List[Dict[str, Any]]) -> float:
+    """Seconds this turn was heard before the turn still running ended (turns run one at a time; ``at`` is the end).
+
+    "Looking", said while Pepper was mid-turn, showed 16.5 s to the first word (robot 2026-10-08): 14.6 s of it was
+    the previous turn still going.
+    """
+    heard = _seconds(turn.get("heard") or turn.get("received") or "")
+    if heard is None:
+        return 0.0
+    ends = [
+        _seconds(t.get("at", ""))
+        for t in turns
+        if t is not turn and (_seconds(t.get("heard") or t.get("received") or "") or heard) < heard
+    ]
+    busy_until = max((e for e in ends if e is not None), default=None)
+    return max(0.0, busy_until - heard) if busy_until is not None else 0.0
+
+
 def review(folder: str) -> str:
     turns = load(os.path.join(folder, "turns.jsonl"))
     events = load(os.path.join(folder, "events.jsonl"))
@@ -128,7 +154,9 @@ def review(folder: str) -> str:
     flags = []
     for t in answered:
         if (t.get("first_word_s") or 0) > SLOW_FIRST_WORD:
-            flags.append(f"slow first word ({t['first_word_s']} s): {t.get('text')!r}")
+            waited = waited_for_previous(t, turns)
+            why = f"; {waited:.1f} s of it waiting for the previous turn to finish" if waited > 1.0 else ""
+            flags.append(f"slow first word ({t['first_word_s']} s{why}): {t.get('text')!r}")
         spoken = t.get("spoken") or []
         if len(spoken) >= LONG_REPLY_SENTENCES or sum(len(s) for s in spoken) > LONG_REPLY_CHARS:
             flags.append(f"long reply ({len(spoken)} sentences): {t.get('text')!r}")

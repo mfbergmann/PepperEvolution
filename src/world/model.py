@@ -70,13 +70,19 @@ def _ago(seconds: float) -> str:
 
 
 def _direction(yaw: Optional[float]) -> Optional[str]:
-    """Where a person is relative to Pepper's body, in the terms of the turn tool (left = positive degrees)."""
+    """Where a person is relative to Pepper's body, in the terms of the turn tool (left = positive degrees).
+
+    The turn to face them is spelled out: on the robot (2026-10-08), with someone "about 75° to your right" just after
+    a 90° turn left, the model turned -165, adding the earlier turn back on top.
+    """
     if yaw is None:
         return None
     if abs(yaw) < 10:
-        return "straight ahead"
+        return "straight ahead of your body"
     degrees = int(round(abs(yaw) / 5.0) * 5)
-    return f"about {degrees}° to your {'left' if yaw > 0 else 'right'}"
+    side = "left" if yaw > 0 else "right"
+    turn = degrees if yaw > 0 else -degrees
+    return f"about {degrees}° to your {side} of where your body points now (turn {turn} to face them)"
 
 
 def _duration(seconds: Optional[int]) -> Optional[str]:

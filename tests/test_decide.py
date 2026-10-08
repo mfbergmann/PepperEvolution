@@ -49,6 +49,58 @@ class TestClient:
             assert await client.ask("nimble", "s", {}) is None
             assert client.failures == 1 and client.last_error
 
+    async def test_unreachable_server_is_skipped_until_the_retry(self):
+        now = [0.0]
+        tries = []
+
+        def refused(request):
+            tries.append(now[0])
+            raise httpx.ConnectError("All connection attempts failed", request=request)
+
+        client = DecisionClient("http://alien3:11435", transport=httpx.MockTransport(refused), clock=lambda: now[0])
+        assert await client.ask("clef-flash", "s", {}) is None and client.down
+        for t in (1.0, 2.0, 29.0):  # a camera frame a second: answered at once, nothing sent, nothing logged
+            now[0] = t
+            assert await client.ask("clef-flash", "s", {}) is None
+        assert tries == [0.0] and client.skipped == 3
+        now[0] = 31.0
+        assert await client.ask("nimble", "s", {}) is None
+        assert tries == [0.0, 31.0] and client.status()["down"] is True
+
+    async def test_back_after_the_outage(self):
+        now = [0.0]
+        up = [False]
+
+        def handler(request):
+            if not up[0]:
+                raise httpx.ConnectError("refused", request=request)
+            return noul(0.9)(request)
+
+        client = DecisionClient("http://alien3:11435", transport=httpx.MockTransport(handler), clock=lambda: now[0])
+        await client.ask("nimble", "s", {})
+        up[0], now[0] = True, 40.0
+        assert (await client.ask("nimble", "s", {}))["to_pepper"]["noul"] == 0.9
+        assert not client.down and client.down_until is None
+
+    async def test_one_slow_answer_is_not_an_outage(self):
+        slow = [True]
+
+        def handler(request):
+            if slow[0]:
+                raise httpx.ReadTimeout("slow", request=request)
+            return noul(0.9)(request)
+
+        client = client_answering(handler)
+        await client.ask("nimble", "s", {})
+        await client.ask("nimble", "s", {})
+        assert not client.down
+        slow[0] = False
+        assert await client.ask("nimble", "s", {}) is not None
+        slow[0] = True
+        for _ in range(3):
+            await client.ask("nimble", "s", {})
+        assert client.down  # three in a row: treat as down
+
     async def test_warm_loads_each_model(self):
         models = []
 

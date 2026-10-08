@@ -55,6 +55,25 @@ class ToolOutcome:
         return result
 
 
+def _photo_direction(yaw: Optional[float]) -> str:
+    """Where the head pointed, relative to the body, when the photo was taken (left = positive, as for ``turn``).
+
+    On the robot (2026-10-08), with face tracking holding the head 40° to the right, "turn your body towards me" was
+    answered from a photo with the person in the middle: the model turned 5° instead of about 40°.
+    """
+    if yaw is None:
+        return ""
+    if abs(yaw) < 10:
+        return " Your head was pointing straight ahead of your body."
+    degrees = int(round(abs(yaw) / 5.0) * 5)
+    side = "left" if yaw > 0 else "right"
+    return (
+        f" Your head was turned about {degrees}° to your {side} of your body, so whatever is in the middle of the "
+        f"photo is about {degrees}° to your {side} of where your body points (turn {degrees if yaw > 0 else -degrees} "
+        "to face it with your body)."
+    )
+
+
 class ToolExecutor:
     """Validates and executes tool calls against the robot."""
 
@@ -204,6 +223,7 @@ class ToolExecutor:
                     "camera": "forehead" if camera == 0 else "mouth",
                     "note": (
                         "The photo is attached above; describe what you actually see in it."
+                        + _photo_direction(getattr(photo, "yaw", None))
                         + (
                             " It came out blurry even on a second try, so say so rather than guess at details."
                             if photo.blurry

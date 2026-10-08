@@ -1088,7 +1088,7 @@ class AIManager:
         if photo is None or taken_at is None:
             return ""
         age = time.monotonic() - taken_at
-        yaw = photo.head_yaw
+        yaw = getattr(photo, "yaw", photo.head_yaw)
         if yaw is None:
             where = ""
         elif yaw > 15:

@@ -86,3 +86,27 @@ async def test_a_recorded_session_reads_as_a_timed_transcript(mock_robot, mock_a
 def test_an_empty_folder_still_reviews(tmp_path):
     text = load_review().review(str(tmp_path))
     assert "## Summary" in text and "- none" in text
+
+
+def test_a_turn_heard_mid_turn_says_it_waited(tmp_path):
+    turns = [
+        {
+            "at": "2026-10-08T18:53:33.800",
+            "heard": "2026-10-08T18:53:13.953",
+            "source": "voice",
+            "text": "Turn",
+            "first_word_s": 1.8,
+            "spoken": ["Okay."],
+        },
+        {
+            "at": "2026-10-08T18:53:39.960",
+            "heard": "2026-10-08T18:53:19.184",
+            "source": "voice",
+            "text": "Looking",
+            "first_word_s": 16.5,
+            "spoken": ["Take your time."],
+        },
+    ]
+    (tmp_path / "turns.jsonl").write_text("\n".join(json.dumps(t) for t in turns) + "\n")
+    text = load_review().review(str(tmp_path))
+    assert "slow first word (16.5 s; 14.6 s of it waiting for the previous turn to finish): 'Looking'" in text

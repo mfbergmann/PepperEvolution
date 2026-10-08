@@ -72,10 +72,16 @@ class TestWorldModel:
         ]
         await world.handle_event("people", {"count": 2, "people": people})
         text = world.summary()
-        assert "one person, about 1.5 m away, about 20° to your left, looking at you" in text
-        assert "another person, about 2.5 m away, about 60° to your right" in text
+        assert (
+            "one person, about 1.5 m away, about 20° to your left of where your body points now "
+            "(turn 20 to face them), looking at you" in text
+        )
+        assert (
+            "another person, about 2.5 m away, about 60° to your right of where your body points now "
+            "(turn -60 to face them)" in text
+        )
         await world.handle_event("people", {"count": 1, "people": [{"id": 1, "distance": 1.0, "yaw": 4.0}]})
-        assert "about 1.0 m away, straight ahead" in world.summary()
+        assert "about 1.0 m away, straight ahead of your body" in world.summary()
 
     async def test_zone_words_when_distance_is_missing(self):
         world, _ = world_at()

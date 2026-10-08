@@ -64,6 +64,32 @@ class TestRetake:
         assert "blurry" in outcome.data["note"]
 
 
+class TestPhotoDirection:
+    """Face tracking turns the head without commands: the photo's direction comes from the measured head."""
+
+    async def test_measured_head_wins_over_the_last_command(self, mock_robot):
+        # robot 2026-10-08: commanded -3.7, measured -44.3 (tracking the person); the model turned 5° instead of 45°
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value={**picture(), "head": [-44.3, -1.8]})
+        await mock_robot.move_head(-3.7, 0)
+        outcome = await ToolExecutor(mock_robot).execute("take_photo", {})
+        assert outcome.image.yaw == -44.3
+        assert "about 45° to your right of your body" in outcome.data["note"]
+        assert "(turn -45 to face it with your body)" in outcome.data["note"]
+
+    async def test_straight_ahead_and_unknown(self, mock_robot):
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value={**picture(), "head": [4.0, -18.0]})
+        outcome = await ToolExecutor(mock_robot).execute("take_photo", {})
+        assert "straight ahead of your body" in outcome.data["note"]
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value=picture())
+        mock_robot.last_head_yaw = None
+        outcome = await ToolExecutor(mock_robot).execute("take_photo", {})
+        assert "Your head was" not in outcome.data["note"]
+
+    def test_commanded_yaw_when_nothing_was_measured(self):
+        assert Photo("image/jpeg", "", 1, 1, head_yaw=30.0).yaw == 30.0
+        assert Photo("image/jpeg", "", 1, 1, head_yaw=30.0, head_measured=[-20.0, 0.0]).yaw == -20.0
+
+
 def reply(text):
     """A model call that streams ``text`` to the speaker, as the real providers do."""
 
@@ -220,6 +246,12 @@ class TestLastPhotoInTheState:
         await mock_robot.take_picture()
         line = self.manager(mock_robot, mock_ai_provider)._last_photo_line()
         assert line == "Your last photo was taken just now."
+
+    async def test_direction_from_the_measured_head(self, mock_robot, mock_ai_provider):
+        mock_robot.connection.bridge.take_picture = AsyncMock(return_value={**picture(), "head": [-44.3, -1.8]})
+        await mock_robot.take_picture()
+        line = self.manager(mock_robot, mock_ai_provider)._last_photo_line()
+        assert line == "Your last photo was taken just now with your head turned right."
 
     async def test_face_tracking_means_the_head_has_moved(self, mock_robot, mock_ai_provider):
         mock_robot.connection.bridge.take_picture = AsyncMock(return_value=picture())

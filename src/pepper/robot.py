@@ -80,6 +80,20 @@ class Photo:
     def data_url(self) -> str:
         return f"data:{self.media_type};base64,{self.base64_data}"
 
+    @property
+    def yaw(self) -> Optional[float]:
+        """Where the head pointed (degrees, left positive): measured if the bridge said, else last commanded.
+
+        Face tracking turns the head without commands: on the robot (2026-10-08) a photo was measured at -44° while
+        the last commanded yaw was -4°.
+        """
+        if self.head_measured:
+            try:
+                return float(self.head_measured[0])
+            except (TypeError, ValueError, IndexError):
+                pass
+        return self.head_yaw
+
 
 BLURRY_BELOW = 250.0  # sharpness; photos taken while Pepper's head turned scored 76-200, still ones 290-1250
 
