@@ -187,7 +187,10 @@ class WorldModel:
                 and (degrees > MOVED_UNEXPECTEDLY_DEGREES or metres > MOVED_UNEXPECTEDLY_METRES)
             ):
                 self.logger.info(f"Pepper was moved ({degrees:.0f}°, {metres:.2f} m) with no move running")
-                self.timeline.add("moved_unexpectedly", measured.at, degrees=round(degrees), metres=round(metres, 2))
+                if any(t.placed for t in self.tracker.tracks):  # only worth telling when it costs remembered places
+                    self.timeline.add(
+                        "moved_unexpectedly", measured.at, degrees=round(degrees), metres=round(metres, 2)
+                    )
                 self.tracker.forget_positions()
         self.pose = measured
 
