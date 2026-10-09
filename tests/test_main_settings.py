@@ -34,6 +34,7 @@ class TestSettings:
         assert s.autonomous_life == "disabled"
         assert s.speak_responses is True and s.fake_bridge is False
         assert s.api_port == 8000
+        assert s.memory_dir is None  # long-term memory is opt-in (MEMORY_DIR)
 
     def test_reactive_and_voice_defaults(self, monkeypatch):
         for key in (

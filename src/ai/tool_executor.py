@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from ..pepper.robot import PepperRobot, Photo
-from .tools import EYE_COLORS, KNOWN_ANIMATIONS, POSTURES
+from .tools import EYE_COLORS, KNOWN_ANIMATIONS, MEMORY_TOOL_NAMES, POSTURES
 
 
 @dataclass
@@ -77,8 +77,9 @@ def _photo_direction(yaw: Optional[float]) -> str:
 class ToolExecutor:
     """Validates and executes tool calls against the robot."""
 
-    def __init__(self, robot: PepperRobot):
+    def __init__(self, robot: PepperRobot, memory: Optional[Any] = None):
         self.robot = robot
+        self.memory = memory  # src/memory Memory, when long-term memory is on (MEMORY_DIR)
         self.logger = logger.bind(module="ToolExecutor")
         self._already: Optional[Any] = None  # (tool name, task) started by the command router this turn
 
@@ -123,7 +124,30 @@ class ToolExecutor:
         getattr(self.logger, level)(f"Tool {tool_name} -> {outcome.summary()[:2000]}")  # full, for reviewing sessions
         return outcome
 
+    def _memory_tool(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:
+        """remember_person, remember, recall, forget_person (src/memory/service.py enforces consent)."""
+        if self.memory is None:
+            return ToolOutcome.failure("Long-term memory is switched off here.")
+        if name == "remember_person":
+            result = self.memory.remember_person(str(inp.get("name", "")))
+        elif name == "remember":
+            result = self.memory.remember(str(inp.get("text", "")), about=inp.get("about") or None)
+        elif name == "recall":
+            result = self.memory.recall(
+                query=str(inp.get("query") or ""), about=inp.get("about") or None, here=bool(inp.get("here"))
+            )
+            result = {"ok": True, **result}
+        else:
+            result = self.memory.forget_person(str(inp.get("name", "")))
+        ok = bool(result.pop("ok", True))
+        if not ok:
+            return ToolOutcome.failure(str(result.pop("error", "failed")), **result)
+        return ToolOutcome(True, result)
+
     async def _dispatch(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:
+        if name in MEMORY_TOOL_NAMES:
+            return self._memory_tool(name, inp)
+
         if name == "speak":
             text = str(inp.get("text", "")).strip()
             if not text:

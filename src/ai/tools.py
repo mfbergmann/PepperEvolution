@@ -204,3 +204,55 @@ TOOLS: List[Dict[str, Any]] = [
 ]
 
 TOOL_NAMES = [t["name"] for t in TOOLS]
+
+# Offered only when long-term memory is on (MEMORY_DIR; docs/MEMORY.md)
+MEMORY_TOOLS: List[Dict[str, Any]] = [
+    {
+        "name": "remember_person",
+        "description": "Remember the person you are talking with, by name, so you know them next time. Only after "
+        'they said yes when you asked (for example "Shall I remember you next time?"), or when they asked you to '
+        "remember them. Also when someone you remember agrees again. Fails if you did not hear them agree.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The name they told you."}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "remember",
+        "description": "Keep a fact for later: something about the lab, or something a person you remember wants "
+        "you to keep about themselves. Never store facts about people who have not agreed to be remembered.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The fact, in a short plain sentence."},
+                "about": {"type": "string", "description": "The person's name, if it is about someone you remember."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "recall",
+        "description": "Look up what you know: who is around and what happened in the last ten minutes, facts about "
+        "the lab, a person you remember (about), and past sessions. Set here to true when the person you are "
+        "talking with has just told you their name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Words to search your facts for (optional)."},
+                "about": {"type": "string", "description": "A person's name (optional)."},
+                "here": {"type": "boolean", "description": "The person in front of you says this is their name."},
+            },
+        },
+    },
+    {
+        "name": "forget_person",
+        "description": "Delete everything you remember about a person, at once, when they ask you to forget them.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "Their name."}},
+            "required": ["name"],
+        },
+    },
+]
+MEMORY_TOOL_NAMES = [t["name"] for t in MEMORY_TOOLS]

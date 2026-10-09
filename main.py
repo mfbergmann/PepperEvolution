@@ -39,8 +39,10 @@ from src.decide import DecisionClient  # noqa: E402
 from src.decide.addressee import MODEL as ADDRESSEE_MODEL  # noqa: E402
 from src.perception import FrameWatcher  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
+from src.memory import Memory, MemoryStore  # noqa: E402
 from src.session import SessionRecorder  # noqa: E402
-from src.world import WorldModel  # noqa: E402
+from src.world import Observation, WorldModel  # noqa: E402
+from src.world.observations import IDENTITY, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -94,6 +96,7 @@ class Settings:
     router_threshold: float
     vision_stream: bool
     vision_fps: float
+    memory_dir: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -144,6 +147,7 @@ class Settings:
             router_threshold=float(os.getenv("ROUTER_THRESHOLD") or "0.7"),
             vision_stream=env_bool("VISION_STREAM", True),
             vision_fps=float(os.getenv("VISION_FPS") or "1"),
+            memory_dir=os.getenv("MEMORY_DIR") or None,
         )
 
 
@@ -192,6 +196,13 @@ class PepperEvolution:
         self.api_server: Optional[APIServer] = None
         self.voice: Optional[VoiceInput] = None
         self.world = WorldModel()
+        # Long-term memory (docs/MEMORY.md): people who agreed to be remembered, facts, session episodes
+        self.memory: Optional[Memory] = None
+        if self.settings.memory_dir:
+            store = MemoryStore.open(self.settings.memory_dir)
+            store.sweep()  # expired people and facts go before anything else reads them
+            session = os.path.basename(self.recorder.folder) if self.recorder is not None else None
+            self.memory = Memory(store, world=self.world, session=session)
         # Situation judgements on the Creative AI Hub (src/decide); off without DECIDE_URL
         self.decider: Optional[DecisionClient] = (
             DecisionClient(self.settings.decide_url) if self.settings.decide_url else None
@@ -199,6 +210,7 @@ class PepperEvolution:
 
     async def initialize(self):
         s = self.settings
+        self._started = self.world.now()
         self.logger.info(f"Initializing PepperEvolution {__version__}...")
 
         config = ConnectionConfig(
@@ -233,7 +245,10 @@ class PepperEvolution:
             led_signals=s.led_state_signals,
             backchannel_after=s.backchannel_after,
             world=self.world,
+            memory=self.memory,
         )
+        if self.memory is not None:
+            self.logger.info(f"Long-term memory: {self.memory.store.path} {self.memory.store.counts()}")
         self.voice = self.build_voice(config)
         self.api_server = APIServer(
             host=s.api_host,
@@ -286,6 +301,7 @@ class PepperEvolution:
         if self.recorder is not None:
             self.ai_manager.recorder = self.recorder
             self.robot.on_event(self._record_robot_event)
+            self.world.add_sink(self._record_observation)
             self.logger.info(f"Session records: {self.recorder.folder}")
         if self.world.count == 0:
             self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
@@ -332,6 +348,25 @@ class PepperEvolution:
         if self.recorder is not None and event_type in ("people", "touch", "bumper"):
             self.recorder.record_event(event_type, **data)
 
+    RECORDED_SOURCES = (POSE, MOTION, SOUND, SCENE, IDENTITY, MIND)  # people events are recorded as they come
+
+    def _record_observation(self, obs: Observation):
+        """World-model inputs that are not bridge events into events.jsonl, so sessions can be replayed."""
+        if self.recorder is not None and obs.source in self.RECORDED_SOURCES:
+            self.recorder.record_event("observation", **obs.record())
+
+    def _end_memory_session(self):
+        if self.memory is None:
+            return
+        try:
+            stats = dict(self.ai_manager.stats) if self.ai_manager is not None else {}
+            stats["minutes"] = round((self.world.now() - self._started) / 60.0, 1)
+            stats["most_people"] = self.world.most_people
+            self.memory.end_session(stats)
+        except Exception as exc:  # noqa: BLE001 - never block a shutdown
+            self.logger.warning(f"Could not store the session episode: {exc}")
+        self.memory.store.close()
+
     async def _save_bridge_log(self):
         """Best effort: copy the robot's bridge.log into the session folder (needs ssh, like deploy.py)."""
         if self.recorder is None or self.settings.fake_bridge:
@@ -367,6 +402,7 @@ class PepperEvolution:
             await self.api_server.stop()
         if self.robot:
             await self.robot.shutdown(rest=self.settings.rest_on_exit)
+        self._end_memory_session()
         self.logger.success("PepperEvolution shutdown complete")
 
 

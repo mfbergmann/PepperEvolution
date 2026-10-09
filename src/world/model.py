@@ -1,12 +1,11 @@
 """
-World model: what Pepper currently believes about its surroundings.
+World model: what Pepper currently believes about its surroundings (working memory, docs/MEMORY.md).
 
-The first slice of Milestone 4. It is fed by the bridge's debounced ``people``
-events (and the ``sensors`` snapshot sent when the event stream connects), and
-turns them into one plain sentence for the model's context on every turn, the
-"around you" line. It lives in our code, not in any model, so every part of the
-host can read it and models can be swapped without losing it (see
-docs/ARCHITECTURE.md).
+Everything enters through :meth:`WorldModel.observe` as an :class:`~src.world.observations.Observation`: the
+bridge's debounced ``people`` events (and the ``sensors`` snapshot sent when the event stream connects), camera
+judgements, what was heard and what Pepper said. The model keeps who is in view, a timeline of what just happened,
+and turns it into one plain sentence for the mind's context on every turn, the "around you" line. It lives in our
+code, not in any model, so every part of the host can read it and models can be swapped without losing it.
 """
 
 import math
@@ -16,6 +15,9 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 
 from loguru import logger
+
+from .observations import CAMERA, PEOPLE, Observation
+from .timeline import Timeline
 
 ZONE_WORDS = {1: "close", 2: "a little way off", 3: "far away"}
 SEEN_WORDS = {"waving": "someone waving at you", "showing": "someone holding something up to show you"}
@@ -109,7 +111,45 @@ class WorldModel:
         self.changes: Deque[Tuple[float, str]] = deque(maxlen=20)  # (time, "arrived" | "left")
         self._crowd: Deque[Tuple[float, int]] = deque(maxlen=50)  # (time, count) when two or more were in view
         self._arrival_callbacks: List[ArrivalCallback] = []
+        self.timeline = Timeline()
+        self.most_people = 0  # the most people in view at once since start-up (session episode)
+        self._sinks: List[Callable[[Observation], None]] = []
         self.logger = logger.bind(module="WorldModel")
+
+    def add_sink(self, sink: Callable[[Observation], None]):
+        """Also hand every observation to ``sink`` (the session records), after it was applied."""
+        self._sinks.append(sink)
+
+    def now(self) -> float:
+        return self._clock()
+
+    def observe(self, obs: Observation) -> Optional["Arrival"]:
+        """The one way into working memory. Returns an :class:`Arrival` when the observation was one."""
+        arrival = None
+        if obs.source == PEOPLE:
+            arrival = self.update_people(
+                obs.data.get("count"), obs.data.get("people") or [], initial=bool(obs.data.get("initial"))
+            )
+        elif obs.source == CAMERA and obs.kind == "judgement":
+            self.update_seen(obs.data.get("p") or {}, at=obs.at)
+        else:
+            self.timeline.add(obs.kind, obs.at, **{**obs.data, "source": obs.source})
+        for sink in self._sinks:
+            try:
+                sink(obs)
+            except Exception as exc:  # noqa: BLE001 - a lost record must never break perception
+                self.logger.debug(f"observation sink failed: {exc}")
+        return arrival
+
+    def recall(self) -> Dict[str, Any]:
+        """Working memory for the mind's recall tool (``views.recall``)."""
+        from .views import recall
+
+        return recall(self)
+
+    def note(self, source: str, kind: str, /, **data: Any) -> Optional["Arrival"]:
+        """Shorthand for ``observe(Observation(source, kind, now, data))``."""
+        return self.observe(Observation(source, kind, self._clock(), data))
 
     def on_arrival(self, callback: ArrivalCallback):
         """Register an async callback for arrivals (someone appearing after the room was empty)."""
@@ -119,9 +159,9 @@ class WorldModel:
         """Robot event callback (``PepperRobot.on_event``)."""
         arrival = None
         if event_type == "people":
-            arrival = self.update_people(data.get("count"), data.get("people") or [])
+            arrival = self.note(PEOPLE, "people", count=data.get("count"), people=data.get("people") or [])
         elif event_type == "sensors" and "people_count" in data:
-            self.update_people(data.get("people_count"), data.get("people") or [], initial=True)
+            self.note(PEOPLE, "people", count=data.get("people_count"), people=data.get("people") or [], initial=True)
         if arrival is not None:
             for cb in self._arrival_callbacks:
                 try:
@@ -147,6 +187,7 @@ class WorldModel:
         self.updated_at = now
         if count >= 2:
             self._crowd.append((now, count))
+        self.most_people = max(self.most_people, count)
         if count > 0:
             self.last_seen_someone_at = now
             self.empty_since = None
@@ -159,16 +200,20 @@ class WorldModel:
             return None
         if count < previous:
             self.changes.append((now, "left"))
+            self.timeline.add("left", now, count=count)
             return None
         if previous > 0:
             self.changes.append((now, "arrived"))
+            self.timeline.add("arrived", now, count=count)
             return None  # someone joined people already here: noted, not greeted (yet)
         empty_for = now - empty_since if empty_since is not None else math.inf
         if empty_for < self.arrival_absence:
             if self.changes and self.changes[-1][1] == "left":
                 self.changes.pop()  # the "left" was the detector losing them, not a departure
+            self.timeline.add("back", now, count=count, gone_for=round(empty_for, 1))
             return None
         self.changes.append((now, "arrived"))
+        self.timeline.add("arrived", now, count=count, after_empty_for=None if math.isinf(empty_for) else empty_for)
         return Arrival(count=count, nearest=self.people[0] if self.people else None, empty_for=empty_for)
 
     def most_in_view(self, within: float) -> int:

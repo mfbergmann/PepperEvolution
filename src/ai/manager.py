@@ -21,10 +21,11 @@ from ..decide.router import choose as choose_action
 from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
-from .models import ERROR_TEXT, SYSTEM_PROMPT, AIProvider, AIResponse
+from ..world.observations import HEARD, MIND, SAID
+from .models import ERROR_TEXT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
-from .tools import TOOLS
+from .tools import MEMORY_TOOLS, TOOLS
 
 ResponseCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 PartialCallback = Callable[[str], Awaitable[None]]
@@ -109,11 +110,16 @@ class AIManager:
         addressee_looking_threshold: float = 0.4,
         router: bool = True,
         router_threshold: float = 0.7,
+        memory: Optional[Any] = None,
     ):
         self.robot = robot
         self.world = world  # WorldModel: its summary goes into the state block on every turn
         self.provider = provider
-        self.executor = ToolExecutor(robot)
+        self.memory = memory  # src/memory Memory (long-term memory, MEMORY_DIR), or None
+        self.executor = ToolExecutor(robot, memory=memory)
+        self.tools = TOOLS + (MEMORY_TOOLS if memory is not None else [])
+        self.system_prompt = SYSTEM_PROMPT + (MEMORY_PROMPT if memory is not None else "")
+        self.stats: Dict[str, int] = {"turns": 0, "greetings": 0}  # for the session episode (long-term memory)
         self.logger = logger.bind(module="AIManager")
 
         self.speak_responses = speak_responses
@@ -215,6 +221,7 @@ class AIManager:
                 # Control phrases never wait behind the model, an in-flight turn or a judgement.
                 self._last_talk_at = self._clock()
                 self._heard.append(user_input)
+                self._note_heard(user_input, source, intent=intent.name)
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
@@ -231,6 +238,7 @@ class AIManager:
             route_task = asyncio.create_task(self._choose_action(previous, user_input, rec)) if route_on else None
             meant = await gate_task if gate_task is not None else True
             routed = await route_task if route_task is not None else None
+            self._note_heard(user_input, source, addressed=meant)
             if not meant:
                 # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
                 result = self._bare_result("", source, client_id, "not_addressed")
@@ -278,6 +286,8 @@ class AIManager:
                 self._rec = None
                 self.executor.clear_already_started()
         self._finish_record(rec, result)
+        if source in ("user", "voice"):
+            self.stats["turns"] += 1
         if source in ("user", "voice") and result.get("spoken"):
             self._last_answered_at = self._clock()
         spoken = result.get("spoken") or []
@@ -499,9 +509,20 @@ class AIManager:
                 out[key] = rec[key]
         self.recorder.record_turn(out)
 
+    TIMELINE_EVENTS = ("greeting", "camera_event", "handshake")  # also kept in working memory (recall)
+
     def _event(self, kind: str, **data: Any):
         if self.recorder is not None:
             self.recorder.record_event(kind, **data)
+        if self.world is not None and kind in self.TIMELINE_EVENTS:
+            self.world.note(MIND, kind, **data)
+        if kind == "greeting":
+            self.stats["greetings"] += 1
+
+    def _note_heard(self, text: str, source: str, addressed: bool = True, **data: Any):
+        """What was said near Pepper, answered or not, into working memory (recall, consent, the gate later)."""
+        if self.world is not None and source in ("user", "voice"):
+            self.world.note(HEARD, "heard", text=text, via=source, addressed=addressed, **data)
 
     async def _handle_intent(
         self, intent: Intent, user_input: str, speak: bool, source: str, client_id: Optional[str]
@@ -594,7 +615,7 @@ class AIManager:
                 chat = asyncio.ensure_future(
                     self.provider.chat(
                         messages=self.conversation_history,
-                        tools=TOOLS,
+                        tools=self.tools,
                         system=self._build_system_prompt(),
                         on_text=speaker.on_text,
                     )
@@ -814,6 +835,8 @@ class AIManager:
             if not self._hush and self.robot.last_eye_color == self._eye_color_at_start:
                 await self._signal("speaking")  # unless the model just chose a colour: leave that alone
         display = strip_animation_tags(sentence)
+        if self.world is not None and display.strip():
+            self.world.note(SAID, "said", text=display.strip())
         for cb in self._partial_callbacks:
             try:
                 await cb(display)
@@ -1102,8 +1125,11 @@ class AIManager:
         photo_line = self._last_photo_line()
         if photo_line:
             dynamic += f"\n{photo_line}"
+        known = self.memory.here_line() if self.memory is not None else ""
+        if known:
+            dynamic += f"\n{known}"
         return [
-            {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": self.system_prompt, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": dynamic},
         ]
 

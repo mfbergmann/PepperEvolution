@@ -87,7 +87,8 @@ PepperEvolution/
 │   ├── pepper/             # BridgeClient, FakeBridgeClient, EventStream, AudioStream, PepperRobot
 │   ├── ai/                 # tools, Anthropic/OpenAI providers, speech streaming, intents, ToolExecutor, AIManager
 │   ├── audio/              # voice input: PCM helpers, endpointer, sherpa/whisper transcribers, VoiceInput
-│   ├── world/              # WorldModel: who is around, arrivals, the "Around you" line
+│   ├── world/              # working memory: observations, WorldModel (who is around), timeline, views
+│   ├── memory/             # long-term memory: SQLite store (people with consent, facts, episodes), memory tools
 │   ├── decide/             # local decision models: client (fails open), addressee gate, command router
 │   ├── perception/         # camera stream judged about once a second
 │   ├── session.py          # session records (SESSION_DIR)
@@ -116,6 +117,7 @@ PepperEvolution/
 | `get_sensors` | Battery, touch, bumpers, sonar, people count |
 | `show_on_tablet` | Text or a web page on the chest tablet |
 | `emergency_stop` | Kill all movement and speech, then rest (motors off) |
+| `remember_person`, `remember`, `recall`, `forget_person` | With `MEMORY_DIR`: remember someone who agreed (consent is checked against what Pepper heard), keep facts, look things up, forget someone at once |
 
 ## Configuration
 
@@ -139,6 +141,7 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `DECIDE_URL` | | Fast local judgements on a GPU machine (Ollama with `nimble`, `clef-flash`): who is Pepper being spoken to, which action to start at once, what the camera shows. Empty = off; see [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) |
 | `ADDRESSEE_GATE` / `ROUTER` / `VISION_STREAM` | `true` | With `DECIDE_URL`: answer only speech meant for Pepper; start simple actions at once; judge camera frames while someone is in view (`ADDRESSEE_THRESHOLD`, `ROUTER_THRESHOLD`, `VISION_FPS` tune them) |
 | `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`) |
+| `MEMORY_DIR` | | Long-term memory: people who agreed to be remembered, facts, session episodes ([docs/MEMORY.md](docs/MEMORY.md); `scripts/memory_admin.py`); empty = off |
 | `PHOTO_RECORD_DIR` / `VOICE_RECORD_DIR` | | Keep photos (with head angle and sharpness) / utterance audio for testing; inside `SESSION_DIR` when that is set |
 | `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |
