@@ -1,10 +1,10 @@
 # Handoff: where the work stopped and how to pick it up
 
-Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot and 2026-10-08 after the first session with system one in the loop. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
+Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot, and 2026-10-08 after the first session with system one in the loop and the offline build of memory (0.6.0). Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
 
 ## State of the code
 
-*Updated 2026-10-08.* `main` is at 0.5.1 (tag `v0.5.1`) with CI green on Python 3.12 and 3.13, and the robot runs the 0.5.1 bridge, which starts by itself at boot.
+*Updated 2026-10-08.* `main` is at 0.6.0 (tag `v0.6.0`, memory) with CI green on Python 3.12 and 3.13. The robot still runs the 0.5.1 bridge, which starts by itself at boot; deploy 0.6.0 at the next session (above).
 
 - **Host** (`src/`, Python 3.12+):
   - FastAPI on one port (REST, `/ws`, web UI with hold-to-talk).
@@ -13,7 +13,8 @@ Written 2026-09-13, updated 2026-09-22 after the first session with the physical
   - Voice input through the robot's microphone with NVIDIA's Nemotron streaming recogniser (`src/audio/`).
   - The world model (`src/world/`): who is in view, arrivals, greetings, the "Around you" line.
   - Local decision models on a GPU machine (`src/decide/`: addressee gate, command router; `src/perception/`: camera judgements).
-  - Session records (`src/session.py`, `scripts/review_session.py`).
+  - Session records (`src/session.py`, `scripts/review_session.py`, `scripts/replay_world.py`).
+  - Memory (`src/world/` working memory: pose, person tracks, timeline, views; `src/memory/` long-term store with consent; `docs/MEMORY.md`).
 - **Bridge** (`robot_bridge/pepper_bridge.py`, Python 2.7 + Tornado 3.1.1, on the robot):
   - Every NAOqi call runs on a worker thread.
   - Streams: `/ws/events`, `/ws/audio` (muted while Pepper speaks), `/ws/camera` (small frames while someone is in view).
@@ -124,6 +125,36 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 
 **Next milestones after Tuesday:** finish Milestone 4 (vision pass into the world model, #11; the detail tool, #12), get the spoken loop under 2 s and barge-in (#3, #4), verify-after-act and `look_at` (#7, #6), then follow me (#18) and memory of people (Milestone 5, opt-in only).
 
+## Before the next robot session (0.6.0: memory)
+
+Built offline on 2026-10-08 after the session below: the memory architecture (`docs/MEMORY.md`, issue #29). Nothing of it has run on the robot yet. Steps:
+
+1. **Deploy the 0.6.0 bridge.** Run `python robot_bridge/deploy.py`, then `python robot_bridge/deploy.py --install-autostart` (the package version changed). The robot still runs 0.5.1, which the host handles: without the new bridge it dead-reckons from its own moves.
+2. **Settings in `.env`** (not changed by this work):
+   - `MEMORY_DIR=results/memory` for long-term memory.
+   - `SOUND_DIRECTION=true` to try voice direction.
+   - `SCENE_NOTES=true` to try scene notes (`qwen3.5:4b` is already pulled into the private Ollama on Alien3).
+   All three are off by default.
+3. **Checks, in this order:**
+   1. **Pose:** turn Pepper 90° and look for a `pose` event at the end of the turn and `pose` in the people events. Push Pepper gently with nobody in view and the host log should say it moved unexpectedly.
+   2. **Remembering where people were (#27):** "turn ninety degrees", then "turn towards me" should turn back to you in one go. `scripts/replay_world.py` on the session shows the predictions.
+   3. **Sound direction (#12, #24):**
+      - `curl http://10.0.100.100:8888/sound/localization` should report `available: true`.
+      - Measure the robot's CPU with and without it (`results/logs/robot_load.py`).
+      - Speak from about 60° to one side, out of the camera's view; the turn record's `voice` and the mind's state should give the direction.
+      - Try "come to me" from out of view.
+   4. **Memory by voice:**
+      - "I'm <name>", Pepper asks, "yes".
+      - Later, "what do you remember about me?".
+      - Then "forget me".
+      - Check with `scripts/memory_admin.py list`.
+   5. **Scene notes:** with `SCENE_NOTES=true`, watch the "Your last look around" sentence and its accuracy, and the GPU load on Alien3 with all three models (about 24 GB with nimble, clef-flash and qwen3.5:4b loaded).
+4. **Still owed from before:** side talk with two people (#19, #25; turn records now keep Pepper's last sentence for the re-benchmark), cut-off sentences (#26), shorter replies.
+
+Notes:
+- The scene pass's people count is a typed question that was benchmarked on 12 frames, separately from the camera judgements; it feeds `recall` and the scene note, not the people in the "Around you" line.
+- Facts and consent notes are personal data: `results/memory/` is git-ignored like the session records, and "forget me" clears it (the session records follow their own rules).
+
 ## Robot session 2026-10-08: results (system one in the loop)
 
 The Tuesday plan ran on Thursday 2026-10-08, solo, first in the small office and then in the open space. There were 12 host runs (`results/sessions/2026-10-08_*`) with 111 spoken turns. Everything was reviewed the same day, and the fixes went out between runs (commits 2ac2782 to a623131; CHANGELOG 0.5.1).
@@ -211,4 +242,4 @@ The previous session's standing instruction from the user: once Pepper is on the
 
 ## Next
 
-The memory architecture comes first (Milestones 4 and 5: one structure for people, places and events, which #27, #12, #24, #11, #13 and #14 build on), then the next robot session: side talk with two people (#19, #25), cut-off sentences (#26), shorter replies, and remembering where people were (#27). `ROADMAP.md` has the full plan.
+The memory architecture is built (0.6.0; "Before the next robot session" above lists its robot checks). The next robot session tests it, together with what is still owed: side talk with two people (#19, #25), cut-off sentences (#26) and shorter replies. After that: identity, opt-in (#14), and the reflection loop for initiative. `ROADMAP.md` has the full plan.

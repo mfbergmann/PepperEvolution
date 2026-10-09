@@ -113,7 +113,7 @@ The tablet reaches the robot head at `198.18.0.1`; change with `--tablet-host` i
 On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events are edge-triggered:
 
 ```json
-{"type": "hello",   "data": {"version": "0.5.1"}, "timestamp": ...}
+{"type": "hello",   "data": {"version": "0.6.0"}, "timestamp": ...}
 {"type": "sensors", "data": {...same as GET /sensors...}, "timestamp": ...}
 {"type": "touch",   "data": {"sensor": "head_front", "touched": true}, "timestamp": ...}
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
@@ -142,7 +142,7 @@ The bridge registers a small qi service (`PepperBridgeAudio`) with NAOqi and sub
 On connect the client gets one JSON text frame, then binary frames:
 
 ```json
-{"type": "hello", "version": "0.5.1", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
+{"type": "hello", "version": "0.6.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
 {"type": "state", "streaming": true}
 <binary> 2730 bytes = 1365 samples of signed 16-bit little-endian PCM (85 ms, measured on Pepper 1.8A), repeated
 ```
@@ -159,7 +159,7 @@ The host side is `src/pepper/audio_stream.py` (`AudioStream`), consumed by `src/
 
 **Endpoint:** `ws://<PEPPER_IP>:8888/ws/camera?fps=1` (`&api_key=SECRET` if configured). For the host's camera judgements (`src/perception/vision.py`).
 
-The bridge sends one JSON text frame, `{"type": "hello", "version": "0.5.1", "fps": 1, "width": 320, "height": 240}`, then one binary JPEG per frame (320×240, quality 75, about 12 KB). `fps` is 0.2 to 5. One camera subscription (`pepper_bridge_stream`) serves every client from a worker thread; it is released when the last client leaves or the bridge stops, and any left behind by a crash are cleared when the bridge connects to NAOqi. Unlike `/picture`, the stream does not touch face tracking or wait for a still head. A client still writing the previous frame skips frames instead of buffering them. On an error the bridge sends `{"type": "error", "error": "..."}` and closes. Frames are not stored on the robot.
+The bridge sends one JSON text frame, `{"type": "hello", "version": "0.6.0", "fps": 1, "width": 320, "height": 240}`, then one binary JPEG per frame (320×240, quality 75, about 12 KB). `fps` is 0.2 to 5. One camera subscription (`pepper_bridge_stream`) serves every client from a worker thread; it is released when the last client leaves or the bridge stops, and any left behind by a crash are cleared when the bridge connects to NAOqi. Unlike `/picture`, the stream does not touch face tracking or wait for a still head. A client still writing the previous frame skips frames instead of buffering them. On an error the bridge sends `{"type": "error", "error": "..."}` and closes. Frames are not stored on the robot.
 
 ## Running the bridge
 

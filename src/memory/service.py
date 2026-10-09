@@ -208,8 +208,8 @@ class Memory:
             if event.kind == "said" and "remember" in text.lower() and "?" in text:
                 asked_at = event.at
         for event in reversed(events):
-            if event.kind != "heard":
-                continue
+            if event.kind != "heard" or event.data.get("addressed") is False:
+                continue  # side talk is never consent, even a "yeah sure" said to someone else nearby
             text = str(event.data.get("text", ""))
             if not says_yes(text):
                 continue

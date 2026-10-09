@@ -35,6 +35,7 @@ class TestSettings:
         assert s.speak_responses is True and s.fake_bridge is False
         assert s.api_port == 8000
         assert s.memory_dir is None  # long-term memory is opt-in (MEMORY_DIR)
+        assert s.scene_notes is False and s.sound_direction is False  # tried on the robot first
 
     def test_reactive_and_voice_defaults(self, monkeypatch):
         for key in (

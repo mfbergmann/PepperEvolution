@@ -99,7 +99,7 @@ class Settings:
     vision_fps: float
     memory_dir: Optional[str] = None
     sound_direction: bool = False
-    scene_notes: bool = True
+    scene_notes: bool = False
     scene_model: str = "qwen3.5:4b"
 
     @classmethod
@@ -153,7 +153,7 @@ class Settings:
             vision_fps=float(os.getenv("VISION_FPS") or "1"),
             memory_dir=os.getenv("MEMORY_DIR") or None,
             sound_direction=env_bool("SOUND_DIRECTION", False),
-            scene_notes=env_bool("SCENE_NOTES", True),
+            scene_notes=env_bool("SCENE_NOTES", False),
             scene_model=os.getenv("SCENE_MODEL") or "qwen3.5:4b",
         )
 

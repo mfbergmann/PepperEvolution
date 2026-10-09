@@ -20,10 +20,10 @@ flowchart TB
     subgraph Host["Host (Python 3.12+)"]
         RX["1. Reflexes (no model)\nlocal intents, LED state, fillers,\ntouch-reaction rate limits"]
         PE["2. Perception (continuous)\nspeech-to-text, people events,\ncamera judgements, local decision models"]
-        WM[("3. World model\npeople, scene, recent events,\nconversation state")]
+        WM[("3. World model (working memory)\npose, people incl. out of view,\nscene notes, timeline")]
         MI["4. Mind (one conversational model)\ntalks, plans, calls tools"]
         RF["Reflection loop (slow, planned)\nshould Pepper act unprompted?"]
-        ME[("Memory (planned)\npeople and facts across sessions")]
+        ME[("Long-term memory (0.6)\npeople who agreed, facts,\nsession episodes")]
     end
 
     BR -- events, audio --> PE
@@ -62,7 +62,7 @@ One structure on the host that holds what Pepper currently believes about its su
 - The reflection loop reads it to decide whether to act.
 - Memory persists selected parts across sessions.
 
-**Status:** the "now" part is built and verified on the robot. `src/world/model.py` tracks who is in view (distance, gaze, direction with the turn that faces them, how long, recent arrivals and departures) and what the camera judgements see. It raises arrivals, which drive the head-turn reflex and the greeting, and the mind gets an "Around you" sentence on every turn. Missing: memory of anything out of view (a person is forgotten when they leave the camera, #27), scene descriptions (#11), a detail tool (#12), and persistence across sessions (Milestone 5). The memory architecture is designed next, so that these pieces share one structure.
+**Status:** the "now" part is built and verified on the robot. `src/world/model.py` tracks who is in view (distance, gaze, direction with the turn that faces them, how long, recent arrivals and departures) and what the camera judgements see. It raises arrivals, which drive the head-turn reflex and the greeting, and the mind gets an "Around you" sentence on every turn. Built offline in 0.6.0 (`docs/MEMORY.md`), to be tested on the robot: everything enters through `WorldModel.observe()` as observations, and readers are pure views. It now also holds Pepper's pose in the odometry frame, people out of view (#27), where a voice came from (#12, #24), scene notes (#11), and a timeline that the `recall` tool reads (#12).
 
 ### 4. Mind: one voice
 
@@ -73,7 +73,7 @@ A single conversational model holds the dialogue, decides what to do, calls tool
 ### Beyond the four layers
 
 - **Reflection loop (planned, after Milestone 4).** A slow background loop that looks at the world model every so often and decides whether Pepper should act unprompted: greet someone who has just arrived, notice that a person has been waiting, follow up on something said earlier. This is what turns a responsive robot into one with initiative. It hands its decision to the mind as an event turn, so there is still only one voice.
-- **Memory (Milestone 5).** Who Pepper has met and what it has learned, kept across sessions, with face or voice identity so it can recognise someone.
+- **Memory (Milestone 5; store built in 0.6.0, `docs/MEMORY.md`).** Who Pepper has met and what it has learned, kept across sessions, only for people who agreed, with "forget me" at any time. Face or voice identity (opt-in) comes after the consent flow has been used on the robot.
 
 ## Which model does what
 
@@ -82,7 +82,7 @@ A single conversational model holds the dialogue, decides what to do, calls tool
 | Control phrases, safety, state signals | host and bridge | milliseconds | none |
 | People and face detection, tracking | on the robot (NAOqi) | continuous | NAOqi's own |
 | Speech to text | host CPU | about 0.3 s of compute per audio second, final about 0.2 s after you stop | NVIDIA Nemotron speech streaming via sherpa-onnx (chosen 2026-09-22: 6 % word errors in the open room vs 37 % for the older zipformer) |
-| Scene description for the world model | Creative AI Hub server (planned), over the tailnet | every 10-20 s | an open vision-language model on local GPUs, chosen by comparison; a cloud model as fallback |
+| Scene notes for the world model | Creative AI Hub (Alien3), over the tailnet | every 20 s while someone is in view, about 0.5 s | who is where: Clef Flash (typed questions); the place: qwen3.5:4b (benchmarked 2026-10-08, `docs/MEMORY.md`) |
 | Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model: Sonnet 5.5 at medium effort (chosen by comparison on 2026-09-29; Sonnet 5 before) |
 | Situation judgements (addressed to Pepper? waving? photo usable?) | Creative AI Hub (Alien3, RTX 5090), over the tailnet | 0.05-0.25 s per judgement | local decision models: Nimble (text), Clef Flash (text and images), tested 2026-10-03 |
 | Reflection (should I act?) | cloud | every tens of seconds | a small, cheap model, or the mind at low effort |

@@ -4,7 +4,7 @@ Last updated: September 2026. The design these milestones build towards is in [A
 
 ## Where we are
 
-*Updated 2026-10-08, version 0.5.1.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in six robot sessions so far: the office, the open space outside it, and an evening with two visitors. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
+*Updated 2026-10-08, version 0.6.0.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in six robot sessions so far: the office, the open space outside it, and an evening with two visitors. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
 
 What works on the robot today:
 - **Conversation by voice** through Pepper's own microphone. NVIDIA's Nemotron streaming recogniser runs on the host's CPU, and Claude Sonnet 5.5 answers about 2 s after the transcript; it speaks sentence by sentence with gestures and tablet captions.
@@ -17,8 +17,13 @@ What works on the robot today:
   All of them fail open: without the GPU machine Pepper behaves as before, just slower.
 - **Sharp photos,** a handshake that holds and notices being taken, short drives and turns with the sonar guard, the bridge starting by itself at boot, and session records with a review script.
 
+- **Memory, built offline in 0.6.0 and not yet on the robot** (`docs/MEMORY.md`):
+  - Working memory keeps Pepper's own pose and where people were after they leave view; replayed on the 2026-10-08 sessions, a person's direction was predicted within a median of 7°.
+  - It also knows where a voice came from and keeps occasional scene notes.
+  - Long-term memory keeps people who agreed to be remembered, with consent checked in code and "forget me".
+
 What is not there yet:
-- **Memory:** Pepper forgets a person once they leave the camera's view, and it remembers nothing across sessions (Milestones 4 and 5; the memory design comes first).
+- **Memory on the robot:** the 0.6.0 checks in `docs/HANDOFF.md`; then identity (face or voice, opt-in, #14).
 - **Spatial grounding:** "come to me", pointing, looking at a point in a photo, follow me (Milestone 3).
 - **Conversation:** replies that are still too long, sentences cut in two at pauses, side talk with two people still to be tested, and barge-in (Milestone 2).
 
@@ -179,7 +184,10 @@ Acceptance: "look at the person on the left", "is the door open?", "go towards t
 
 ## Milestone 4: world model (continuous perception)
 
-Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Status 2026-10-08: the "now" part is built (layer 1 below, plus camera judgements about once a second while someone is in view); what is missing is memory: people are forgotten once they leave the camera's view (#27), there is no scene description (#11), no detail tool (#12) and nothing persists across sessions (Milestone 5). The memory architecture is being designed first, so that these pieces share one structure.
+Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Status 2026-10-08:
+- **Built and verified on the robot:** the "now" part (layer 1 below, plus camera judgements about once a second while someone is in view).
+- **Built offline in 0.6.0, to be tested on the robot:** memory (`docs/MEMORY.md`, issue #29). One structure (observations in, views out) holds Pepper's pose and remembered people (#27), voice direction (#12, #24), scene notes (#11) and the `recall` detail tool (#12).
+- **Still open:** the reflection loop, and identity (Milestone 5).
 
 Two layers feeding one host-side world model:
 
@@ -205,9 +213,16 @@ Acceptance: someone walks up and Pepper greets them within a few seconds, unprom
 
 Goal: Pepper remembers who it talked to and what was said.
 
-- Host-side memory tools: remember/recall facts about people and the lab, with retrieval over past sessions.
-- Face or voice identity through an external service; NAOqi's people IDs are session-local.
-- Keep tool count small; multi-step task completion on social robots is still fragile in the literature.
+- **Memory tools: built in 0.6.0** (#13, `docs/MEMORY.md`).
+  - `remember_person`, `remember`, `recall` and `forget_person` over a local SQLite store.
+  - People only with consent, which code checks against what Pepper heard; facts, and session episodes.
+  - 90-day expiry; "forget me" at once; `scripts/memory_admin.py`.
+  - Robot test next session.
+- **Face or voice identity (#14), opt-in only, after the consent flow has been used on the robot.** Candidates from a survey of recent models (see `docs/MEMORY.md`):
+  - InsightFace 2.1 for faces and body appearance (its pretrained models are for non-commercial research);
+  - sherpa-onnx speaker embeddings for voices.
+  NAOqi's people IDs are session-local.
+- Keep the tool count small; multi-step task completion on social robots is still fragile in the literature.
 
 ## Milestone 6: robustness and operations
 

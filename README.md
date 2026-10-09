@@ -10,7 +10,7 @@ A cloud-AI control system for SoftBank Pepper robots. A small bridge server on t
 - **Feels** – head/hand touches and bumpers stream from the robot and trigger short reactions.
 - **Listens** – optional voice input: hold-to-talk in the browser, or the robot's own microphone streamed from the bridge (muted while Pepper speaks), recognised on the host with sherpa-onnx or faster-whisper.
 - **Reacts without thinking** – "stop", "be quiet", "wake up", "look at me" are handled locally in milliseconds, mid-reply; the eyes show listening / thinking / speaking; a short filler covers long model pauses; the head turns to newcomers and follows people through NAOqi's own face tracking.
-- **Notices people** – a world model on the host keeps who is in view (distance, direction, gaze), greets someone who walks up, and tells the model each turn who is around and where.
+- **Notices people and remembers** – a world model on the host keeps who is in view (distance, direction, gaze) and where people were after they leave view (odometry), greets someone who walks up, and tells the model each turn who is around and where. With `MEMORY_DIR`, Pepper remembers people who agree to it, and forgets them when asked ([docs/MEMORY.md](docs/MEMORY.md)).
 - **Judges the situation fast (optional, a local GPU machine)** – small local decision models decide in about 0.15 s whether speech was meant for Pepper (side talk gets no reply), which physical action to start at once (Pepper moves about 0.25 s after the transcript while Claude prepares the words), and whether someone in view is waving or showing something. Without the GPU machine everything still works, slower. See [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md).
 - **Is recorded for review** – with `SESSION_DIR`, every run keeps its log, audio, photos and a per-turn record locally; `scripts/review_session.py` turns it into a timed transcript with flags.
 - **Stays safe** – moves are clamped and sonar-checked, the bridge never blocks so emergency stop always gets through, and the robot is put into a known state (Autonomous Life off, motors on) when the host connects.
@@ -97,7 +97,7 @@ PepperEvolution/
 ├── web/index.html          # Browser control panel (served at /)
 ├── examples/               # basic_chat.py (terminal), event_monitor.py, mic_monitor.py
 ├── tests/                  # ~590 tests incl. running the real bridge with tests/fakenaoqi
-├── docs/                   # HANDOFF, ARCHITECTURE, ROADMAP, SETUP_PROFILES, GETTING_STARTED, BRIDGE_API, SAFETY, research notes, signs/
+├── docs/                   # HANDOFF, ARCHITECTURE, MEMORY, ROADMAP, SETUP_PROFILES, GETTING_STARTED, BRIDGE_API, SAFETY, research notes, signs/
 ├── scripts/                # start.sh, review_session.py, smoke_host.py, compare_models.py, virtual_pepper.sh, ...
 └── main.py                 # Host application entry point
 ```
@@ -158,7 +158,7 @@ PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -
 python scripts/smoke_host.py --fake            # the whole host stack with the real model, no robot
 ```
 
-Version 0.5.1; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
+Version 0.6.0; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
 
 Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md). The design the project is building towards is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

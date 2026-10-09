@@ -4,6 +4,38 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## 0.6.0 (2026-10-08): memory
+
+A place where remembering goes, built offline after the 2026-10-08 robot session (design: `docs/MEMORY.md`, tracking issue #29). Working memory and long-term memory share one vocabulary (`Observation`, `Event`) and one way in (`WorldModel.observe()`); readers are pure views; nothing on the read path calls a model; only the mind speaks. The robot test comes next session (`docs/HANDOFF.md`, "Before the next robot session").
+
+- **Long-term memory** (`src/memory/`, `MEMORY_DIR`, off by default):
+  - A SQLite store of people who agreed to be remembered, facts about them and the lab, and a short record of each session.
+  - The mind's new tools: `remember_person`, `remember`, `recall` and `forget_person`.
+  - Consent is checked in code against what Pepper heard in the last two minutes: a yes to its question, or a request to be remembered, and never side talk. The words are kept as the consent note.
+  - "Forget me" deletes at once. People and their facts expire after 90 days unless renewed.
+  - `scripts/memory_admin.py` lists, shows and forgets.
+  - Tested end to end with the real model on the virtual Pepper: remember, recall, forget, a refusal, a lab fact.
+- **Remembering where people were** (#27):
+  - Pepper's pose in NAOqi's odometry frame comes from the bridge, or is dead-reckoned from its own moves.
+  - The host keeps its own person tracks.
+  - The "Around you" line says where someone out of view was last seen ("about 90° to your right ... (turn -90 to face where they were)", "they may have moved since" after 30 s).
+  - Replaying the 12 sessions of 2026-10-08: when someone came back into view, memory had predicted their direction within a median of 7° (28 of 36 within 20°; the 3 misses were people who had moved). For the "turn towards me" that took four turns on the day, it would have said "turn -90".
+- **Bridge (0.6.0):**
+  - The pose in sensors snapshots, people events and move results, plus a settled `pose` event.
+  - Opt-in sound localisation: `POST /sound/localization` and `sound` events with a body-frame direction. Pepper's own speech is dropped.
+- **Where a voice came from** (#12, #24, `SOUND_DIRECTION`, off by default): each spoken turn gets "The voice you are answering came from about 50° to your left (turn 50 to face it)". The speaker is attached to the person in that direction, or remembered as someone heard, for "come to me".
+- **Scene notes** (#11, `SCENE_NOTES`, off by default until tried on the robot):
+  - Two models, each doing what it is good at. Clef Flash says who is where; a benchmark on 12 hand-labelled frames got 11 of 12 people counts right in 0.14 s. A generative model counted reflections as people.
+  - `qwen3.5:4b` describes only the place and the objects.
+  - A look about every 20 s while someone is in view, about 0.5 s each.
+- **Working memory's timeline:**
+  - It holds heard and said utterances, arrivals, greetings, camera events and moves, for the `recall` tool.
+  - Every gated turn records Pepper's last sentence, so the addressee judgement can be re-benchmarked with it (#25).
+- `scripts/replay_world.py` rebuilds working memory from a session folder and compares the "Around you" lines.
+- The model cannot point and now says so (#28). Base moves from the web UI go through the robot, so memory knows about them.
+- The default model is Sonnet 5.5 at medium effort, the choice made on the robot.
+- The recording notice adds "I only remember you from one day to the next if you say yes when I ask. Say 'forget me' any time and I will."
+
 ## 0.5.1 (2026-10-08): first robot session with system one
 
 Fixes from the robot session on 2026-10-08 (`docs/HANDOFF.md`, "Robot session 2026-10-08"); each was reviewed from the session records and re-tested on the robot the same day unless noted.

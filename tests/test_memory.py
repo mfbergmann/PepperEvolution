@@ -155,6 +155,38 @@ class TestConsent:
         assert store.counts()["people"] == 1
 
 
+class TestConsentByVoice:
+    """The recogniser cuts at pauses (#26), so the name and the request often arrive as separate finals."""
+
+    def setup(self, store):
+        clock = Clock()
+        world = WorldModel(clock=clock)
+        return Memory(store, world=world, session="test"), world, clock
+
+    def test_request_first_then_the_name(self, store):
+        memory, world, clock = self.setup(store)
+        heard(world, "Please remember me")
+        assert memory.remember_person("")["ok"] is False  # the mind tried without a name: it must ask
+        said(world, "Of course! What's your name?")
+        clock.t += 4
+        heard(world, "Alex")
+        assert memory.remember_person("Alex")["ok"] is True
+
+    def test_name_first_then_the_request(self, store):
+        memory, world, clock = self.setup(store)
+        heard(world, "I'm Alex")
+        clock.t += 2
+        heard(world, "you can remember me")
+        assert memory.remember_person("Alex")["ok"] is True
+
+    def test_side_talk_is_never_consent(self, store):
+        memory, world, clock = self.setup(store)
+        said(world, "Shall I remember you next time?")
+        clock.t += 2
+        world.note(HEARD, "heard", text="Yeah sure, let's get coffee", via="voice", addressed=False)
+        assert memory.remember_person("Alex")["ok"] is False
+
+
 class TestTools:
     def setup(self, store):
         clock = Clock()
