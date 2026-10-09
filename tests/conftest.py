@@ -128,6 +128,7 @@ def mock_robot(mock_connection):
     robot.animations = ["animations/Stand/Gestures/Hey_1", "animations/Stand/Gestures/BowShort_1"]
     robot.last_photo = None
     robot.last_head_yaw = None
+    robot.motion_observer = None
     robot.last_head_move_at = None
     robot.photo_record_dir = None
     robot.holding_pose = 0

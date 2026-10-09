@@ -36,7 +36,14 @@ _MEMORY = {
     "PeoplePerception/Person/7/PresentSince": 30,
 }
 
-_STATE = {"language": "English", "awake": False, "life": "solitary", "volume": 0.5, "awareness": True}
+_STATE = {
+    "language": "English",
+    "awake": False,
+    "life": "solitary",
+    "volume": 0.5,
+    "awareness": True,
+    "pose": [0.0, 0.0, 0.0],  # odometry (FRAME_WORLD): moveTo moves it
+}
 _SUBSCRIBERS = {}  # service -> set of subscriber names
 _SERVICES = {}  # name -> object registered with Session.registerService
 _AUDIO_PUMPS = {}  # subscriber name -> _AudioPump thread (ALAudioDevice.subscribe)
@@ -194,7 +201,13 @@ class _Service(object):
             return True
         if method == "moveTo":
             time.sleep(0.1)
+            x, y, theta = [float(a) for a in args[:3]]
+            px, py, pt = _STATE["pose"]
+            c, s = math.cos(pt), math.sin(pt)
+            _STATE["pose"] = [px + x * c - y * s, py + x * s + y * c, pt + theta]
             return None
+        if method == "getRobotPosition":
+            return list(_STATE["pose"])
         if method == "robotName":
             return "FakePepper"
         if method == "systemVersion":

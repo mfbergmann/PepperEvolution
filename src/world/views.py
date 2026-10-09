@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 RECALL_WINDOW = 600.0  # seconds of the timeline that recall describes
 RECALL_EVENTS = 12  # most recent entries only
 TEXT_CHARS = 120
+QUIET_KINDS = {"track"}  # bookkeeping, for review rather than for the mind
 
 
 def _ago(seconds: float) -> str:
@@ -44,7 +45,10 @@ def describe_event(event: Any, now: float) -> str:
     if kind == "greeting":
         return f"{when}: you greeted someone"
     if kind in ("turn", "drive", "move"):
-        return f"{when}: you {kind} {data.get('description', '')}".rstrip()
+        verb = {"turn": "turned", "drive": "drove", "move": "moved"}[kind]
+        return f"{when}: you {verb} {data.get('description', '')}".rstrip()
+    if kind == "moved_unexpectedly":
+        return f"{when}: you were moved (about {data.get('degrees')}°, {data.get('metres')} m) without a command"
     if kind == "camera_event":
         return f"{when}: your camera saw {data.get('what')}"
     if kind == "remembered":
@@ -55,7 +59,8 @@ def describe_event(event: Any, now: float) -> str:
 def recall(world: Any) -> Dict[str, Any]:
     """Working memory for the mind's recall tool: who is around now and what happened in the last ten minutes."""
     now = world.now()
-    events = world.timeline.recent(within=RECALL_WINDOW, now=now)[-RECALL_EVENTS:]
+    events = [e for e in world.timeline.recent(within=RECALL_WINDOW, now=now) if e.kind not in QUIET_KINDS]
+    events = events[-RECALL_EVENTS:]
     out: Dict[str, Any] = {}
     around = world.summary()
     if around:

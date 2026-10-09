@@ -35,7 +35,7 @@ The shared vocabulary is in `src/world/` and is the only thing both tiers import
   - position in the odometry frame when the distance is known, otherwise a bearing only;
   - gaze, distance, when they last spoke and were answered;
   - later, an identity (a long-term person id and a confidence) and a name.
-- **Event**: an entry in the timeline. Kinds: arrival, departure, greeting, move (asked and measured), utterance heard (with the addressee verdict), sentence said by Pepper, camera event, scene note, "moved by hand".
+- **Event**: an entry in the timeline. Kinds: arrival, departure, greeting, move (asked and measured), utterance heard (with the addressee verdict), sentence said by Pepper, camera event, scene note, "moved unexpectedly".
 
 ## Flow
 
@@ -66,7 +66,7 @@ flowchart LR
 ```
 
 Rules:
-1. **One way in.** Everything that changes what Pepper believes goes through `World.observe()`. A new sense is a new module that emits observations with a new `source`. It never touches the tracks or the readers directly.
+1. **One way in.** Everything that changes what Pepper believes goes through `WorldModel.observe()`. A new sense is a new module that emits observations with a new `source`. It never touches the tracks or the readers directly.
 2. **Readers are pure functions** over the state, in `src/world/views.py`. A new use is a new function.
 3. **Nothing on the read path calls a model.** Local models (decision models, a scene model, identity) are sources. They write observations with probabilities, ahead of time.
 4. **Only the mind speaks.** Memory never produces speech. It gives the mind a sentence of context and answers its questions.
@@ -88,7 +88,7 @@ Conversions:
 
 Until the bridge reports the pose, the host dead-reckons from its own completed moves (`PepperRobot.turn`, `move_forward`, `move_to`). An interrupted move marks the pose uncertain until the next measured pose arrives.
 
-**Moved by hand:** if the measured pose jumps (more than 15° or 0.3 m between polls) while no commanded move is running, a "moved by hand" event is raised. Every stored position is then demoted to "last seen N s ago, direction unknown".
+**Moved unexpectedly:** if the measured pose jumps (more than 15° or 0.3 m from the estimate) while no move of the host's is running, a "moved unexpectedly" event is raised. Causes: someone pushed or carried Pepper, or NAOqi moved the base itself (the desktop NAOqi turns it ±54° while waking up). Every stored position is then demoted to "last seen N s ago, direction unknown".
 
 ## People tracks
 
@@ -164,7 +164,7 @@ Derived state (the "Around you" string already in `turns.jsonl`) is recorded for
 The store comes first, so the place where remembering people goes exists before anything feeds it. Each slice keeps the robot working (the robot runs the 0.5.1 bridge until the next deploy, so everything must work without the new bridge fields) and is tested offline before the next robot session.
 
 1. **The core and the long-term store.**
-   - The core: the shared vocabulary (`Observation`, `Event`), `World.observe()` and the timeline.
+   - The core: the shared vocabulary (`Observation`, `Event`), `WorldModel.observe()` and the timeline.
    - The store: `src/memory/` (people, facts, episodes, consent, forget, expiry sweep).
    - The tools and intents: `remember`, `recall` (store and working memory) and the "remember me" / "forget me" intents.
    - An end-of-session episode written by code.
@@ -174,7 +174,7 @@ The store comes first, so the place where remembering people goes exists before 
    - Bridge: the measured pose in the sensors snapshot and in people events; a `pose` event only when the pose has settled after changing by more than 5° or 0.1 m (no stream during a turn); the measured pose in move results. Mirrored in the fake bridge, the fake NAOqi and `BRIDGE_API.md`.
    - Session records: pose and move observations, so sessions can be replayed (`scripts/replay_world.py`, local files only).
    - Tests:
-     - unit tests for turn, drive, moved by hand and "never overwrite with unknown";
+     - unit tests for turn, drive, moved unexpectedly and "never overwrite with unknown";
      - a hand-written fixture with the numbers already in #27 and HANDOFF (turn 70 → person at -0.9°; then +90, +180, -160, -60 → seen again at -50.4°). Session files never go into `tests/`.
      - the virtual Pepper for the bridge pose.
 3. **Conversation in the timeline** (#12 detail, #25 groundwork).

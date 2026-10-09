@@ -7,6 +7,7 @@ facade against fake NAOqi services, and check for Python-3-only syntax.
 """
 
 import ast
+import math
 import importlib.util
 import sys
 import types
@@ -36,6 +37,7 @@ class FakeService:
         self.head = [0.0, 0.0]  # radians; getAngles moves it towards head_target, like a real head
         self.head_target = [0.0, 0.0]
         self.head_step = 0.1  # radians per reading
+        self.pose = [0.0, 0.0, 0.0]  # odometry: moveTo moves it, getRobotPosition reads it
 
     def __getattr__(self, method):
         def call(*args, **kwargs):
@@ -49,6 +51,13 @@ class FakeService:
         return call
 
     def _respond(self, method, args):
+        if method == "getRobotPosition":
+            return list(self.pose)
+        if method == "moveTo":
+            x, y, theta = (float(a) for a in args[:3])
+            c, s = math.cos(self.pose[2]), math.sin(self.pose[2])
+            self.pose = [self.pose[0] + x * c - y * s, self.pose[1] + x * s + y * c, self.pose[2] + theta]
+            return None
         if method == "setAngles" and list(args[0]) == ["HeadYaw", "HeadPitch"]:
             self.head_target = list(args[1])
             return None
@@ -429,7 +438,7 @@ class TestRobotFacade:
         move = [c for c in motion if c[0] == "moveTo"][0]
         assert move[1][:3] == (2.0, 0.0, 0.0)
         assert move[1][3] == [["MaxVelXY", 0.55]]
-        assert result == {"distance": 2.0, "speed": 0.55, "completed": True}
+        assert result == {"distance": 2.0, "speed": 0.55, "completed": True, "pose": [2.0, 0.0, 0.0]}
 
     def test_motion_refused_while_resting(self, robot):
         robot.session.service("ALMotion").awake = False
@@ -441,6 +450,11 @@ class TestRobotFacade:
         result = robot.turn(90)
         turn = [c for c in calls(robot, "ALMotion") if c[0] == "moveTo"][0]
         assert abs(turn[1][2] - 1.5708) < 0.01 and result["completed"] is True
+        assert result["pose"] == [0.0, 0.0, 1.5708]  # measured after the move, for the host's memory (#27)
+
+    def test_the_pose_is_in_every_snapshot(self, robot):
+        robot.turn(-45)
+        assert robot.sensors()["pose"] == [0.0, 0.0, -0.7854]
 
     def test_zero_sonar_means_no_measurement_not_obstacle(self, robot):
         clear_path(robot, front=0.0, back=0.0)
@@ -1070,6 +1084,50 @@ class TestAudioTap:
         health = robot.health()
         assert health["audio"]["streaming"] is False and health["audio"]["clients"] == 0
         assert health["version"] == bridge.BRIDGE_VERSION
+
+
+class TestPoseEvents:
+    """One pose event when Pepper has moved and settled again, not one per poll during a turn (#27)."""
+
+    def make(self, bridge, robot, monkeypatch):
+        events = []
+        monkeypatch.setattr(bridge, "broadcast_from_thread", lambda t, p: events.append((t, p)))
+        clock = [100.0]
+        return bridge.SensorPoller(robot, clock=lambda: clock[0]), events, clock
+
+    def test_a_turn_gives_one_event_at_its_end(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        for theta in [0.0, 0.0, 0.0, 0.0]:  # still at start-up: the first settled pose is reported
+            poller._pose_changes({"pose": [0.0, 0.0, theta]})
+            clock[0] += 0.25
+        assert [e[0] for e in events] == ["pose"]
+        for i in range(1, 13):  # turning 90 degrees over 3 s
+            poller._pose_changes({"pose": [0.0, 0.0, 1.5708 * i / 12]})
+            clock[0] += 0.25
+        assert len(events) == 1
+        for _ in range(3):  # stopped
+            poller._pose_changes({"pose": [0.0, 0.0, 1.5708]})
+            clock[0] += 0.25
+        assert len(events) == 2 and events[-1][1] == {"pose": [0.0, 0.0, 1.5708]}
+        for _ in range(8):  # still: nothing new
+            poller._pose_changes({"pose": [0.001, 0.0, 1.5709]})
+            clock[0] += 0.25
+        assert len(events) == 2
+
+    def test_small_drift_is_not_reported(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        for x in [0.0, 0.0, 0.0, 0.0, 0.03, 0.03, 0.03, 0.03, 0.06, 0.06, 0.06, 0.06]:
+            poller._pose_changes({"pose": [x, 0.0, 0.0]})
+            clock[0] += 0.25
+        assert len(events) == 1  # 6 cm in total: under the 10 cm step
+
+    def test_people_events_carry_the_pose(self, bridge, robot, monkeypatch):
+        poller, events, clock = self.make(bridge, robot, monkeypatch)
+        snap = {"people_count": 1, "people_ids": [3], "people": [{"id": 3, "yaw": 20.0}], "pose": [1.0, 2.0, 0.5]}
+        poller._people_changes(snap)
+        clock[0] += 1.1
+        poller._people_changes(snap)
+        assert events[-1][0] == "people" and events[-1][1]["pose"] == [1.0, 2.0, 0.5]
 
 
 class TestPeopleDebounce:

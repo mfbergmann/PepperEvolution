@@ -36,9 +36,13 @@ Optional. Start the bridge with `--api-key=SECRET`; clients must then send `X-AP
  "bumpers": {"front_left": false, "front_right": false, "back": false},
  "sonar": {"front": 1.23, "back": 2.01}, "obstacle": false,
  "people_count": 1, "people_ids": [7],
- "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12}],
+ "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12, "yaw": 12.3, "pitch": -8.1}],
+ "pose": [0.12, -0.03, 1.5708],
  "sonar_ok": true, "people_ok": true, "timestamp": 1757000000.0}
 ```
+
+`pose` (from 0.6) is Pepper's position and heading in NAOqi's odometry frame (`ALMotion.getRobotPosition(True)`, FRAME_WORLD): `[x, y, theta]` in metres and radians, theta positive to the left like `/move/turn`. The frame is fixed from NAOqi's start-up and integrated from wheel odometry, so it drifts slowly and resets when NAOqi restarts. The host keeps people it has seen in this frame, so their directions stay true while Pepper turns (`docs/MEMORY.md`). `yaw`/`pitch` per person are the head angles that would face them, in the body frame (left and down positive).
+
 Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/SubDeviceList/Platform/{Front,Back}/Sonar/Sensor/Value`); a raw 0.0 (no measurement published yet, or no hardware) is reported as `null` and never counts as an obstacle. `obstacle` is true when either is under 0.45 m. The bridge subscribes to `ALSonar` and `ALPeoplePerception` itself (they only publish while subscribed, and Autonomous Life stops them when disabled); `sonar_ok`/`people_ok` report whether those subscriptions are in place, and they are renewed on every NAOqi reconnect.
 
 ### Preparing the robot
@@ -64,7 +68,7 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 | Method | Path | Body | Description |
 |--------|------|------|-------------|
 | POST | `/move/forward` | `{"distance": 0.5, "speed": 0.3, "force": false}` | Drive forward/backward (−2 to 2 m). `speed` is m/s (0.1–0.55, sets `MaxVelXY`). Refused (HTTP 500, `not moving: front sonar shows an obstacle at 0.31 m`) when the sonar in the direction of travel reads under 0.45 m, unless `force` is true. Refused while the robot is resting or halted (wake it first; motion never wakes the robot implicitly). `completed` is false when collision avoidance or `/stop` cut the move short. |
-| POST | `/move/turn` | `{"angle": 90}` | Turn in place (−180 to 180°, positive = left) |
+| POST | `/move/turn` | `{"angle": 90}` | Turn in place (−180 to 180°, positive = left). Like `/move/forward` and `/move/to`, returns `completed` and (from 0.6) the measured `pose` after the move |
 | POST | `/move/head` | `{"yaw": 0, "pitch": 0, "speed": 0.2, "wait": true}` | Head angles in degrees (yaw ±119.5, pitch −40.5..25.5 straight ahead, narrower when turned). With `wait` (default) the answer comes once the measured head angles are on target and have stopped changing for 0.15 s (at most 3 s; an emergency stop ends the wait), so a photo taken next is sharp; `wait: false` returns at once (the host's reflexes). Returns the clamped angles, `awareness_paused` (true when face tracking was switched off for this move; it comes back on 8 s after the last head move; on the robot a merely paused tracker kept pulling the head back to the face) and, when waiting, `settled`, `waited` (seconds) and `measured` (the head's real [yaw, pitch] from its sensors). |
 | POST | `/move/to` | `{"x": 0.5, "y": 0, "theta": 0, "speed": 0.3, "force": false}` | Move to a relative pose (theta in degrees); same sonar and awake checks as `/move/forward` |
 | POST | `/stop` | | Stops any running animation (`ALBehaviorManager.stopAllBehaviors`) and the base (`stopMove()` + `killMove()`) |
@@ -115,13 +119,16 @@ On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events 
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
 {"type": "sonar",   "data": {"front": 0.31, "back": 1.9, "obstacle": true}, "timestamp": ...}
 {"type": "battery", "data": {"level": 75, "charging": false}, "timestamp": ...}
-{"type": "people",  "data": {"count": 1, "ids": [7], "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12}]}, "timestamp": ...}
+{"type": "people",  "data": {"count": 1, "ids": [7], "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12, "yaw": 12.3, "pitch": -8.1}], "pose": [0.12, -0.03, 1.5708]}, "timestamp": ...}
+{"type": "pose",    "data": {"pose": [0.12, -0.03, 1.5708]}, "timestamp": ...}
 {"type": "speech",  "data": {"state": "start", "text": "Hello"}, "timestamp": ...}
 ```
 
 Clients may send `{"type": "ping"}` and get `{"type": "pong"}`. Sensors are polled every 250 ms.
 
-`people` is debounced: it is sent only when the number of people, or someone's zone or gaze, has changed and held for 1 s (`PEOPLE_STABLE_SECONDS`). NAOqi's detector flickers several times a second on the robot and its IDs change when tracking is lost, so IDs are not part of the change test. Per person: `distance` (m), `looking` (at Pepper), `zone` (1 near, 2 middle, 3 far; NAOqi engagement zones) and `present_for` (s), each `null` when NAOqi has not published it (on the robot `zone` and `present_for` were not always filled in). The bridge subscribes `ALGazeAnalysis` and `ALEngagementZones` for these; the robot stayed 86 % idle with them on. People are detected by face, so someone facing away or more than about 2 m off can drop out.
+`pose` (from 0.6) is sent when Pepper has turned at least 5° or moved 0.1 m since the last one and has then been still for 0.5 s: one event at the end of a turn, and one when someone pushes or carries Pepper. `people` events carry the pose at the moment of the report.
+
+`people` is debounced: it is sent only when the number of people, or someone's zone, gaze, direction (15° steps) or distance (0.5 m steps), has changed and held for 1 s (`PEOPLE_STABLE_SECONDS`). NAOqi's detector flickers several times a second on the robot and its IDs change when tracking is lost, so IDs are not part of the change test. Per person: `distance` (m), `looking` (at Pepper), `zone` (1 near, 2 middle, 3 far; NAOqi engagement zones) and `present_for` (s), each `null` when NAOqi has not published it (on the robot `zone` and `present_for` were not always filled in). The bridge subscribes `ALGazeAnalysis` and `ALEngagementZones` for these; the robot stayed 86 % idle with them on. People are detected by face, so someone facing away or more than about 2 m off can drop out.
 
 ## WebSocket microphone stream
 

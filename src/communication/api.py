@@ -126,9 +126,10 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
             p.get("text", ""), language=p.get("language"), animated=bool(p.get("animated", True))
         ),
         "stop_speaking": lambda: bridge.stop_speaking(),
-        "move_forward": lambda: bridge.move_forward(float(p.get("distance", 0.5)), float(p.get("speed", 0.3))),
-        "turn": lambda: bridge.move_turn(float(p.get("angle", 90))),
-        "move_head": lambda: bridge.move_head(float(p.get("yaw", 0)), float(p.get("pitch", 0))),
+        # base moves go through the robot so working memory knows where Pepper faces (#27)
+        "move_forward": lambda: robot.move_forward(float(p.get("distance", 0.5)), float(p.get("speed", 0.3))),
+        "turn": lambda: robot.turn(float(p.get("angle", 90))),
+        "move_head": lambda: robot.move_head(float(p.get("yaw", 0)), float(p.get("pitch", 0))),
         "posture": lambda: bridge.set_posture(p.get("posture", "Stand")),
         "wake_up": lambda: bridge.wake_up(),
         "rest": lambda: bridge.rest(),

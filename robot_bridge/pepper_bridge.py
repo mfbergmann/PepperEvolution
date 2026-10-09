@@ -139,6 +139,17 @@ def head_direction(position):
 
 
 PEOPLE_STABLE_SECONDS = 1.0  # a people change is reported only after it has held this long
+POSE_CHANGE_DEGREES = 5.0  # a pose event when Pepper has turned or moved this much since the last one...
+POSE_CHANGE_METRES = 0.1
+POSE_STILL_DEGREES = 1.0  # ...and has been still (less than this between polls)...
+POSE_STILL_METRES = 0.02
+POSE_SETTLE_SECONDS = 0.5  # ...for this long
+
+
+def _pose_moved(a, b, degrees, metres):
+    """True if pose ``b`` differs from ``a`` ([x, y, theta]) by at least ``degrees`` or ``metres``."""
+    turn = abs(math.degrees(math.atan2(math.sin(b[2] - a[2]), math.cos(b[2] - a[2]))))
+    return turn >= degrees or math.hypot(b[0] - a[0], b[1] - a[1]) >= metres
 
 OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstacle
 MAX_ANIMATION_SECONDS = 20.0  # looping animations are stopped after this
@@ -555,6 +566,7 @@ class Robot(object):
         people = self._people_details(people_ids) if people_ids else []
         obstacle = any(d is not None and d < OBSTACLE_DISTANCE for d in sonar.values())
         return {
+            "pose": self.pose(),
             "battery": battery,
             "charging": charging,
             "touch": touch,
@@ -568,6 +580,16 @@ class Robot(object):
             "people_ok": bool(self.extractors.get("ALPeoplePerception", False)),
             "timestamp": time.time(),
         }
+
+    def pose(self):
+        """Pepper's position and heading in NAOqi's odometry frame (FRAME_WORLD): [x, y, theta] in metres and
+        radians, theta counter-clockwise (left) positive like the turn endpoint; None if unreadable. The host keeps
+        remembered people in this frame, so their directions stay true while Pepper turns (issue #27)."""
+        try:
+            x, y, theta = self.svc("ALMotion").getRobotPosition(True)[:3]
+            return [round(float(x), 3), round(float(y), 3), round(float(theta), 4)]
+        except Exception:
+            return None
 
     def _people_details(self, ids):
         """Distance, gaze, zone and time present for each visible person, nearest first."""
@@ -729,14 +751,14 @@ class Robot(object):
         self._ensure_awake(motion)
         self._check_obstacle(distance, force)
         done = motion.moveTo(distance, 0.0, 0.0, [["MaxVelXY", speed]])
-        return {"distance": distance, "speed": speed, "completed": self._completed(done)}
+        return {"distance": distance, "speed": speed, "completed": self._completed(done), "pose": self.pose()}
 
     def turn(self, angle_deg):
         angle_deg = clamp(as_float(angle_deg, 90), -180.0, 180.0)
         motion = self.svc("ALMotion")
         self._ensure_awake(motion)
         done = motion.moveTo(0.0, 0.0, math.radians(angle_deg))
-        return {"angle": angle_deg, "completed": self._completed(done)}
+        return {"angle": angle_deg, "completed": self._completed(done), "pose": self.pose()}
 
     def move_to(self, x, y, theta_deg, speed=None, force=False):
         x = clamp(as_float(x, 0), -3.0, 3.0)
@@ -749,7 +771,7 @@ class Robot(object):
             done = motion.moveTo(x, y, theta)
         else:
             done = motion.moveTo(x, y, theta, [["MaxVelXY", clamp(as_float(speed, 0.3), 0.1, MAX_VEL_XY)]])
-        return {"x": x, "y": y, "theta": theta_deg, "completed": self._completed(done)}
+        return {"x": x, "y": y, "theta": theta_deg, "completed": self._completed(done), "pose": self.pose()}
 
     def move_head(self, yaw_deg, pitch_deg, speed, wait=True):
         yaw_deg = clamp(as_float(yaw_deg, 0), -HEAD_YAW_LIMIT_DEG, HEAD_YAW_LIMIT_DEG)
@@ -2280,6 +2302,9 @@ class SensorPoller(object):
         self._people_candidate = None  # (count, zones and gaze) seen most recently
         self._people_since = 0.0  # when the candidate was first seen
         self._people_published = None  # what the last "people" event said
+        self._pose_last = None  # the pose at the previous poll
+        self._pose_still_since = 0.0  # since when it has not moved between polls
+        self._pose_published = None  # what the last "pose" event said
 
     def start(self):
         self._running = True
@@ -2322,6 +2347,7 @@ class SensorPoller(object):
         if now["battery"] != prev.get("battery") or now["charging"] != prev.get("charging"):
             broadcast_from_thread("battery", {"level": now["battery"], "charging": now["charging"]})
         self._people_changes(now)
+        self._pose_changes(now)
 
     @staticmethod
     def _people_signature(snapshot):
@@ -2358,8 +2384,28 @@ class SensorPoller(object):
                     "count": snapshot.get("people_count"),
                     "ids": snapshot.get("people_ids"),
                     "people": snapshot.get("people") or [],
+                    "pose": snapshot.get("pose"),  # where Pepper stood when it saw them (odometry)
                 },
             )
+
+    def _pose_changes(self, snapshot):
+        """Report Pepper's pose when it has moved (POSE_CHANGE_DEGREES / POSE_CHANGE_METRES) and settled again, so a
+        turn gives one event at its end, not one per poll; also catches Pepper being pushed or carried."""
+        pose = snapshot.get("pose")
+        if pose is None:
+            return
+        now = self._clock()
+        last = self._pose_last
+        self._pose_last = pose
+        if last is None or _pose_moved(last, pose, POSE_STILL_DEGREES, POSE_STILL_METRES):
+            self._pose_still_since = now
+            return
+        if now - self._pose_still_since < POSE_SETTLE_SECONDS:
+            return
+        published = self._pose_published
+        if published is None or _pose_moved(published, pose, POSE_CHANGE_DEGREES, POSE_CHANGE_METRES):
+            self._pose_published = pose
+            broadcast_from_thread("pose", {"pose": pose})
 
 
 # ---------------------------------------------------------------------------

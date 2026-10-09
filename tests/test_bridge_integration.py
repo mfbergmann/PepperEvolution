@@ -10,6 +10,7 @@ installed to reproduce the robot's environment exactly.
 """
 
 import asyncio
+import math
 import json
 import os
 import socket
@@ -142,9 +143,13 @@ class TestBridgeEndToEnd:
         assert spoke["spoken"] == "Hello from the integration test" and spoke["duration"] >= 0
         assert (await client.status())["language"] == "English"  # restored after the utterance
 
+        before = (await client.get_sensors())["pose"]
         move = await client.move_forward(0.3, 0.2)
         assert move["speed"] == 0.2 and move["completed"] is True
-        assert (await client.move_turn(45))["angle"] == 45
+        assert abs(math.hypot(move["pose"][0] - before[0], move["pose"][1] - before[1]) - 0.3) < 0.001
+        turned = await client.move_turn(45)
+        assert turned["angle"] == 45
+        assert abs(turned["pose"][2] - move["pose"][2] - math.radians(45)) < 0.001  # odometry for memory (#27)
         assert (await client.move_head(30, -10))["yaw"] == 30.0
 
     async def test_concurrent_requests_do_not_block_each_other(self, client):

@@ -225,6 +225,7 @@ class PepperEvolution:
             self.logger.warning("PEPPER_FAKE_BRIDGE is set: no robot will be contacted")
         self.robot = PepperRobot(config, bridge=bridge)
         self.robot.photo_record_dir = s.photo_record_dir  # PHOTO_RECORD_DIR: local test records
+        self.robot.motion_observer = lambda kind, data: self.world.note(MOTION, kind, **data)  # dead reckoning
 
         provider = build_provider(s)
         self.logger.info(f"AI provider: {provider.__class__.__name__} model={provider.model}")

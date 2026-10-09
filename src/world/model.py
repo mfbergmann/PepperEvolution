@@ -16,12 +16,18 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from .observations import CAMERA, PEOPLE, Observation
+from .frames import Pose, pose_from
+from .observations import CAMERA, MOTION, PEOPLE, POSE, Observation
 from .timeline import Timeline
+from .tracks import Tracker
 
 ZONE_WORDS = {1: "close", 2: "a little way off", 3: "far away"}
 SEEN_WORDS = {"waving": "someone waving at you", "showing": "someone holding something up to show you"}
 RECENT_CHANGE_SECONDS = 60.0  # arrivals and departures this recent are mentioned
+REMEMBERED_IN_SUMMARY = 120.0  # someone out of view is placed in the "Around you" line this long (tracks.py)
+REMEMBERED_MAY_HAVE_MOVED = 30.0  # after this, the line says they may have moved
+MOVED_UNEXPECTEDLY_DEGREES = 15.0  # a measured pose this far from the estimate with no move of ours running
+MOVED_UNEXPECTEDLY_METRES = 0.3
 ARRIVAL_ABSENCE_SECONDS = 20.0  # someone "arrives" only after nobody was in view this long; shorter gaps are
 # the detector losing a person who looked away (seen on the robot), not a new arrival
 MAX_PEOPLE_DESCRIBED = 3
@@ -112,6 +118,10 @@ class WorldModel:
         self._crowd: Deque[Tuple[float, int]] = deque(maxlen=50)  # (time, count) when two or more were in view
         self._arrival_callbacks: List[ArrivalCallback] = []
         self.timeline = Timeline()
+        self.pose = Pose()  # Pepper's own position and heading (odometry when the bridge reports it)
+        self.tracker = Tracker()  # people, including those just out of view (#27)
+        self._measured_once = False
+        self._moving = 0  # commanded moves in flight (no "moved unexpectedly" while they run)
         self.most_people = 0  # the most people in view at once since start-up (session episode)
         self._sinks: List[Callable[[Observation], None]] = []
         self.logger = logger.bind(module="WorldModel")
@@ -126,10 +136,17 @@ class WorldModel:
     def observe(self, obs: Observation) -> Optional["Arrival"]:
         """The one way into working memory. Returns an :class:`Arrival` when the observation was one."""
         arrival = None
+        measured = pose_from(obs.data["pose"], obs.at) if obs.data.get("pose") is not None else None
+        if measured is not None and obs.source != MOTION:
+            self._apply_pose(measured)
         if obs.source == PEOPLE:
-            arrival = self.update_people(
-                obs.data.get("count"), obs.data.get("people") or [], initial=bool(obs.data.get("initial"))
-            )
+            people = obs.data.get("people") or []
+            arrival = self.update_people(obs.data.get("count"), people, initial=bool(obs.data.get("initial")))
+            self._update_tracks(people, obs.at, placed=measured is not None or not self._moving)
+        elif obs.source == POSE:
+            pass  # applied above
+        elif obs.source == MOTION:
+            self._apply_motion(obs, measured)
         elif obs.source == CAMERA and obs.kind == "judgement":
             self.update_seen(obs.data.get("p") or {}, at=obs.at)
         else:
@@ -141,6 +158,110 @@ class WorldModel:
                 self.logger.debug(f"observation sink failed: {exc}")
         return arrival
 
+    # -- pose and tracks (#27) -----------------------------------------------------------------------------------------
+
+    def _apply_pose(self, measured: Pose):
+        """A pose measured by the bridge. The first one re-bases what was dead-reckoned; a jump with no move
+        running means Pepper was moved without a command from the host (pushed, carried, or NAOqi's own behaviour:
+        the desktop NAOqi turns the base ±54° while waking up), and remembered positions are no longer valid."""
+        if not self._measured_once:
+            self._rebase(self.pose, measured)
+            self._measured_once = True
+        else:
+            metres, degrees = measured.moved_from(self.pose)
+            if (
+                not self._moving
+                and not self.pose.uncertain
+                and (degrees > MOVED_UNEXPECTEDLY_DEGREES or metres > MOVED_UNEXPECTEDLY_METRES)
+            ):
+                self.logger.info(f"Pepper was moved ({degrees:.0f}°, {metres:.2f} m) with no move running")
+                self.timeline.add("moved_unexpectedly", measured.at, degrees=round(degrees), metres=round(metres, 2))
+                self.tracker.forget_positions()
+        self.pose = measured
+
+    def _rebase(self, old: Pose, new: Pose):
+        """Move everything placed relative to the dead-reckoned pose into the measured odometry frame."""
+        for track in self.tracker.tracks:
+            if track.x is not None and track.y is not None:
+                bearing, distance = old.bearing_to(track.x, track.y), old.distance_to(track.x, track.y)
+                track.x, track.y = new.to_odom(bearing, distance)
+            elif track.heading is not None:
+                track.heading = new.heading_of(old.bearing_of(track.heading))
+
+    def _apply_motion(self, obs: Observation, measured: Optional[Pose]):
+        """A move Pepper made (PepperRobot): "<kind>_started", then "<kind>" with whether it completed."""
+        kind = obs.kind
+        if kind.endswith("_started"):
+            self._moving += 1
+            return
+        self._moving = max(0, self._moving - 1)
+        data = obs.data
+        completed = data.get("completed") is not False
+        if data.get("refused"):  # the bridge refused it (an obstacle, motors off): Pepper did not move
+            self.timeline.add(kind, obs.at, description="refused", completed=False, source=MOTION)
+            return
+        if measured is not None:
+            if not self._measured_once:
+                self._rebase(self.pose, measured)
+                self._measured_once = True
+            self.pose = measured
+        elif kind == "turn":
+            self.pose = self.pose.turned(float(data.get("angle") or 0.0), obs.at, uncertain=not completed)
+        elif kind == "drive":
+            self.pose = self.pose.driven(float(data.get("distance") or 0.0), at=obs.at, uncertain=not completed)
+        elif kind == "move":
+            moved = self.pose.driven(float(data.get("x") or 0.0), float(data.get("y") or 0.0), at=obs.at)
+            self.pose = moved.turned(float(data.get("theta") or 0.0), obs.at, uncertain=not completed)
+        what = {
+            "turn": f"{float(data.get('angle') or 0):+.0f} degrees",
+            "drive": f"{float(data.get('distance') or 0):+.2f} m",
+            "move": f"to x {data.get('x')}, y {data.get('y')}, turning {data.get('theta')} degrees",
+        }.get(kind, "")
+        self.timeline.add(
+            kind,
+            obs.at,
+            description=what + ("" if completed else " (stopped early)"),
+            completed=completed,
+            source=MOTION,
+        )
+
+    def _update_tracks(self, people: List[Dict[str, Any]], at: float, placed: bool):
+        """People into tracks. While a move runs and the report carries no pose of its own, directions are not
+        trusted (the dead-reckoned pose lags the turn): presence is kept, positions are not changed."""
+        if not placed:
+            people = [{k: v for k, v in p.items() if k != "yaw"} for p in people]
+        for association in self.tracker.update(people, self.pose, at):
+            self.timeline.add("track", at, **association)
+
+    def remembered_line(self) -> str:
+        """Where the most recently seen person was, if they are out of view now (#27); empty otherwise."""
+        if self.pose.uncertain:
+            return ""
+        now = self._clock()
+        for track in self.tracker.remembered(now):
+            if now - track.last_seen > REMEMBERED_IN_SUMMARY:
+                break
+            bearing = track.bearing(self.pose)
+            if bearing is None:
+                continue
+            degrees = int(round(abs(bearing) / 5.0) * 5)
+            if degrees < 10:
+                where = "straight ahead of your body"
+            else:
+                side = "left" if bearing > 0 else "right"
+                turn = degrees if bearing > 0 else -degrees
+                where = (
+                    f"about {degrees}° to your {side} of where your body points now "
+                    f"(turn {turn} to face where they were)"
+                )
+            distance = track.distance_from(self.pose)
+            away = f"about {distance:.1f} m away and " if distance is not None else ""
+            age = now - track.last_seen
+            # people move: on 2026-10-08 someone said they were going to sit down, and was 136° from where they stood
+            moved = "; they may have moved since" if age > REMEMBERED_MAY_HAVE_MOVED else ""
+            return f"you last saw someone {_ago(age)}, {away}{where}{moved}"
+        return ""
+
     def recall(self) -> Dict[str, Any]:
         """Working memory for the mind's recall tool (``views.recall``)."""
         from .views import recall
@@ -151,6 +272,11 @@ class WorldModel:
         """Shorthand for ``observe(Observation(source, kind, now, data))``."""
         return self.observe(Observation(source, kind, self._clock(), data))
 
+    def handle_people(self, count: Optional[int], people: List[Dict[str, Any]], pose: Any = None) -> Optional[Arrival]:
+        """A people report (as the bridge sends it) into working memory; ``pose`` is the bridge's measured pose."""
+        extra = {"pose": pose} if pose is not None else {}
+        return self.note(PEOPLE, "people", count=count, people=people, **extra)
+
     def on_arrival(self, callback: ArrivalCallback):
         """Register an async callback for arrivals (someone appearing after the room was empty)."""
         self._arrival_callbacks.append(callback)
@@ -159,9 +285,14 @@ class WorldModel:
         """Robot event callback (``PepperRobot.on_event``)."""
         arrival = None
         if event_type == "people":
-            arrival = self.note(PEOPLE, "people", count=data.get("count"), people=data.get("people") or [])
+            arrival = self.handle_people(data.get("count"), data.get("people") or [], pose=data.get("pose"))
+        elif event_type == "pose" and data.get("pose") is not None:
+            self.note(POSE, "pose", pose=data.get("pose"))
         elif event_type == "sensors" and "people_count" in data:
-            self.note(PEOPLE, "people", count=data.get("people_count"), people=data.get("people") or [], initial=True)
+            extra = {"pose": data["pose"]} if data.get("pose") is not None else {}
+            self.note(
+                PEOPLE, "people", count=data.get("people_count"), people=data.get("people") or [], initial=True, **extra
+            )
         if arrival is not None:
             for cb in self._arrival_callbacks:
                 try:
@@ -243,7 +374,11 @@ class WorldModel:
         recent = [(t, kind) for t, kind in self.changes if now - t <= RECENT_CHANGE_SECONDS]
         if self.count == 0:
             text = "Around you: nobody in view"
-            if self.last_seen_someone_at is not None and not recent:  # a recent "left" already says when
+            remembered = self.remembered_line()
+            if remembered:
+                text += f"; {remembered}"
+                recent = []  # the line already says when
+            elif self.last_seen_someone_at is not None and not recent:  # a recent "left" already says when
                 text += f" (you last saw someone {_ago(now - self.last_seen_someone_at)})"
             text += "."
         else:

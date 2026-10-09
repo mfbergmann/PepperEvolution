@@ -12,7 +12,7 @@ import base64
 import io
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional
 
 from loguru import logger
 
@@ -178,6 +178,8 @@ class PepperRobot:
         self.direct_commands_running = 0  # UI/API commands in flight (event reactions wait)
         self.photo_resolution = 2  # 0=QQVGA 1=QVGA 2=VGA 3=4VGA
         self.photo_record_dir: Optional[str] = None  # PHOTO_RECORD_DIR: keep every photo locally for testing
+        # Moves are reported to working memory (src/world): "<kind>_started", then "<kind>" with the result
+        self.motion_observer: Optional[Callable[[str, Dict[str, Any]], None]] = None
         self.last_prepare: Dict[str, Any] = {}
         self.last_eye_color: Optional[str] = None  # colour chosen by the model/user (restored after state signals)
         self.logger = logger.bind(module="PepperRobot")
@@ -301,10 +303,37 @@ class PepperRobot:
         return await self.bridge.stop_speaking()
 
     async def move_forward(self, distance: float = 0.5, speed: float = 0.3) -> Dict[str, Any]:
-        return await self.bridge.move_forward(distance, speed)
+        return await self._observed("drive", {"distance": distance}, self.bridge.move_forward(distance, speed))
 
     async def turn(self, angle: float) -> Dict[str, Any]:
-        return await self.bridge.move_turn(angle)
+        return await self._observed("turn", {"angle": angle}, self.bridge.move_turn(angle))
+
+    async def _observed(self, kind: str, asked: Dict[str, Any], call: Awaitable[Dict[str, Any]]) -> Dict[str, Any]:
+        """Run a base move and tell working memory what was asked and what happened (dead reckoning, #27).
+
+        The bridge reports ``completed`` (False when stopped early) and, from 0.6, the measured ``pose``."""
+        self._tell_motion(f"{kind}_started", dict(asked))
+        try:
+            result = await call
+        except Exception as exc:
+            self._tell_motion(kind, {**asked, "completed": False, "error": str(exc)[:200], "refused": True})
+            raise
+        report = dict(asked)
+        if isinstance(result, dict):
+            report["completed"] = result.get("completed", True)
+            if result.get("pose") is not None:
+                report["pose"] = result["pose"]
+        self._tell_motion(kind, report)
+        return result
+
+    def _tell_motion(self, kind: str, data: Dict[str, Any]):
+        observer = getattr(self, "motion_observer", None)
+        if observer is None:
+            return
+        try:
+            observer(kind, data)
+        except Exception as exc:  # noqa: BLE001 - memory must never break a move
+            self.logger.debug(f"motion observer failed: {exc}")
 
     async def move_head(
         self, yaw: float = 0, pitch: float = 0, speed: float = 0.2, wait: bool = True
