@@ -130,11 +130,10 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 Built offline on 2026-10-08 after the session below: the memory architecture (`docs/MEMORY.md`, issue #29). Nothing of it has run on the robot yet. Steps:
 
 1. **Deploy the 0.6.0 bridge.** Run `python robot_bridge/deploy.py`, then `python robot_bridge/deploy.py --install-autostart` (the package version changed). The robot still runs 0.5.1, which the host handles: without the new bridge it dead-reckons from its own moves.
-2. **Settings in `.env`** (not changed by this work):
-   - `MEMORY_DIR=results/memory` for long-term memory.
-   - `SOUND_DIRECTION=true` to try voice direction.
-   - `SCENE_NOTES=true` to try scene notes (`qwen3.5:4b` is already pulled into the private Ollama on Alien3).
-   All three are off by default.
+2. **Settings in `.env`: done on 2026-10-08.** All three are switched on for the next session (each is off by default in the code):
+   - `MEMORY_DIR=results/memory` (long-term memory);
+   - `SOUND_DIRECTION=true` (voice direction, needs the 0.6.0 bridge);
+   - `SCENE_NOTES=true` with `SCENE_MODEL=qwen3.5:4b` (already pulled into the private Ollama on Alien3).
 3. **Checks, in this order:**
    1. **Pose:** turn Pepper 90° and look for a `pose` event at the end of the turn and `pose` in the people events. Push Pepper gently with nobody in view and the host log should say it moved unexpectedly.
    2. **Remembering where people were (#27):** "turn ninety degrees", then "turn towards me" should turn back to you in one go. `scripts/replay_world.py` on the session shows the predictions.
