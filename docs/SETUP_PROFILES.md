@@ -12,6 +12,9 @@ PepperEvolution mixes a cloud model (Claude) with a few local pieces. Only one o
 | Speech to text | Turns Pepper's microphone into text | The host's CPU (NVIDIA Nemotron via sherpa-onnx, about 0.6 GB); no GPU, no cloud | for voice; typed chat works without it |
 | Situation judgements | Fast yes/no and multiple-choice judgements before the mind is called: is this meant for Pepper? which action should start now? is someone waving? | A GPU machine running Ollama 0.35.1 or later with the decision models `nimble` and `clef-flash` (about 20 GB of GPU memory for both) | optional (`DECIDE_URL`) |
 | Local conversation model | Claude's role played by an open model on your GPU | Ollama on a GPU machine | optional, experimental (`OLLAMA_URL`); not recommended yet |
+| Long-term memory | Remembers people who agreed to it (name, facts they asked it to keep) and a short record of each session; "forget me" at any time | The host (SQLite, no GPU) | optional (`MEMORY_DIR`), off by default; personal data, see Privacy |
+| Scene notes | Every 20 s while someone is in view: who is where (Clef Flash) and a short note on the place (`qwen3.5:4b`) | The GPU machine (about 3.3 GB more) | optional (`SCENE_NOTES`), off by default |
+| Sound direction | Where each voice came from (NAOqi's sound localisation), for "come to me" when the camera cannot see the speaker | On Pepper (bridge 0.6 or later) | optional (`SOUND_DIRECTION`), off by default; CPU cost on the robot not measured yet |
 
 ## Profile 1: cloud mind, laptop host (no GPU)
 
@@ -44,6 +47,7 @@ Add a GPU machine reachable from the host (ours: an RTX 5090 on the Creative AI 
 ```bash
 ollama pull nimble        # text decisions, 9.5 GB
 ollama pull clef-flash    # text and image decisions, 10 GB
+ollama pull qwen3.5:4b    # only for SCENE_NOTES: notes on the place, 3.3 GB
 ```
 
 ```bash
@@ -52,6 +56,14 @@ DECIDE_URL=http://your-gpu-machine:11434
 ADDRESSEE_GATE=true
 ROUTER=true
 VISION_STREAM=true
+SCENE_NOTES=false         # true: a note on the place every 20 s (needs qwen3.5:4b)
+```
+
+Also available in either profile (all off by default, `docs/MEMORY.md`):
+
+```bash
+MEMORY_DIR=results/memory # long-term memory of people who agree to it (no GPU needed)
+SOUND_DIRECTION=false     # true with bridge 0.6+: the direction each voice came from
 ```
 
 What it adds (measured on our data, 2026-10-03; see `docs/ARCHITECTURE.md`, "Situation judgements"):
@@ -67,6 +79,18 @@ If the GPU machine is down or slow, each judgement gives up after 0.8 s and Pepp
 ## Privacy
 
 In both profiles Claude receives what Pepper hears (as text) and the photos it takes when asked. With profile 2, camera frames for the judgements and the text of every utterance (including side talk that is never answered) go to your GPU machine and stay there; nothing from the judgements goes to a cloud service. Session records (`SESSION_DIR`) keep voices, photos and transcripts on the host for review; keep them out of git (see `CLAUDE.md`, "Session records"). A printable notice for people near Pepper, in Pepper's own words, is in `docs/signs/recording-notice.pdf`.
+
+### Long-term memory and privacy
+
+With `MEMORY_DIR` set, Pepper can remember people from one day to the next:
+- **What is kept:** a name and the facts the person asked it to keep, in `MEMORY_DIR/pepper.sqlite` on the host.
+- **Consent first:** a person is stored only after they said yes to Pepper's question, or asked to be remembered. The code checks this against what Pepper actually heard, and never counts side talk. Their words are kept as the consent note.
+- **Deleting:**
+  - "forget me" deletes the person at once;
+  - so does `python scripts/memory_admin.py forget <id>`;
+  - otherwise everything expires after 90 days unless the person agrees again.
+- **Separate from session records:** the store holds no recordings, and forgetting someone does not touch the session records.
+- **Keep it private:** keep the store out of git and off shared drives. Tell people near Pepper (the printable notice in `docs/signs/` says it).
 
 ## Not built yet
 

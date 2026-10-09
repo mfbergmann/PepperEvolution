@@ -148,7 +148,7 @@ Built offline on 2026-10-08 after the session below: the memory architecture (`d
       - Later, "what do you remember about me?".
       - Then "forget me".
       - Check with `scripts/memory_admin.py list`.
-   5. **Scene notes:** with `SCENE_NOTES=true`, watch the "Your last look around" sentence and its accuracy, and the GPU load on Alien3 with all three models (about 24 GB with nimble, clef-flash and qwen3.5:4b loaded).
+   5. **Scene notes:** with `SCENE_NOTES=true`, watch the "Your last look around" sentence and its accuracy, and the GPU load on Alien3 with all three models (about 24 GB with nimble, clef-flash and qwen3.5:4b loaded). The host keeps nimble and clef-flash warm but not qwen3.5:4b (each request asks Ollama to keep it 30 minutes), so the first note after a long idle spell may be missed while it loads.
 4. **Still owed from before:** side talk with two people (#19, #25; turn records now keep Pepper's last sentence for the re-benchmark), cut-off sentences (#26), shorter replies.
 
 Notes:
