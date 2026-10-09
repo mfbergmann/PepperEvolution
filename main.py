@@ -38,6 +38,7 @@ from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRo
 from src.decide import DecisionClient  # noqa: E402
 from src.decide.addressee import MODEL as ADDRESSEE_MODEL  # noqa: E402
 from src.perception import FrameWatcher  # noqa: E402
+from src.perception.scene import ScenePass  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
 from src.memory import Memory, MemoryStore  # noqa: E402
 from src.session import SessionRecorder  # noqa: E402
@@ -98,6 +99,8 @@ class Settings:
     vision_fps: float
     memory_dir: Optional[str] = None
     sound_direction: bool = False
+    scene_notes: bool = True
+    scene_model: str = "qwen3.5:4b"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -150,6 +153,8 @@ class Settings:
             vision_fps=float(os.getenv("VISION_FPS") or "1"),
             memory_dir=os.getenv("MEMORY_DIR") or None,
             sound_direction=env_bool("SOUND_DIRECTION", False),
+            scene_notes=env_bool("SCENE_NOTES", True),
+            scene_model=os.getenv("SCENE_MODEL") or "qwen3.5:4b",
         )
 
 
@@ -282,7 +287,11 @@ class PepperEvolution:
         self.robot.on_event(self.ai_manager.handle_event)
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
         self.vision: Optional[FrameWatcher] = None
+        self.scene: Optional[ScenePass] = None
         if self.decider is not None and s.vision_stream and not s.fake_bridge:
+            if s.scene_notes:
+                # an occasional note on the place and who is where, from the same frames (#11, docs/MEMORY.md)
+                self.scene = ScenePass(self.decider, self.world, ollama_url=s.decide_url, place_model=s.scene_model)
             self.vision = FrameWatcher(
                 config.camera_ws_url,
                 self.decider,
@@ -292,6 +301,7 @@ class PepperEvolution:
                 api_key=s.bridge_api_key,
                 recorder=self.recorder,
                 photo_dir=s.photo_record_dir,
+                scene=self.scene,
             )
             self.vision.start()  # streams only while someone is in view
         if self.decider is not None:
@@ -410,6 +420,8 @@ class PepperEvolution:
         self.logger.info("Shutting down components...")
         if getattr(self, "vision", None) is not None:
             await self.vision.stop()
+        if getattr(self, "scene", None) is not None:
+            await self.scene.close()
         await self._save_bridge_log()
         if self.decider is not None:
             await self.decider.close()

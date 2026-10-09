@@ -53,7 +53,9 @@ class FrameWatcher:
         recorder: Optional[Any] = None,
         photo_dir: Optional[str] = None,
         clock: Callable[[], float] = time.monotonic,
+        scene: Optional[Any] = None,
     ):
+        self.scene = scene  # ScenePass (src/perception/scene.py): an occasional scene note from the same frames
         self.url = url
         self.decider = decider
         self.world = world
@@ -126,6 +128,8 @@ class FrameWatcher:
     def frame(self, jpeg: bytes):
         """A new frame: judge it unless the previous judgement is still running (then drop it)."""
         self.frames += 1
+        if self.scene is not None:
+            self.scene.offer(jpeg)
         if self._busy:
             self.dropped += 1
             return

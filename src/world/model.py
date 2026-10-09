@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 from loguru import logger
 
 from .frames import Pose, pose_from
-from .observations import CAMERA, MOTION, PEOPLE, POSE, SOUND, Observation
+from .observations import CAMERA, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
 from .timeline import Timeline
 from .tracks import Tracker
 
@@ -27,6 +27,7 @@ RECENT_CHANGE_SECONDS = 60.0  # arrivals and departures this recent are mentione
 REMEMBERED_IN_SUMMARY = 120.0  # someone out of view is placed in the "Around you" line this long (tracks.py)
 REMEMBERED_MAY_HAVE_MOVED = 30.0  # after this, the line says they may have moved
 SOUND_MIN_CONFIDENCE = 0.3  # located sounds below this are ignored (to tune on the robot)
+SCENE_FRESH = 90.0  # a scene note is part of the "Around you" line this long
 SOUNDS_KEPT = 200  # about the last minute of located sounds
 MOVED_UNEXPECTEDLY_DEGREES = 15.0  # a measured pose this far from the estimate with no move of ours running
 MOVED_UNEXPECTEDLY_METRES = 0.3
@@ -125,6 +126,7 @@ class WorldModel:
         self._measured_once = False
         self._moving = 0  # commanded moves in flight (no "moved unexpectedly" while they run)
         self.sounds: Deque[Tuple[float, float, float]] = deque(maxlen=SOUNDS_KEPT)  # (time, heading, confidence)
+        self.scene: Optional[Tuple[float, Dict[str, Any]]] = None  # the latest scene note (#11): (time, data)
         self.most_people = 0  # the most people in view at once since start-up (session episode)
         self._sinks: List[Callable[[Observation], None]] = []
         self.logger = logger.bind(module="WorldModel")
@@ -148,6 +150,9 @@ class WorldModel:
             self._update_tracks(people, obs.at, placed=measured is not None or not self._moving)
         elif obs.source == POSE:
             pass  # applied above
+        elif obs.source == SCENE:
+            self.scene = (obs.at, dict(obs.data))
+            self.timeline.add("scene", obs.at, **obs.data)
         elif obs.source == SOUND:
             confidence = float(obs.data.get("confidence") or 0.0)
             if obs.data.get("azimuth") is not None and confidence >= SOUND_MIN_CONFIDENCE:
@@ -431,7 +436,21 @@ class WorldModel:
         camera = [words for what, words in SEEN_WORDS.items() if self.count and self.sees(what)]
         if camera:
             text += f" Your camera shows {' and '.join(camera)}."
+        note = self.scene_line()
+        if note:
+            text += f" {note}"
         return text
+
+    def scene_line(self) -> str:
+        """The latest place note, while fresh (#11): "Your last look around (12 s ago): a meeting room ..."."""
+        if self.scene is None:
+            return ""
+        at, data = self.scene
+        age = self._clock() - at
+        note = str(data.get("note") or "").strip().rstrip(".")
+        if not note or age > SCENE_FRESH:
+            return ""
+        return f"Your last look around ({_ago(age)}): {note}."
 
     @staticmethod
     def _describe(person: Person, index: int) -> str:

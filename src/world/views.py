@@ -51,6 +51,10 @@ def describe_event(event: Any, now: float) -> str:
         return f"{when}: you were moved (about {data.get('degrees')}°, {data.get('metres')} m) without a command"
     if kind == "camera_event":
         return f"{when}: your camera saw {data.get('what')}"
+    if kind == "scene":
+        people = data.get("people")
+        who = "" if people is None else f" ({people if people < 2 else '2 or more'} people in view)"
+        return f"{when}: you looked around: {_clip(data.get('note') or data.get('place'))}{who}"
     if kind == "remembered":
         return f"{when}: you stored a fact about {data.get('about')}"
     return f"{when}: {kind}"
@@ -65,6 +69,16 @@ def recall(world: Any) -> Dict[str, Any]:
     around = world.summary()
     if around:
         out["around"] = around
+    if world.scene is not None:
+        at, data = world.scene
+        out["last_look"] = {
+            "ago": f"{int(now - at)} s",
+            "place": data.get("place"),
+            "objects": data.get("objects"),
+            "note": data.get("note"),
+            "people": data.get("people"),
+            "nearest_person": data.get("where"),
+        }
     lines: List[str] = [describe_event(e, now) for e in events]
     if lines:
         out["recently"] = lines

@@ -184,7 +184,7 @@ The store comes first, so the place where remembering people goes exists before 
 4. **Sound direction** (#12, #24).
    - Bridge `sound` events, the `speaker_bearing` view, and "come to me" from the voice's direction.
    - Tested with the fake NAOqi; the desktop NAOqi has no `ALSoundLocalization`, so the robot verifies it.
-5. **Scene notes** (#11): a local vision model writes `scene` observations; candidates and a benchmark on recorded photos below.
+5. **Scene notes** (#11): built. Clef Flash (who is where) and qwen3.5:4b (the place) write `scene` observations; the "Around you" line adds "Your last look around (12 s ago): ..." while fresh, and `recall` returns the details (benchmark below).
 6. **Identity** (#14), after the consent flow has been used on the robot; candidates below.
 
 ## Models for the later slices (survey 2026-10-08)
@@ -195,11 +195,23 @@ Alien3 (RTX 5090, 32 GB) has about 10 GB of GPU memory free next to Nimble and C
 |-----|--------------|-------|
 | Searching facts and episodes | plain-text search (SQLite FTS5) | enough at this scale. If needed later: `embeddinggemma-2` (Google, Apache-2.0, 270M text encoder with optional image and audio encoders; needs Ollama 0.40 and the bf16 tags) or `qwen3-embedding:0.6b` |
 | Per-frame questions (who is where: left/centre/right, how many) | Clef Flash, as today (up to 64 typed questions per image in one call) | Liquid's `d1-3B` (October 2026, a 3B decision model, transformers only) is reported much faster; worth a benchmark |
-| Scene notes and boxes (#11, #6, #28) | `qwen3.5:4b` in Ollama with a JSON schema | also `gemma4:e4b` (detection and pointing), Moondream 3.1 (detect/point/caption, about 0.15 s; may need the GPU to itself), Molmo2-ER (pointing) |
+| Scene notes (#11) | **built:** who is where from Clef Flash's typed questions, the place from `qwen3.5:4b` (benchmark below) | for boxes and pointing later (#6, #28): Moondream 3.1 (detect/point/caption, about 0.15 s; may need the GPU to itself), Molmo2-ER (pointing) |
 | Finding a named object | the boxes from the scene model above | YOLOE-26 (open vocabulary, AGPL) if a dedicated detector is needed |
 | Face and body identity (#14) | InsightFace 2.1 PersonAnalysis (`cheetah_s`: face and body detection, ArcFace, body re-identification) | library MIT, **pretrained models for non-commercial research only**; fine for the lab, a problem for anyone deploying it commercially |
 | Voice identity, telling voices apart | speaker embeddings from sherpa-onnx (CAM++, TitaNet; already a dependency, runs on the CPU) | could also help the addressee gate: a second voice is evidence of side talk |
 | Memory frameworks | none (our own store) | mem0, Graphiti and cognee all use a language model to extract memories; Graphiti's time-aware facts are worth revisiting if facts start changing over time |
+
+### Scene notes: what the benchmark showed (2026-10-08)
+
+12 frames from the robot's own photos, labelled by hand (6 with one real person, 6 with nobody but glass walls and Pepper's reflection), at the stream's 320×240:
+
+| Asked | Model | People count right | Count and where right | Time per frame |
+|-------|-------|--------------------|-----------------------|----------------|
+| typed questions ("how many real people", "where is the nearest") | Clef Flash | 11/12 (the miss came with p 0.53) | 10/12 | 0.14 s |
+| a description with a people list, JSON schema | qwen3.5:4b | 7/12 (8/12 when warned about reflections) | 7/12 | 0.62 s |
+| the same | gemma4:e4b (QAT) | 0/12 (2/12 warned) | 0/12 | 0.61 s |
+
+The generative models count people in glass reflections and in Pepper's own reflection, even when told not to. So the scene pass (`src/perception/scene.py`) asks each model what it is good at. Clef Flash says who is where, with a probability. qwen3.5:4b describes only the place and the objects, with people left out of its schema; those notes matched the frames, at a median of 0.46 s. Both run in parallel on frames the camera stream already sends, once when someone comes into view and then every 20 s; a look takes about 0.5 s end to end. The scripts and the labels are in `results/system-one/` (local only, because the frames show people).
 
 ## Not building (yet)
 
