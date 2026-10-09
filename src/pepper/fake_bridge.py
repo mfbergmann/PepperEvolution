@@ -200,6 +200,11 @@ class FakeBridgeClient:
             "prepare", autonomous_life=autonomous_life, wake_up=wake_up, posture=posture, awareness=awareness
         )
 
+    async def set_sound_localization(self, enabled: bool) -> Dict[str, Any]:
+        result = self._record("sound_localization", enabled=enabled)
+        result.update(wanted=enabled, subscribed=enabled, available=True)
+        return result
+
     async def set_awareness(
         self,
         enabled: bool,

@@ -1603,9 +1603,131 @@ class CameraStream(object):
         return buf.getvalue()
 
 
+# ---------------------------------------------------------------------------
+# Sound direction (ALSoundLocalization): where a voice came from (issues #12, #24)
+# ---------------------------------------------------------------------------
+
+SOUND_EVENT = "ALSoundLocalization/SoundLocated"
+SOUND_SUBSCRIBER = "pepper_bridge_sound"
+SOUND_MIN_INTERVAL = 0.2  # seconds between "sound" events (NAOqi can locate several sounds a second)
+
+
+def parse_sound(value):
+    """One SoundLocated value as a body-frame direction, or None.
+
+    NAOqi 2.5: ``[[sec, usec], [azimuth, elevation, confidence, energy], head 6D in FRAME_TORSO, head 6D in
+    FRAME_ROBOT]``. The azimuth is relative to the head (the microphones are on it), so the head's yaw in the torso
+    frame (the 6th value) is added to give a direction relative to the body, like the turn endpoint (left positive).
+    Pepper: about 10 degrees accurate, the loudest source wins, unreliable more than 120 degrees off the front."""
+    try:
+        located = value[1]
+        azimuth, elevation, confidence = float(located[0]), float(located[1]), float(located[2])
+        energy = float(located[3]) if len(located) > 3 else None
+        head = value[2] if len(value) > 2 else None
+        head_yaw = float(head[5]) if head is not None and len(head) >= 6 else 0.0
+    except (TypeError, ValueError, IndexError):
+        return None
+    body = math.atan2(math.sin(azimuth + head_yaw), math.cos(azimuth + head_yaw))
+    return {
+        "azimuth": round(math.degrees(body), 1),
+        "elevation": round(math.degrees(elevation), 1),
+        "confidence": round(confidence, 2),
+        "energy": round(energy, 4) if energy is not None else None,
+        "head_yaw": round(math.degrees(head_yaw), 1),
+    }
+
+
+class SoundLocator(object):
+    """Subscribes ALSoundLocalization on request (POST /sound/localization) and pushes "sound" events.
+
+    Off until the host asks: its cost on the robot's CPU is not measured yet. Sounds located while Pepper itself is
+    speaking (and for the microphone mute tail after) are dropped: its own voice would win every time. The desktop
+    NAOqi has no ALSoundLocalization; ``available`` then says so."""
+
+    def __init__(self, session, audio):
+        self.session = session
+        self.audio = audio
+        self.wanted = False
+        self.subscribed = False
+        self.available = None
+        self.located = 0
+        self.sent = 0
+        self.dropped_speaking = 0
+        self._subscriber = None
+        self._last_sent = 0.0
+        self._lock = threading.Lock()
+        session.on_connect.append(self._on_connect)
+
+    def _on_connect(self, session):
+        self.subscribed = False  # a new NAOqi session has forgotten the subscription
+        if self.wanted:
+            _run_in_thread(self.start)
+
+    def start(self):
+        with self._lock:
+            self.wanted = True
+            if self.subscribed:
+                return self.info()
+            try:
+                self.session.service("ALSoundLocalization").subscribe(SOUND_SUBSCRIBER)
+            except Exception as exc:
+                self.available = False
+                LOGGER.warning("sound localisation unavailable: %s", exc)
+                return self.info()
+            subscriber = self.session.service("ALMemory").subscriber(SOUND_EVENT)
+            subscriber.signal.connect(self._on_sound)
+            self._subscriber = subscriber  # keep a reference: the subscription dies with the object
+            self.subscribed = True
+            self.available = True
+            LOGGER.info("Sound localisation started")
+            return self.info()
+
+    def stop(self):
+        with self._lock:
+            self.wanted = False
+            if self.subscribed:
+                try:
+                    self.session.service("ALSoundLocalization").unsubscribe(SOUND_SUBSCRIBER)
+                except Exception as exc:
+                    LOGGER.debug("sound localisation unsubscribe: %s", exc)
+            self._subscriber = None
+            self.subscribed = False
+            return self.info()
+
+    def _speaking(self):
+        return self.audio.speaking > 0 or self.audio.tts_active or time.time() < self.audio.muted_until
+
+    def _on_sound(self, value):
+        """libqi thread: one located sound."""
+        sound = parse_sound(value)
+        if sound is None:
+            return
+        self.located += 1
+        if self._speaking():
+            self.dropped_speaking += 1
+            return
+        now = time.time()
+        if now - self._last_sent < SOUND_MIN_INTERVAL:
+            return
+        self._last_sent = now
+        self.sent += 1
+        broadcast_from_thread("sound", sound)
+
+    def info(self):
+        return {
+            "wanted": self.wanted,
+            "subscribed": self.subscribed,
+            "available": self.available,
+            "located": self.located,
+            "sent": self.sent,
+            "dropped_speaking": self.dropped_speaking,
+        }
+
+
 ROBOT = Robot(NAOQI)
 AUDIO = AudioTap(NAOQI)
 CAMERA = CameraStream(NAOQI)
+SOUND = SoundLocator(NAOQI, AUDIO)
 
 
 # ---------------------------------------------------------------------------
@@ -1926,6 +2048,18 @@ class AudioStreamHandler(JSONHandler):
 
     def get(self):
         self.ok(AUDIO.info())
+
+
+class SoundLocalizationHandler(JSONHandler):
+    """GET: state of sound localisation; POST {"enabled": true|false}: start or stop it."""
+
+    def get(self):
+        self.ok(SOUND.info())
+
+    @async_handler
+    def post(self):
+        enabled = as_bool(self.arg("enabled"), True)
+        return self.run_in_thread(SOUND.start if enabled else SOUND.stop)
 
 
 class TabletTextHandler(JSONHandler):
@@ -2443,6 +2577,7 @@ def make_app():
             (r"/autonomous_life", AutonomousLifeHandler),
             (r"/audio/record", AudioRecordHandler),
             (r"/audio/stream", AudioStreamHandler),
+            (r"/sound/localization", SoundLocalizationHandler),
             (r"/tablet/text", TabletTextHandler),
             (r"/tablet/web", TabletWebHandler),
             (r"/tablet/image", TabletImageHandler),
@@ -2532,6 +2667,7 @@ def main():
     CAMERA.stop()
     if NAOQI.is_connected():
         _safe(AUDIO.unregister)
+        _safe(SOUND.stop)
         _safe(ROBOT.unsubscribe_extractors)
 
 

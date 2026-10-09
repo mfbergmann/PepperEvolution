@@ -141,6 +141,7 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `DECIDE_URL` | | Fast local judgements on a GPU machine (Ollama with `nimble`, `clef-flash`): who is Pepper being spoken to, which action to start at once, what the camera shows. Empty = off; see [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) |
 | `ADDRESSEE_GATE` / `ROUTER` / `VISION_STREAM` | `true` | With `DECIDE_URL`: answer only speech meant for Pepper; start simple actions at once; judge camera frames while someone is in view (`ADDRESSEE_THRESHOLD`, `ROUTER_THRESHOLD`, `VISION_FPS` tune them) |
 | `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`) |
+| `SOUND_DIRECTION` | `false` | With bridge 0.6: each spoken turn gets the direction the voice came from (NAOqi sound localisation), for "come to me" out of the camera's view |
 | `MEMORY_DIR` | | Long-term memory: people who agreed to be remembered, facts, session episodes ([docs/MEMORY.md](docs/MEMORY.md); `scripts/memory_admin.py`); empty = off |
 | `PHOTO_RECORD_DIR` / `VOICE_RECORD_DIR` | | Keep photos (with head angle and sharpness) / utterance audio for testing; inside `SESSION_DIR` when that is set |
 | `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |

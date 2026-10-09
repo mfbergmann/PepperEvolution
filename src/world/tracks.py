@@ -24,6 +24,7 @@ LOST_FOR = 5.0
 REMEMBER_FOR = 120.0
 MATCH_DEGREES = 20.0
 MATCH_METRES = 0.7
+VOICE_MATCH_DEGREES = 25.0  # sound direction is about 10 degrees accurate on Pepper (NAOqi docs)
 
 
 @dataclass
@@ -41,6 +42,12 @@ class PersonTrack:
     lost_at: Optional[float] = None
     sources: List[str] = field(default_factory=lambda: ["people"])
     person_id: Optional[int] = None  # long-term memory, when known (opt-in identity, later)
+    spoke_at: Optional[float] = None  # when a voice came from their direction
+
+    @property
+    def heard_only(self) -> bool:
+        """Known only from a voice (sound direction), never seen by the people detector."""
+        return self.sources == ["sound"]
 
     @property
     def placed(self) -> bool:
@@ -135,6 +142,31 @@ class Tracker:
         """Tracks out of view with a position, most recently seen first."""
         out = [t for t in self.tracks if not t.present and t.placed and now - t.last_seen <= REMEMBER_FOR]
         return sorted(out, key=lambda t: -t.last_seen)
+
+    def voice(self, heading: float, pose: Pose, now: float, within: float = VOICE_MATCH_DEGREES) -> PersonTrack:
+        """A voice came from ``heading`` (absolute, radians): mark the person there as the speaker, or start a
+        track known only by that voice (so "come to me" has a direction when the detector saw nobody)."""
+        self._expire(now)
+        best, best_gap = None, None
+        for track in self.tracks:
+            if now - track.last_seen > REMEMBER_FOR or not track.placed:
+                continue
+            bearing = track.bearing(pose)
+            gap = abs(bearing - pose.bearing_of(heading)) if bearing is not None else None
+            if gap is not None and gap <= within and (best_gap is None or gap < best_gap):
+                best, best_gap = track, gap
+        if best is None:
+            best = PersonTrack(
+                id=self._next_id, first_seen=now, last_seen=now, present=False, heading=heading, sources=["sound"]
+            )
+            self._next_id += 1
+            self.tracks.append(best)
+        elif "sound" not in best.sources:
+            best.sources.append("sound")
+        best.spoke_at = now
+        if best.heard_only:
+            best.heading, best.last_seen = heading, now
+        return best
 
     def forget_positions(self):
         """After Pepper moved unexpectedly: positions are no longer known relative to it."""

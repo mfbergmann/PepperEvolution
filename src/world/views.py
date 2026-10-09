@@ -69,3 +69,16 @@ def recall(world: Any) -> Dict[str, Any]:
     if lines:
         out["recently"] = lines
     return out
+
+
+def addressee_context(world: Any, heard: int = 3) -> Dict[str, Any]:
+    """What the addressee judgement could see (#25): the last things heard, and Pepper's last sentence and its age.
+    Recorded with every gated turn, so the judgement can be re-benchmarked with Pepper's words included."""
+    now = world.now()
+    texts = [e.data.get("text") for e in world.timeline.recent(kinds=["heard"])][-heard:]
+    said = world.timeline.last("said")
+    out: Dict[str, Any] = {"heard_before": texts}
+    if said is not None:
+        out["pepper_said"] = said.data.get("text")
+        out["pepper_said_ago"] = round(now - said.at, 1)
+    return out

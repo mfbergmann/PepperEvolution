@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 from loguru import logger
 
 from .frames import Pose, pose_from
-from .observations import CAMERA, MOTION, PEOPLE, POSE, Observation
+from .observations import CAMERA, MOTION, PEOPLE, POSE, SOUND, Observation
 from .timeline import Timeline
 from .tracks import Tracker
 
@@ -26,6 +26,8 @@ SEEN_WORDS = {"waving": "someone waving at you", "showing": "someone holding som
 RECENT_CHANGE_SECONDS = 60.0  # arrivals and departures this recent are mentioned
 REMEMBERED_IN_SUMMARY = 120.0  # someone out of view is placed in the "Around you" line this long (tracks.py)
 REMEMBERED_MAY_HAVE_MOVED = 30.0  # after this, the line says they may have moved
+SOUND_MIN_CONFIDENCE = 0.3  # located sounds below this are ignored (to tune on the robot)
+SOUNDS_KEPT = 200  # about the last minute of located sounds
 MOVED_UNEXPECTEDLY_DEGREES = 15.0  # a measured pose this far from the estimate with no move of ours running
 MOVED_UNEXPECTEDLY_METRES = 0.3
 ARRIVAL_ABSENCE_SECONDS = 20.0  # someone "arrives" only after nobody was in view this long; shorter gaps are
@@ -122,6 +124,7 @@ class WorldModel:
         self.tracker = Tracker()  # people, including those just out of view (#27)
         self._measured_once = False
         self._moving = 0  # commanded moves in flight (no "moved unexpectedly" while they run)
+        self.sounds: Deque[Tuple[float, float, float]] = deque(maxlen=SOUNDS_KEPT)  # (time, heading, confidence)
         self.most_people = 0  # the most people in view at once since start-up (session episode)
         self._sinks: List[Callable[[Observation], None]] = []
         self.logger = logger.bind(module="WorldModel")
@@ -145,6 +148,10 @@ class WorldModel:
             self._update_tracks(people, obs.at, placed=measured is not None or not self._moving)
         elif obs.source == POSE:
             pass  # applied above
+        elif obs.source == SOUND:
+            confidence = float(obs.data.get("confidence") or 0.0)
+            if obs.data.get("azimuth") is not None and confidence >= SOUND_MIN_CONFIDENCE:
+                self.sounds.append((obs.at, self.pose.heading_of(float(obs.data["azimuth"])), confidence))
         elif obs.source == MOTION:
             self._apply_motion(obs, measured)
         elif obs.source == CAMERA and obs.kind == "judgement":
@@ -233,6 +240,31 @@ class WorldModel:
         for association in self.tracker.update(people, self.pose, at):
             self.timeline.add("track", at, **association)
 
+    def voice_direction(self, start: float, end: float) -> Optional[Dict[str, Any]]:
+        """Where the voice in ``[start, end]`` came from: the confidence-weighted mean direction of the sounds
+        located then, as a body-frame bearing now (degrees), or None if none were located (#12, #24)."""
+        picked = [(heading, conf) for at, heading, conf in self.sounds if start <= at <= end]
+        if not picked:
+            return None
+        sx = sum(conf * math.cos(h) for h, conf in picked)
+        sy = sum(conf * math.sin(h) for h, conf in picked)
+        if math.hypot(sx, sy) < 1e-6:
+            return None
+        heading = math.atan2(sy, sx)
+        spread = math.degrees(math.sqrt(max(0.0, -2.0 * math.log(math.hypot(sx, sy) / sum(c for _, c in picked)))))
+        return {
+            "bearing": round(self.pose.bearing_of(heading), 1),
+            "heading": heading,
+            "sounds": len(picked),
+            "spread": round(spread, 1),
+        }
+
+    def attach_voice(self, heading: float, at: Optional[float] = None) -> Any:
+        """The person a voice came from: an existing track in that direction, or a new one known by voice."""
+        track = self.tracker.voice(heading, self.pose, self._clock() if at is None else at)
+        self.timeline.add("voice", track.spoke_at or self._clock(), track=track.id, heard_only=track.heard_only)
+        return track
+
     def remembered_line(self) -> str:
         """Where the most recently seen person was, if they are out of view now (#27); empty otherwise."""
         if self.pose.uncertain:
@@ -259,7 +291,8 @@ class WorldModel:
             age = now - track.last_seen
             # people move: on 2026-10-08 someone said they were going to sit down, and was 136° from where they stood
             moved = "; they may have moved since" if age > REMEMBERED_MAY_HAVE_MOVED else ""
-            return f"you last saw someone {_ago(age)}, {away}{where}{moved}"
+            verb = "heard someone" if track.heard_only else "last saw someone"
+            return f"you {verb} {_ago(age)}, {away}{where}{moved}"
         return ""
 
     def recall(self) -> Dict[str, Any]:
@@ -288,6 +321,8 @@ class WorldModel:
             arrival = self.handle_people(data.get("count"), data.get("people") or [], pose=data.get("pose"))
         elif event_type == "pose" and data.get("pose") is not None:
             self.note(POSE, "pose", pose=data.get("pose"))
+        elif event_type == "sound":
+            self.note(SOUND, "sound", **{k: data.get(k) for k in ("azimuth", "elevation", "confidence", "energy")})
         elif event_type == "sensors" and "people_count" in data:
             extra = {"pose": data["pose"]} if data.get("pose") is not None else {}
             self.note(

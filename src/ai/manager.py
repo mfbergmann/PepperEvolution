@@ -22,6 +22,7 @@ from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import HEARD, MIND, SAID
+from ..world.views import addressee_context
 from .models import ERROR_TEXT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
@@ -173,6 +174,7 @@ class AIManager:
         self._partial_callbacks: List[PartialCallback] = []
         self.recorder: Optional[Any] = None  # SessionRecorder (src/session.py): turns.jsonl and events.jsonl
         self._rec: Optional[Dict[str, Any]] = None  # the record of the turn being run
+        self._voice_line = ""  # where the voice of the turn being run came from (sound direction)
 
     # Backwards-compatible alias (older code/tests used context_window = pairs kept)
     @property
@@ -199,6 +201,7 @@ class AIManager:
         client_id: Optional[str] = None,
         heard_at: Optional[float] = None,
         open_mic: bool = False,
+        spoke_for: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Process user input through the AI with tool calling.
 
@@ -215,6 +218,7 @@ class AIManager:
         """
         speak = self.speak_responses if speak is None else speak
         rec = self._new_record(user_input, source, heard_at)
+        voice_line = self._voice_direction(source, heard_at, spoke_for, rec)
         if source in ("user", "voice"):
             intent = match_intent(user_input)
             if intent is not None:
@@ -276,6 +280,7 @@ class AIManager:
                 self._finish_record(rec, result)
                 return result
             self._rec = rec
+            self._voice_line = voice_line
             self.executor.clear_already_started()  # never carry an absorption over from another turn
             pending = rec.pop("_absorb", None)
             if pending is not None:
@@ -284,6 +289,7 @@ class AIManager:
                 result = await self._run_turn(user_input, speak, source, client_id)
             finally:
                 self._rec = None
+                self._voice_line = ""
                 self.executor.clear_already_started()
         self._finish_record(rec, result)
         if source in ("user", "voice"):
@@ -324,7 +330,10 @@ class AIManager:
         # never sees what Pepper said). In a conversation with nobody else seen for a minute, answer.
         if not verdict and alone and (talking or answering):
             verdict = True
+        context = addressee_context(self.world) if self.world is not None else {}
         rec["addressee"] = {
+            "pepper_said": context.get("pepper_said"),  # for re-benchmarking the judgement with it (#25)
+            "pepper_said_ago": context.get("pepper_said_ago"),
             "p": None if p is None else round(p, 3),
             "someone_looking": looking,
             "in_conversation": talking,
@@ -508,6 +517,32 @@ class AIManager:
             if key in rec:
                 out[key] = rec[key]
         self.recorder.record_turn(out)
+
+    VOICE_END_SILENCE = 0.7  # the recogniser ends an utterance after about 1 s of silence: no voice in the tail
+
+    def _voice_direction(
+        self, source: str, heard_at: Optional[float], spoke_for: Optional[float], rec: Dict[str, Any]
+    ) -> str:
+        """Where the voice of this utterance came from (bridge sound localisation), as a line for the mind, and the
+        speaker attached to the person in that direction (#12, #24). Empty when nothing was located."""
+        if source != "voice" or heard_at is None or self.world is None or not getattr(self.world, "sounds", None):
+            return ""
+        start = heard_at - (spoke_for + 0.5 if spoke_for else 5.0)
+        voice = self.world.voice_direction(start, heard_at - self.VOICE_END_SILENCE)
+        if voice is None:
+            return ""
+        self.world.attach_voice(voice["heading"])
+        rec["voice"] = {k: voice[k] for k in ("bearing", "sounds", "spread")}
+        bearing = voice["bearing"]
+        degrees = int(round(abs(bearing) / 5.0) * 5)
+        if degrees < 10:
+            return "The voice you are answering came from straight ahead of your body."
+        side = "left" if bearing > 0 else "right"
+        turn = degrees if bearing > 0 else -degrees
+        return (
+            f"The voice you are answering came from about {degrees}° to your {side} of where your body points now "
+            f"(turn {turn} to face it)."
+        )
 
     TIMELINE_EVENTS = ("greeting", "camera_event", "handshake")  # also kept in working memory (recall)
 
@@ -1125,6 +1160,8 @@ class AIManager:
         photo_line = self._last_photo_line()
         if photo_line:
             dynamic += f"\n{photo_line}"
+        if self._voice_line:
+            dynamic += f"\n{self._voice_line}"
         known = self.memory.here_line() if self.memory is not None else ""
         if known:
             dynamic += f"\n{known}"

@@ -97,6 +97,7 @@ class Settings:
     vision_stream: bool
     vision_fps: float
     memory_dir: Optional[str] = None
+    sound_direction: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -148,6 +149,7 @@ class Settings:
             vision_stream=env_bool("VISION_STREAM", True),
             vision_fps=float(os.getenv("VISION_FPS") or "1"),
             memory_dir=os.getenv("MEMORY_DIR") or None,
+            sound_direction=env_bool("SOUND_DIRECTION", False),
         )
 
 
@@ -304,6 +306,8 @@ class PepperEvolution:
             self.robot.on_event(self._record_robot_event)
             self.world.add_sink(self._record_observation)
             self.logger.info(f"Session records: {self.recorder.folder}")
+        if s.sound_direction and not s.fake_bridge:
+            await self._start_sound_direction()
         if self.world.count == 0:
             self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
         self.robot.start_state_loop(interval=10.0)
@@ -348,6 +352,18 @@ class PepperEvolution:
     async def _record_robot_event(self, event_type: str, data: Dict[str, Any]):
         if self.recorder is not None and event_type in ("people", "touch", "bumper"):
             self.recorder.record_event(event_type, **data)
+
+    async def _start_sound_direction(self):
+        """SOUND_DIRECTION: ask the bridge (0.6+) for "sound" events, so voices get a direction (#12, #24)."""
+        try:
+            info = await self.robot.bridge.set_sound_localization(True)
+        except Exception as exc:  # noqa: BLE001 - an older bridge has no /sound/localization
+            self.logger.warning(f"Sound direction not available (bridge 0.6 or later needed): {exc}")
+            return
+        if info.get("available") is False:
+            self.logger.warning("Sound direction: this NAOqi has no ALSoundLocalization")
+        else:
+            self.logger.info("Sound direction on: voices get the direction they came from")
 
     RECORDED_SOURCES = (POSE, MOTION, SOUND, SCENE, IDENTITY, MIND)  # people events are recorded as they come
 

@@ -229,3 +229,14 @@ class TestAlone:
         manager.world.update_people(2, [person, {"id": 2}])  # with someone else around, 32 s is too long
         rec = {}
         assert await manager._meant_for_pepper([], "It is a pretty cool space", rec) is False
+
+    async def test_the_record_keeps_what_pepper_said_last(self, mock_robot, mock_ai_provider):
+        # groundwork for #25: the 2026-10-01 log had no record of Pepper's sentences to re-benchmark with
+        from src.world.observations import SAID
+
+        manager = await gated_manager(mock_robot, mock_ai_provider, 0.9)
+        manager.world.note(SAID, "said", text="Am I facing you now?")
+        rec = {}
+        await manager._meant_for_pepper([], "Yeah, pretty good", rec)
+        assert rec["addressee"]["pepper_said"] == "Am I facing you now?"
+        assert rec["addressee"]["pepper_said_ago"] is not None

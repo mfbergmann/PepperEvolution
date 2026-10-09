@@ -1366,3 +1366,44 @@ class TestOfferHand:
         robot.svc("ALMotion").awake = False
         with pytest.raises(RuntimeError, match="resting"):
             robot.offer_hand(5)
+
+
+class TestSoundDirection:
+    """ALSoundLocalization into "sound" events: body-frame direction, own speech dropped (#12, #24)."""
+
+    @staticmethod
+    def located(azimuth_deg, head_yaw_deg=0.0, confidence=0.7):
+        head = [0.0, 0.0, 0.2, 0.0, 0.0, math.radians(head_yaw_deg)]
+        return [[1, 0], [math.radians(azimuth_deg), 0.1, confidence, 0.01], head, head]
+
+    def test_azimuth_is_relative_to_the_head(self, bridge):
+        sound = bridge.parse_sound(self.located(20.0, head_yaw_deg=-45.0))
+        assert sound["azimuth"] == -25.0 and sound["head_yaw"] == -45.0 and sound["confidence"] == 0.7
+        assert bridge.parse_sound(self.located(170.0, head_yaw_deg=30.0))["azimuth"] == -160.0  # wrapped
+        assert bridge.parse_sound([[1, 0]]) is None and bridge.parse_sound(None) is None
+
+    def test_events_and_own_speech(self, bridge, monkeypatch):
+        events = []
+        monkeypatch.setattr(bridge, "broadcast_from_thread", lambda t, p: events.append((t, p)))
+        clock = [1000.0]
+        monkeypatch.setattr(bridge.time, "time", lambda: clock[0])
+        audio = types.SimpleNamespace(speaking=0, tts_active=False, muted_until=0.0)
+        locator = bridge.SoundLocator(types.SimpleNamespace(on_connect=[]), audio)
+        locator._on_sound(self.located(30.0))
+        clock[0] += 0.05
+        locator._on_sound(self.located(31.0))  # too soon after the last one: not sent
+        audio.tts_active = True
+        clock[0] += 1.0
+        locator._on_sound(self.located(0.0))  # Pepper's own voice
+        assert [e[1]["azimuth"] for e in events] == [30.0]
+        assert locator.info()["dropped_speaking"] == 1 and locator.info()["located"] == 3
+
+    def test_unavailable_on_the_desktop_naoqi(self, bridge):
+        class NoSound:
+            on_connect = []
+
+            def service(self, name):
+                raise RuntimeError("Cannot find service 'ALSoundLocalization' in index")
+
+        locator = bridge.SoundLocator(NoSound(), types.SimpleNamespace(speaking=0, tts_active=False, muted_until=0.0))
+        assert locator.start()["available"] is False and locator.wanted is True

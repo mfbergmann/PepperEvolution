@@ -211,6 +211,10 @@ class BridgeClient:
     async def set_autonomous_life(self, state: str) -> Dict[str, Any]:
         return await self._post("/autonomous_life", json={"state": state}, timeout=self.action_timeout)
 
+    async def set_sound_localization(self, enabled: bool) -> Dict[str, Any]:
+        """Start or stop ALSoundLocalization on the robot: "sound" events with a body-frame direction (from 0.6)."""
+        return await self._post("/sound/localization", json={"enabled": enabled})
+
     # ------------------------------------------------------------------
     # Camera / Audio
     # ------------------------------------------------------------------

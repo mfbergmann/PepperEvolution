@@ -133,6 +133,7 @@ Copy `env.example` to `.env`. Key variables:
 | `ROUTER` / `ROUTER_THRESHOLD` | `true` / `0.7` | Start safe actions from a spoken command at once |
 | `VISION_STREAM` / `VISION_FPS` | `true` / `1` | Camera judgements while someone is in view |
 | `SESSION_DIR` | | One folder per run for review (log, audio, photos, turns, events) |
+| `SOUND_DIRECTION` | `false` | Bridge 0.6+: `sound` events (ALSoundLocalization) give each voice turn a direction |
 | `MEMORY_DIR` | | Long-term memory store (`pepper.sqlite`): people who agreed, facts, episodes; empty = off |
 | `PHOTO_RECORD_DIR` | | Keep every photo with its measured head angle (overridden by `SESSION_DIR`) |
 | `LED_STATE_SIGNALS` | `true` | Eye colour shows listening / thinking / speaking |

@@ -223,7 +223,12 @@ class VoiceInput:
         self._listening = False  # the manager's own state signals take over from here
         # open_mic: heard by the robot's microphone, so it may not be meant for Pepper (push-to-talk always is)
         result = await self.manager.process_user_input(
-            text, source="voice", client_id=client_id, heard_at=time.monotonic(), open_mic=source == "voice"
+            text,
+            source="voice",
+            client_id=client_id,
+            heard_at=time.monotonic(),
+            open_mic=source == "voice",
+            spoke_for=transcript.duration or None,
         )
         return {"text": text, "response": result}
 

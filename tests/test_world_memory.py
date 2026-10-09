@@ -12,7 +12,7 @@ import pytest
 
 from src.world import WorldModel
 from src.world.frames import MEASURED, Pose, pose_from, wrap, wrap_deg
-from src.world.observations import MOTION, POSE
+from src.world.observations import MOTION, POSE, SOUND
 from src.world.tracks import REMEMBER_FOR
 
 
@@ -236,3 +236,64 @@ class TestReplayScript:
         text = module.replay(str(tmp_path))
         assert "about 90° to your right of where your body points now (turn -90 to face where they were)" in text
         assert "back in view: memory said +88.0°, the detector saw -50.0°" in text  # they moved: shown as such
+
+
+class TestVoiceDirection:
+    """Sound direction (#12, #24): where a voice came from, kept true while Pepper turns."""
+
+    def sounds(self, world, clock, azimuth, n=4, confidence=0.6):
+        for i in range(n):
+            world.note(SOUND, "sound", azimuth=azimuth + (i % 2) * 4 - 2, confidence=confidence)
+            clock.t += 0.2
+
+    def test_mean_direction_of_the_utterance(self):
+        world, clock = world_at()
+        start = clock.t
+        self.sounds(world, clock, 60.0)
+        world.note(SOUND, "sound", azimuth=-120.0, confidence=0.1)  # a door, too unsure: ignored
+        voice = world.voice_direction(start, clock.t)
+        assert voice["bearing"] == pytest.approx(60.0, abs=0.5) and voice["sounds"] == 4
+        assert world.voice_direction(clock.t + 1, clock.t + 2) is None
+
+    def test_a_voice_out_of_view_becomes_someone_heard(self):
+        world, clock = world_at()
+        see(world)  # nobody in view
+        start = clock.t
+        self.sounds(world, clock, -70.0)
+        voice = world.voice_direction(start, clock.t)
+        track = world.attach_voice(voice["heading"])
+        assert track.heard_only
+        turn(world, clock, -30)
+        line = world.summary()
+        assert "you heard someone" in line and "about 40° to your right" in line and "turn -40" in line
+
+    def test_a_voice_from_someone_in_view_marks_them(self):
+        world, clock = world_at()
+        see(world, person(-35.0, 1.4))
+        start = clock.t
+        self.sounds(world, clock, -40.0)
+        track = world.attach_voice(world.voice_direction(start, clock.t)["heading"])
+        assert not track.heard_only and track.spoke_at is not None and len(world.tracker.tracks) == 1
+
+    async def test_the_mind_hears_where_the_voice_came_from(self, mock_robot, mock_ai_provider):
+        from src.ai.manager import AIManager
+        from src.ai.models import AIResponse
+
+        world, clock = world_at()
+        seen = {}
+
+        async def chat(messages, tools=None, system=None, on_text=None):
+            seen["state"] = system[1]["text"]
+            return AIResponse(text="Coming.", stop_reason="end_turn")
+
+        mock_ai_provider.chat.side_effect = chat
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False, world=world)
+        self.sounds(world, clock, 50.0, n=6)
+        clock.t += 1.0  # the recogniser's end-of-speech silence
+        result = await manager.process_user_input(
+            "Come to me", source="voice", heard_at=clock.t, spoke_for=1.2, open_mic=False
+        )
+        assert "The voice you are answering came from about 50° to your left" in seen["state"]
+        assert "(turn 50 to face it)" in seen["state"]
+        assert manager._voice_line == ""  # only for that turn
+        assert result["stop_reason"] == "end_turn"

@@ -121,12 +121,15 @@ On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events 
 {"type": "battery", "data": {"level": 75, "charging": false}, "timestamp": ...}
 {"type": "people",  "data": {"count": 1, "ids": [7], "people": [{"id": 7, "distance": 1.07, "looking": true, "zone": 1, "present_for": 12, "yaw": 12.3, "pitch": -8.1}], "pose": [0.12, -0.03, 1.5708]}, "timestamp": ...}
 {"type": "pose",    "data": {"pose": [0.12, -0.03, 1.5708]}, "timestamp": ...}
+{"type": "sound",   "data": {"azimuth": 41.5, "elevation": 3.2, "confidence": 0.62, "energy": 0.011, "head_yaw": 10.0}, "timestamp": ...}
 {"type": "speech",  "data": {"state": "start", "text": "Hello"}, "timestamp": ...}
 ```
 
 Clients may send `{"type": "ping"}` and get `{"type": "pong"}`. Sensors are polled every 250 ms.
 
 `pose` (from 0.6) is sent when Pepper has turned at least 5° or moved 0.1 m since the last one and has then been still for 0.5 s: one event at the end of a turn, and one when someone pushes or carries Pepper. `people` events carry the pose at the moment of the report.
+
+`sound` (from 0.6, only after `POST /sound/localization {"enabled": true}`) is one sound located by `ALSoundLocalization`: `azimuth` is the direction relative to the body in degrees (left positive; NAOqi's head-relative azimuth plus the head yaw), `confidence` 0-1 (it drops with noise). At most five a second; sounds located while Pepper itself speaks (and for the microphone's mute tail) are dropped. NAOqi documents about 10° accuracy on Pepper, the loudest source winning, and poor results more than 120° off the front. `GET /sound/localization` gives `wanted`, `subscribed`, `available` (false on NAOqi's desktop build, which has no `ALSoundLocalization`), `located`, `sent` and `dropped_speaking`. Off by default: its cost on the robot's CPU is not measured yet.
 
 `people` is debounced: it is sent only when the number of people, or someone's zone, gaze, direction (15° steps) or distance (0.5 m steps), has changed and held for 1 s (`PEOPLE_STABLE_SECONDS`). NAOqi's detector flickers several times a second on the robot and its IDs change when tracking is lost, so IDs are not part of the change test. Per person: `distance` (m), `looking` (at Pepper), `zone` (1 near, 2 middle, 3 far; NAOqi engagement zones) and `present_for` (s), each `null` when NAOqi has not published it (on the robot `zone` and `present_for` were not always filled in). The bridge subscribes `ALGazeAnalysis` and `ALEngagementZones` for these; the robot stayed 86 % idle with them on. People are detected by face, so someone facing away or more than about 2 m off can drop out.
 
