@@ -248,3 +248,87 @@ class TestRecording:
         voice = VoiceInput(fake_manager(), broken, record_dir=str(tmp_path))
         await voice.handle_utterance(tone(0.5))
         assert len(list(tmp_path.glob("*.wav"))) == 1 and not list(tmp_path.glob("*.hyp.txt"))
+
+
+class TestUnfinishedSentences:
+    """#26: an utterance that clearly stops mid-sentence waits for the rest (robot, 2026-10-08)."""
+
+    async def test_the_rest_is_joined_to_the_fragment(self, monkeypatch):
+        import src.audio.voice as voice_module
+
+        monkeypatch.setattr(voice_module, "HOLD", 5.0)
+        manager, source = fake_manager(), FakeSource()
+        transcriber = FakeTranscriber(["You're gonna run on a local model onto the", "Lab computers"], streaming=True)
+        voice = VoiceInput(manager, transcriber, source=source)
+        await voice.start()
+        await source.push(tone(1.2))  # the first final: held, not answered
+        await asyncio.sleep(0)
+        assert manager.process_user_input.await_count == 0 and voice._held is not None
+        await source.push(tone(1.2))  # they go on after the pause
+        await settle(voice, manager)
+        call = manager.process_user_input.await_args
+        assert call.args == ("You're gonna run on a local model onto the lab computers",)
+        assert manager.process_user_input.await_count == 1 and voice.joined == 1
+
+    async def test_nothing_more_means_the_fragment_is_answered(self, monkeypatch):
+        import src.audio.voice as voice_module
+
+        monkeypatch.setattr(voice_module, "HOLD", 0.05)
+        manager, source = fake_manager(), FakeSource()
+        voice = VoiceInput(manager, FakeTranscriber(["Can you"], streaming=True), source=source)
+        await voice.start()
+        await source.push(tone(1.2))
+        await asyncio.sleep(0.1)
+        await settle(voice, manager)
+        call = manager.process_user_input.await_args
+        assert call.args == ("Can you",)
+        assert call.kwargs["heard_at"] < __import__("time").monotonic() - 0.04  # counted from when it was heard
+
+    async def test_complete_sentences_are_not_held(self):
+        manager, source = fake_manager(), FakeSource()
+        voice = VoiceInput(manager, FakeTranscriber(["What are you talking about"], streaming=True), source=source)
+        await voice.start()
+        await source.push(tone(1.2))
+        await settle(voice, manager)
+        assert manager.process_user_input.await_count == 1 and voice._held is None
+
+    async def test_can_be_switched_off(self):
+        manager, source = fake_manager(), FakeSource()
+        voice = VoiceInput(manager, FakeTranscriber(["So"], streaming=True), source=source, continuation=False)
+        await voice.start()
+        await source.push(tone(1.2))
+        await settle(voice, manager)
+        assert manager.process_user_input.await_args.args == ("So",)
+
+
+class TestUnfinishedRule:
+    def test_recorded_fragments_and_whole_sentences(self):
+        from src.audio.continuation import unfinished
+
+        cut = [
+            "You're gonna run on a local model onto the",
+            "I guess that that's right. How do you feel about",
+            "Nice to see you too, Epper. Can you",
+            "So",
+            "To",
+            "That",
+            "Do well I'm happy that",
+            "Epper let's check on",
+            "Pepper can't like pick up or lift anything, but it is supposed to be",
+        ]
+        whole = [
+            "What are you talking about",
+            "Do you remember what we were talking about",
+            "How are you",
+            "Anything about where you are",
+            "What are you working on",
+            "Thank you",
+            "Turn left ninety degrees",
+            "Come to me",
+            "Look at me",
+            "I think so",
+            "What can you see in front of you",
+            "Stop",
+        ]
+        assert [t for t in cut if not unfinished(t)] == []
+        assert [t for t in whole if unfinished(t)] == []

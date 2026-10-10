@@ -13,11 +13,13 @@ the manager's local intents without a model call.
 
 import asyncio
 import os
+import re
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
 
 from loguru import logger
 
+from .continuation import HOLD, MAX_HOLD, unfinished
 from .endpointer import Endpointer
 from .pcm import BYTES_PER_SAMPLE, SAMPLE_RATE, duration, resample, wav_bytes
 from .stt import Transcriber, Transcript
@@ -50,6 +52,7 @@ class VoiceInput:
         endpointer: Optional[Endpointer] = None,
         record_dir: Optional[str] = None,
         min_chars: int = 2,
+        continuation: bool = True,
     ):
         self.manager = manager
         self.transcriber = transcriber
@@ -70,6 +73,11 @@ class VoiceInput:
         self._loaded = False
         self._saved = 0
         self._recent_audio = bytearray()  # streaming path: rolling window for VOICE_RECORD_DIR
+        # #26: an utterance that clearly stops mid-sentence waits for the rest instead of being answered alone
+        self.continuation = continuation
+        self.joined = 0  # finals joined to the one before
+        self._held: Optional[Transcript] = None
+        self._hold_task: Optional[asyncio.Task] = None
 
     def on_transcript(self, callback: TranscriptCallback):
         """Register an async callback for partial and final transcripts (dict payloads)."""
@@ -138,11 +146,14 @@ class VoiceInput:
                 for transcript in await self.transcriber.process(pcm):
                     if transcript.final:
                         self.utterances += 1
+                        transcript.at = time.monotonic()
                         if self.record_dir:
                             self._spawn(self._record_streamed(transcript))
-                        self._spawn(self._deliver(transcript, "voice"))  # the AI turn must not stall the audio
+                        self._final(transcript)
                     else:
                         await self._set_listening(True)
+                        if self._held is not None:
+                            self._hold(MAX_HOLD)  # they are going on: wait for the end of this part
                         await self._deliver(transcript, "voice")
                 return
             was_speaking = self.endpointer.speaking
@@ -155,6 +166,58 @@ class VoiceInput:
         except Exception as exc:  # noqa: BLE001 - never kill the audio stream
             self.last_error = str(exc)
             self.logger.error(f"Voice input error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Unfinished sentences (#26)
+    # ------------------------------------------------------------------
+
+    def _final(self, transcript: Transcript):
+        """A final from the robot microphone: join it to a held fragment, hold it if it is unfinished itself, or
+        hand it on. Delivery runs as its own task: the AI turn must not stall the audio."""
+        if self._held is not None:
+            transcript = self._join(self._held, transcript)
+            self._held = None
+            self._cancel_hold()
+        if self.continuation and unfinished(transcript.text):
+            self._held = transcript
+            self.logger.info(f"[voice] {transcript.text!r} sounds unfinished: waiting for the rest")
+            self._hold(HOLD)
+            return
+        self._spawn(self._deliver(transcript, "voice"))
+
+    def _join(self, first: Transcript, second: Transcript) -> Transcript:
+        rest = second.text.strip()
+        if rest[:1].isupper() and not re.match(r"^(I\b|I'|Pepper\b)", rest):
+            rest = rest[0].lower() + rest[1:]  # the recogniser starts every final with a capital
+        gap = max(0.0, (second.at or 0.0) - (first.at or 0.0) - second.duration) if second.at and first.at else 0.0
+        self.joined += 1
+        self.logger.info(f"[voice] joined across a pause: {first.text!r} + {second.text!r}")
+        return Transcript(
+            text=f"{first.text.strip()} {rest}",
+            final=True,
+            duration=first.duration + gap + second.duration,
+            latency=second.latency,
+            backend=second.backend,
+            at=second.at,
+            parts=first.parts + second.parts,
+        )
+
+    def _hold(self, seconds: float):
+        self._cancel_hold()
+        self._hold_task = asyncio.ensure_future(self._release_after(seconds))
+
+    def _cancel_hold(self):
+        if self._hold_task is not None and not self._hold_task.done():
+            self._hold_task.cancel()
+        self._hold_task = None
+
+    async def _release_after(self, seconds: float):
+        """Nothing more came: answer what was said, as it was."""
+        await asyncio.sleep(seconds)
+        held, self._held = self._held, None
+        if held is not None:
+            self.logger.info(f"[voice] no more after {seconds:.1f}s: answering {held.text!r}")
+            self._spawn(self._deliver(held, "voice"))
 
     def _spawn(self, coro: Awaitable[Any]):
         task = asyncio.ensure_future(coro)
@@ -226,9 +289,10 @@ class VoiceInput:
             text,
             source="voice",
             client_id=client_id,
-            heard_at=time.monotonic(),
+            heard_at=transcript.at or time.monotonic(),  # a held fragment counts from when it was heard
             open_mic=source == "voice",
             spoke_for=transcript.duration or None,
+            **({"parts": transcript.parts} if transcript.parts > 1 else {}),
         )
         return {"text": text, "response": result}
 

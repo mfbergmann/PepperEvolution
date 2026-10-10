@@ -25,6 +25,10 @@ class TestSettings:
             "SPEAK_RESPONSES",
             "PEPPER_FAKE_BRIDGE",
             "API_PORT",
+            "MEMORY_DIR",  # the lab's .env sets these; another test may have loaded it into the environment
+            "SOUND_DIRECTION",
+            "SCENE_NOTES",
+            "WAIT_FOR_UNFINISHED",
         ):
             monkeypatch.delenv(key, raising=False)
         s = main.Settings.from_env()
@@ -36,6 +40,7 @@ class TestSettings:
         assert s.api_port == 8000
         assert s.memory_dir is None  # long-term memory is opt-in (MEMORY_DIR)
         assert s.scene_notes is False and s.sound_direction is False  # tried on the robot first
+        assert s.wait_for_unfinished is True
 
     def test_reactive_and_voice_defaults(self, monkeypatch):
         for key in (

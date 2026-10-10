@@ -32,6 +32,8 @@ class Transcript:
     duration: float = 0.0  # seconds of audio
     latency: float = 0.0  # seconds spent recognising
     backend: str = ""
+    at: Optional[float] = None  # time.monotonic() when the final arrived (VoiceInput); None = when delivered
+    parts: int = 1  # finals joined into this one across a pause (#26)
 
 
 class TranscriberUnavailable(RuntimeError):

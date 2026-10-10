@@ -202,6 +202,7 @@ class AIManager:
         heard_at: Optional[float] = None,
         open_mic: bool = False,
         spoke_for: Optional[float] = None,
+        parts: int = 1,
     ) -> Dict[str, Any]:
         """Process user input through the AI with tool calling.
 
@@ -218,6 +219,8 @@ class AIManager:
         """
         speak = self.speak_responses if speak is None else speak
         rec = self._new_record(user_input, source, heard_at)
+        if parts > 1:
+            rec["parts"] = parts  # joined across a pause (#26)
         voice_line = self._voice_direction(source, heard_at, spoke_for, rec)
         if source in ("user", "voice"):
             intent = match_intent(user_input)

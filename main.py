@@ -101,6 +101,7 @@ class Settings:
     sound_direction: bool = False
     scene_notes: bool = False
     scene_model: str = "qwen3.5:4b"
+    wait_for_unfinished: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -155,6 +156,7 @@ class Settings:
             sound_direction=env_bool("SOUND_DIRECTION", False),
             scene_notes=env_bool("SCENE_NOTES", False),
             scene_model=os.getenv("SCENE_MODEL") or "qwen3.5:4b",
+            wait_for_unfinished=env_bool("WAIT_FOR_UNFINISHED", True),
         )
 
 
@@ -343,7 +345,13 @@ class PepperEvolution:
         self.logger.info(
             f"Voice input: backend={transcriber.name} robot_microphone={'on' if source else 'off'} " f"push_to_talk=on"
         )
-        return VoiceInput(self.ai_manager, transcriber, source=source, record_dir=s.voice_record_dir)
+        return VoiceInput(
+            self.ai_manager,
+            transcriber,
+            source=source,
+            record_dir=s.voice_record_dir,
+            continuation=s.wait_for_unfinished,
+        )
 
     async def run(self):
         try:

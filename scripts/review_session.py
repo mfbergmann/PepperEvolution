@@ -52,7 +52,8 @@ def turn_lines(turn: Dict[str, Any]) -> List[str]:
     out = []
     src = turn.get("source", "?")
     began = turn.get("heard") or turn.get("received") or turn.get("at", "")
-    lines = [f"{clock(began)}  [{src}] {turn.get('text', '')}"]
+    joined = f" (joined from {turn['parts']} parts across pauses)" if turn.get("parts") else ""
+    lines = [f"{clock(began)}  [{src}] {turn.get('text', '')}{joined}"]
     gate = turn.get("addressee")
     if gate:
         verdict = "answered" if gate.get("addressed") else "NOT answered (side talk)"
