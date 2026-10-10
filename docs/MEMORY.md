@@ -157,7 +157,8 @@ Derived state (the "Around you" string already in `turns.jsonl`) is recorded for
 | #18 follow me | a reader: short moves from the track's bearing and distance; stops when the track is lost for over 2 s |
 | #6, #7, #28 look at, verify, point | readers: a target from a track or the last photo (shared pixel-to-angle maths with the head pose); verify compares the track before and after |
 | #25 the gate sees what Pepper said | `addressee_context()` from the timeline (the last things heard plus Pepper's last sentence and its age); the judgement's wording changes, so the replays are re-run first |
-| Reflection loop (later) | a reader that looks at the timeline every so often and raises an event turn for the mind |
+| Reflection loop (first slice 0.7.0) | a reader that looks at the timeline every so often and raises an event turn for the mind (`src/ai/reflection.py`) |
+| #30 expect, then check | an `expected` observation left by each action with a visible effect (built from working memory); a reader compares it with the next pose, people or camera observations and notes a mismatch as a timeline event; the replay script can score expectations on recorded sessions |
 
 ## Build order
 

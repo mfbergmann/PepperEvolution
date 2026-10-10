@@ -53,7 +53,15 @@ Design lessons applied or planned:
 | Gestures as discrete intents mapped to an animation library | Gesture-heads paper; RLHF gesture paper found generated motion "stiff and unnatural" | Done: animation tags and `play_animation` with the installed list |
 | Action chunking: batch several primitives per model turn | Every VLA | Done: multiple tool calls per round, speech streamed by sentence |
 | Explicit memory and relationship state | ARIS (2026), agent-architecture evaluation | Roadmap M5 |
+| Predict what an action will change, then compare | World action models (DreamZero, below) | Planned (#30): expectations in the world model, checked in code against what Pepper perceives |
 | Robot described as safety-bounded tools | Model Hardware Standard | Done in spirit; publish a descriptor when the spec is open |
+
+## World action models (update 2026-10-10)
+
+Asked whether world action models (WAMs) change the picture, after a Turing Post guide (9 October 2026, only its free part read). A WAM ties a prediction of the future (video, flow or a latent state) to action generation. Some predict first and derive actions from the prediction (cascaded); others learn both together (joint), like NVIDIA's DreamZero (February 2026, already in the table above).
+
+- **The models do not apply,** for the same reasons as VLAs: they are manipulation policies trained on per-robot demonstrations, with GPUs in the control loop (DreamZero needs two). The guide's own conclusion is that they are not consistently better than VLAs and cost more to run.
+- **The idea does apply, one layer up.** Pepper acts and never checks the result against an expectation. #30 adds that to the world model without a learned model: each action leaves an expectation built from working memory (after a turn to face someone, they should be ahead), plain code compares it with the next observations, and a mismatch becomes a timeline event the mind and the reflection loop can act on.
 
 ## Autonomous OS (autonomous.ai, June 2026)
 
@@ -107,6 +115,7 @@ Conclusion: a headless `naoqi-bin` is worth an hour before the live session to c
 Robot foundation models:
 
 - NVIDIA GR00T N1/N1.5: https://research.nvidia.com/labs/gear/gr00t-n1_5/ ; N1.6: https://developer.nvidia.com/blog/building-generalist-humanoid-capabilities-with-nvidia-isaac-gr00t-n1-6-using-a-sim-to-real-workflow/ ; N1.7: https://github.com/NVIDIA/Isaac-GR00T and https://huggingface.co/nvidia/GR00T-N1.7-3B
+- World action models, overview: https://www.turingpost.com/p/vlas-vs-world-action-models-should-robots-react-or-imagine (Turing Post, 2026-10-09; partly paywalled)
 - NVIDIA DreamZero: https://arxiv.org/abs/2602.15922 ; Cosmos Reason 2: https://github.com/nvidia-cosmos/cosmos-reason2 ; Cosmos 3: https://arxiv.org/abs/2606.02800
 - ByteDance GR-3: https://arxiv.org/abs/2507.15493 ; GR-RL: https://seed.bytedance.com/en/blog/seed-research-gr-rl-released-a-breakthrough-in-high-precision-manipulation-for-vla-models-applying-real-world-reinforcement-learning-to-shoe-lacing-for-the-first-time
 - AgiBot GO-1: https://huggingface.co/agibot-world/GO-1 ; GO-2 (secondary coverage): https://www.therobotreport.com/agibot-releases-go-2-foundation-model-embodied-ai/

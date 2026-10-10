@@ -192,10 +192,11 @@ Acceptance: "look at the person on the left", "is the door open?", "go towards t
 
 ## Milestone 4: world model (continuous perception)
 
-Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Status 2026-10-08:
+Goal: Pepper knows what is around it between turns, notices when someone arrives or leaves, and can answer "who's here?" without taking a photo. Status 2026-10-10:
 - **Built and verified on the robot:** the "now" part (layer 1 below, plus camera judgements about once a second while someone is in view).
 - **Built offline in 0.6.0, to be tested on the robot:** memory (`docs/MEMORY.md`, issue #29). One structure (observations in, views out) holds Pepper's pose and remembered people (#27), voice direction (#12, #24), scene notes (#11) and the `recall` detail tool (#12).
-- **Still open:** the reflection loop, and identity (Milestone 5).
+- **Built offline in 0.7.0, to be tested on the robot:** the camera fallback for people the detector has lost (#24), and a first slice of the reflection loop (initiative, off by default).
+- **Still open:** expect, then check (#30: what each action should change, compared with what Pepper perceives), more of the reflection loop, and identity (Milestone 5).
 
 Two layers feeding one host-side world model:
 
