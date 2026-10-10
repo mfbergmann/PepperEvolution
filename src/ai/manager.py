@@ -559,7 +559,7 @@ class AIManager:
             self.stats["greetings"] += 1
 
     async def initiate(self, prompt: str, rule: str):
-        """The reflection loop noticed something (src/ai/reflection.py): the mind decides, one short thing or nothing."""
+        """The reflection loop noticed something (src/ai/reflection.py): the mind says one short thing or nothing."""
         self._event("initiative", rule=rule)
         await self._react(prompt, self._clock(), kind="initiative")
 
