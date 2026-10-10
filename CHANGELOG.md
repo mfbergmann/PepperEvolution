@@ -4,6 +4,10 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Unreleased
+
+- The lab's Basecamp (TRiPL project, Pepper section) is kept in step with the repository by `scripts/basecamp_sync.py` (2026-10-09). It mirrors the process documentation into Pepper / Pepper Evolution, and keeps a PepperEvolution to-do list as the running log: milestones with their issues, robot sessions and releases.
+
 ## 0.6.0 (2026-10-08): memory
 
 A place where remembering goes, built offline after the 2026-10-08 robot session (design: `docs/MEMORY.md`, tracking issue #29). Working memory and long-term memory share one vocabulary (`Observation`, `Event`) and one way in (`WorldModel.observe()`); readers are pure views; nothing on the read path calls a model; only the mind speaks. The robot test comes next session (`docs/HANDOFF.md`, "Before the next robot session").
