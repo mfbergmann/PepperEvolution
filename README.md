@@ -96,7 +96,7 @@ PepperEvolution/
 │   ├── sensors/, actuators/# thin convenience wrappers
 ├── web/index.html          # Browser control panel (served at /)
 ├── examples/               # basic_chat.py (terminal), event_monitor.py, mic_monitor.py
-├── tests/                  # ~590 tests incl. running the real bridge with tests/fakenaoqi
+├── tests/                  # ~670 tests incl. running the real bridge with tests/fakenaoqi
 ├── docs/                   # HANDOFF, ARCHITECTURE, MEMORY, ROADMAP, SETUP_PROFILES, GETTING_STARTED, BRIDGE_API, SAFETY, research notes, signs/
 ├── scripts/                # start.sh, review_session.py, smoke_host.py, compare_models.py, virtual_pepper.sh, ...
 └── main.py                 # Host application entry point

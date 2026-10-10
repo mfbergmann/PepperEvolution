@@ -212,7 +212,7 @@ Since 0.5 (issue #16, done), `SESSION_DIR` puts everything from one run in one f
 ```bash
 cd ~/Projects/PepperEvolution
 python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt   # the last session used a temporary venv; make your own
-pytest tests/ -q                                                                        # ~590 tests, ~25 s
+pytest tests/ -q                                                                        # ~670 tests, ~30 s
 PEPPER_BRIDGE_PYTHON=~/.local/share/mise/installs/python/2.7.18/bin/python pytest tests/test_bridge_integration.py -q   # robot's interpreter
 ```
 
@@ -256,4 +256,4 @@ The previous session's standing instruction from the user: once Pepper is on the
 
 ## Next
 
-The memory architecture is built (0.6.0; "Before the next robot session" above lists its robot checks). The next robot session tests it, together with what is still owed: side talk with two people (#19, #25), cut-off sentences (#26) and shorter replies. After that: identity, opt-in (#14), and the reflection loop for initiative. `ROADMAP.md` has the full plan.
+The memory architecture (0.6.0) and the 0.7.0 fixes are built; "Before the next robot session" above lists their robot checks. The next robot session runs them, together with what is still owed: side talk with two people (#19, #25). After that: identity, opt-in (#14), and more of the reflection loop once the first slice of initiative has been judged on the robot. `ROADMAP.md` has the full plan.

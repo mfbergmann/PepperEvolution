@@ -35,7 +35,7 @@ What is not there yet:
 - **Spatial grounding:** "come to me", pointing, looking at a point in a photo, follow me (Milestone 3).
 - **Conversation:** side talk with two people still to be tested, and barge-in (Milestone 2).
 
-Off the robot, about 590 tests run in CI (including the real bridge process under a fake NAOqi and the bridge suite under Python 2.7 + Tornado 3.1.1); NAOqi's desktop build runs as a headless virtual Pepper; and recorded sessions can be replayed.
+Off the robot, about 670 tests run in CI (including the real bridge process under a fake NAOqi and the bridge suite under Python 2.7 + Tornado 3.1.1); NAOqi's desktop build runs as a headless virtual Pepper; and recorded sessions can be replayed.
 
 ## Strategy in one paragraph
 
