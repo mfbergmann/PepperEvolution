@@ -23,7 +23,7 @@ from ..pepper.robot import PepperRobot, Photo
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import HEARD, MIND, SAID
 from ..world.views import addressee_context
-from .models import ERROR_TEXT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
+from .models import CLOSING, ERROR_TEXT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
 from .tools import MEMORY_TOOLS, TOOLS
@@ -119,7 +119,8 @@ class AIManager:
         self.memory = memory  # src/memory Memory (long-term memory, MEMORY_DIR), or None
         self.executor = ToolExecutor(robot, memory=memory)
         self.tools = TOOLS + (MEMORY_TOOLS if memory is not None else [])
-        self.system_prompt = SYSTEM_PROMPT + (MEMORY_PROMPT if memory is not None else "")
+        # memory's instructions go before the closing line, which must stay last (models.CLOSING)
+        self.system_prompt = SYSTEM_PROMPT.replace(CLOSING, (MEMORY_PROMPT if memory is not None else "") + CLOSING)
         self.stats: Dict[str, int] = {"turns": 0, "greetings": 0}  # for the session episode (long-term memory)
         self.logger = logger.bind(module="AIManager")
 

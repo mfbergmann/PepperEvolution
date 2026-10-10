@@ -285,6 +285,9 @@ class TestInTheManager:
         )
         assert set(MEMORY_TOOL_NAMES) <= {t["name"] for t in manager.tools}
         assert "Shall I remember you next time?" in manager.system_prompt
+        from src.ai.models import CLOSING
+
+        assert manager.system_prompt.endswith(CLOSING) and plain.system_prompt.endswith(CLOSING)  # #19: last word
 
     async def test_a_spoken_yes_lets_the_mind_remember(self, mock_robot, mock_ai_provider, store):
         world = WorldModel()
