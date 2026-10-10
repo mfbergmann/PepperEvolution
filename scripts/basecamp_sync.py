@@ -432,7 +432,8 @@ def sync_tasks(state: Dict[str, Any], dry: bool) -> None:
     for row in sessions():
         key = f"session:{row['date']}:{sha(row['where'])}"
         title = f"Robot session {row['date']}, {row['where']}: {row['what']}"[:240]
-        description = f"{row['findings']}\n\nMore in the Handoff notes and the wiki's [Test sessions]({GITHUB}/wiki/Test-sessions)."
+        more = f"More in the Handoff notes and the wiki's [Test sessions]({GITHUB}/wiki/Test-sessions)."
+        description = f"{row['findings']}\n\n{more}"
         sync_todo(state, key, "Robot sessions", title, description, True, dry)
     upcoming = next_session()
     for key in [k for k in state.get("todos", {}) if k.startswith("next:")]:
