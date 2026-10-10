@@ -114,7 +114,7 @@ The tablet reaches the robot head at `198.18.0.1`; change with `--tablet-host` i
 On connect the bridge sends `hello` and a `sensors` snapshot. Afterwards events are edge-triggered:
 
 ```json
-{"type": "hello",   "data": {"version": "0.6.0"}, "timestamp": ...}
+{"type": "hello",   "data": {"version": "0.7.0"}, "timestamp": ...}
 {"type": "sensors", "data": {...same as GET /sensors...}, "timestamp": ...}
 {"type": "touch",   "data": {"sensor": "head_front", "touched": true}, "timestamp": ...}
 {"type": "bumper",  "data": {"sensor": "front_left", "pressed": true}, "timestamp": ...}
@@ -143,7 +143,7 @@ The bridge registers a small qi service (`PepperBridgeAudio`) with NAOqi and sub
 On connect the client gets one JSON text frame, then binary frames:
 
 ```json
-{"type": "hello", "version": "0.6.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
+{"type": "hello", "version": "0.7.0", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"}
 {"type": "state", "streaming": true}
 <binary> 2730 bytes = 1365 samples of signed 16-bit little-endian PCM (85 ms, measured on Pepper 1.8A), repeated
 ```
@@ -160,7 +160,7 @@ The host side is `src/pepper/audio_stream.py` (`AudioStream`), consumed by `src/
 
 **Endpoint:** `ws://<PEPPER_IP>:8888/ws/camera?fps=1` (`&api_key=SECRET` if configured). For the host's camera judgements (`src/perception/vision.py`).
 
-The bridge sends one JSON text frame, `{"type": "hello", "version": "0.6.0", "fps": 1, "width": 320, "height": 240}`, then per frame a small JSON text frame with the head's measured angles when the frame was grabbed, `{"type": "frame", "head": [30.0, -5.0]}` (yaw, pitch in degrees; from 0.7, so a spot in the frame has a direction), and one binary JPEG (320×240, quality 75, about 12 KB). Clients that only want the images can ignore text frames. `fps` is 0.2 to 5. One camera subscription (`pepper_bridge_stream`) serves every client from a worker thread; it is released when the last client leaves or the bridge stops, and any left behind by a crash are cleared when the bridge connects to NAOqi. Unlike `/picture`, the stream does not touch face tracking or wait for a still head. A client still writing the previous frame skips frames instead of buffering them. On an error the bridge sends `{"type": "error", "error": "..."}` and closes. Frames are not stored on the robot.
+The bridge sends one JSON text frame, `{"type": "hello", "version": "0.7.0", "fps": 1, "width": 320, "height": 240}`, then per frame a small JSON text frame with the head's measured angles when the frame was grabbed, `{"type": "frame", "head": [30.0, -5.0]}` (yaw, pitch in degrees; from 0.7, so a spot in the frame has a direction), and one binary JPEG (320×240, quality 75, about 12 KB). Clients that only want the images can ignore text frames. `fps` is 0.2 to 5. One camera subscription (`pepper_bridge_stream`) serves every client from a worker thread; it is released when the last client leaves or the bridge stops, and any left behind by a crash are cleared when the bridge connects to NAOqi. Unlike `/picture`, the stream does not touch face tracking or wait for a still head. A client still writing the previous frame skips frames instead of buffering them. On an error the bridge sends `{"type": "error", "error": "..."}` and closes. Frames are not stored on the robot.
 
 ## Running the bridge
 
@@ -169,7 +169,9 @@ python pepper_bridge.py [--port=8888] [--api-key=SECRET] [--naoqi=tcp://127.0.0.
                         [--tablet-host=198.18.0.1] [--log-level=INFO]
 ```
 
-`robot_bridge/deploy.py` copies the file to `/home/nao/pepper_bridge/`, starts it with `nohup`, and polls `/health` until NAOqi is connected. It also has `--restart`, `--stop`, `--status` and `--logs`.
+`robot_bridge/deploy.py` copies the files to `/home/nao/pepper_bridge/`, starts the bridge through `watchdog.sh`, and polls `/health` until NAOqi is connected. It also has `--restart`, `--stop`, `--status` (with the watchdog and the end of `watchdog.log`) and `--logs`.
+
+**Watchdog (from 0.7).** `watchdog.sh` starts the bridge with `launch.sh` and starts it again when it exits: after 5 s, doubling to at most a minute after repeated failures, back to 5 s once it has run 5 minutes. After a 3-minute grace for NAOqi to boot it also asks `/health` every minute and restarts a bridge that has not answered three times in a row (a 503 while NAOqi starts counts as an answer). `deploy.py --stop` creates `watchdog.stop` first, so a deliberate stop stays stopped. Restarts are logged to `watchdog.log`. Tested on NAOqi's desktop build: a killed bridge, a frozen bridge, a deliberate stop.
 
 The bridge starts listening immediately and connects to NAOqi in the background, retrying for about two minutes after a robot boot (`/health` answers 503 meanwhile). If the session drops later it reconnects lazily and re-subscribes to the sensor extractors. On SIGTERM/SIGINT (for example a redeploy) it stops any running motion, animation and speech before exiting.
 
@@ -190,4 +192,4 @@ Use `GET /animations` for the definitive list on your robot.
 
 ## Starting at boot
 
-`python robot_bridge/deploy.py --install-autostart` installs a small NAOqi package (`robot_bridge/autostart/`: a manifest with one `autorun` service) so ALServiceManager starts the bridge whenever Pepper boots. The service runs `~/pepper_bridge/launch.sh`, the same launcher `deploy.py` uses, with the port and API key `deploy.py` wrote to `~/pepper_bridge/bridge.env`; the launcher does nothing if a bridge is already running. The bridge registers a `PepperBridge` qi service (`version()`, `port()`) once it is connected to NAOqi. `--remove-autostart` uninstalls the package. Tested on NAOqi's desktop build (install, stays up, cold start); on the robot, see `docs/HANDOFF.md`.
+`python robot_bridge/deploy.py --install-autostart` installs a small NAOqi package (`robot_bridge/autostart/`: a manifest with one `autorun` service) so ALServiceManager starts the bridge whenever Pepper boots. The service runs `~/pepper_bridge/watchdog.sh` (or `launch.sh` when there is no watchdog), as `deploy.py` does, with the port and API key `deploy.py` wrote to `~/pepper_bridge/bridge.env`; the launcher does nothing if a bridge is already running. The bridge registers a `PepperBridge` qi service (`version()`, `port()`) once it is connected to NAOqi. `--remove-autostart` uninstalls the package. Tested on NAOqi's desktop build (install, stays up, cold start); on the robot, see `docs/HANDOFF.md`.

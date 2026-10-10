@@ -22,7 +22,7 @@ flowchart TB
         PE["2. Perception (continuous)\nspeech-to-text, people events,\ncamera judgements, local decision models"]
         WM[("3. World model (working memory)\npose, people incl. out of view,\nscene notes, timeline")]
         MI["4. Mind (one conversational model)\ntalks, plans, calls tools"]
-        RF["Reflection loop (slow, planned)\nshould Pepper act unprompted?"]
+        RF["Reflection loop (slow; first slice 0.7, opt-in)\nshould Pepper act unprompted?"]
         ME[("Long-term memory (0.6)\npeople who agreed, facts,\nsession episodes")]
     end
 
@@ -72,7 +72,9 @@ A single conversational model holds the dialogue, decides what to do, calls tool
 
 ### Beyond the four layers
 
-- **Reflection loop (planned, after Milestone 4).** A slow background loop that looks at the world model every so often and decides whether Pepper should act unprompted: greet someone who has just arrived, notice that a person has been waiting, follow up on something said earlier. This is what turns a responsive robot into one with initiative. It hands its decision to the mind as an event turn, so there is still only one voice.
+- **Reflection loop (first slice built in 0.7.0, off by default: `INITIATIVE`).** A slow background loop that looks at the world model every so often and decides whether Pepper should act unprompted: notice that a person has been waiting, follow up on something said earlier. This is what turns a responsive robot into one with initiative. It hands its decision to the mind as an event turn, so there is still only one voice.
+  - The first slice (`src/ai/reflection.py`) has two rules: someone lingering quietly, and a question left unanswered. Greeting newcomers came earlier, as a reflex.
+  - It fires at most once every 3 minutes. Replayed on recorded sessions, it fired three times in 58 minutes, none during a real conversation.
 - **Memory (Milestone 5; store built in 0.6.0, `docs/MEMORY.md`).** Who Pepper has met and what it has learned, kept across sessions, only for people who agreed, with "forget me" at any time. Face or voice identity (opt-in) comes after the consent flow has been used on the robot.
 
 ## Which model does what

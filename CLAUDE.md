@@ -33,7 +33,7 @@ python examples/mic_monitor.py --speak    # microphone level meter from /ws/audi
 
 ### Test
 ```bash
-pytest tests/ -q                                   # ~590 tests, no robot needed (~25 s)
+pytest tests/ -q                                   # ~670 tests, no robot needed (~30 s)
 pytest tests/test_bridge_server.py -q              # bridge Robot facade against a fake NAOqi
 pytest tests/test_bridge_integration.py -q         # starts the real bridge process with tests/fakenaoqi
 PEPPER_BRIDGE_PYTHON=/path/to/python2.7 pytest tests/test_bridge_integration.py   # under the robot's interpreter
@@ -41,6 +41,8 @@ PEPPER_SKIP_INTEGRATION=1 pytest tests/            # unit tests only
 scripts/virtual_pepper.sh start && scripts/virtual_pepper.sh bridge                 # headless real NAOqi (setup in the script header)
 PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -v   # the bridge against real NAOqi calls
 python scripts/smoke_host.py --fake            # host stack + real model end to end (a few model calls); --bridge URL for a robot
+python scripts/replay_world.py results/sessions/<run> [--initiative]   # replay a session's world inputs (local files only)
+python scripts/bench_reply_length.py results/sessions/<run> [--candidate prompt.txt]   # reply length, current vs candidate prompt (API calls)
 ```
 A Python 2.7.18 with Tornado 3.1.1 for the last command can be built with `mise install python@2.7.18` then `pip install tornado==3.1.1 "pillow<7"` into it.
 
@@ -70,14 +72,14 @@ Pepper Robot (NAOqi 2.5, Python 2.7)         Host (Python 3.12+)
 
 ### Source layout
 
-- **robot_bridge/** — `pepper_bridge.py` (runs on the robot; `Robot` facade + Tornado handlers) and `deploy.py` (paramiko upload/start/stop/status/logs). `launch.sh` is the only way the bridge is started (by `deploy.py`, and at boot by the `autostart/` NAOqi package via ALServiceManager); settings in `~/pepper_bridge/bridge.env` on the robot.
+- **robot_bridge/** — `pepper_bridge.py` (runs on the robot; `Robot` facade + Tornado handlers) and `deploy.py` (paramiko upload/start/stop/status/logs). `watchdog.sh` starts it (through `launch.sh`) and starts it again when it exits or stops answering `/health`; `deploy.py` and the `autostart/` NAOqi package (ALServiceManager, at boot) both run the watchdog, and `deploy.py --stop` stands it down first. Settings in `~/pepper_bridge/bridge.env` on the robot.
 - **src/pepper/** — `BridgeClient` (async HTTP, one method per endpoint), `FakeBridgeClient` (in-memory double), `EventStream` (reconnecting WebSocket listener), `AudioStream` (microphone PCM over `/ws/audio`), `PepperConnection`, `PepperRobot` (high-level API; methods raise `BridgeError`), `Photo`, `PrepareOptions`.
-- **src/ai/** — `tools.py` (tool schemas + `KNOWN_ANIMATIONS`), `models.py` (`AnthropicProvider` with streaming/effort/caching, `OpenAIProvider`, `SYSTEM_PROMPT`), `speech.py` (sentence splitting, markdown/emoji cleanup, `SpeechStreamer` with fillers), `tool_executor.py` (`ToolOutcome` incl. image tool results), `intents.py` (local control phrases, no model call), `manager.py` (`AIManager` turn loop, intents, LED state signals, backchannel, history trimming, touch reactions).
-- **src/audio/** — `pcm.py` (16-bit PCM helpers), `endpointer.py` (energy VAD + utterance cutting), `stt.py` (`Transcriber` interface: `SherpaTranscriber` streaming, `WhisperTranscriber` per utterance, `FakeTranscriber`; `make_transcriber()`), `voice.py` (`VoiceInput`: robot microphone or push-to-talk → transcript → `process_user_input(source="voice")`).
+- **src/ai/** — `tools.py` (tool schemas + `KNOWN_ANIMATIONS`), `models.py` (`AnthropicProvider` with streaming/effort/caching, `OpenAIProvider`, `SYSTEM_PROMPT`), `speech.py` (sentence splitting, markdown/emoji cleanup, `SpeechStreamer` with fillers), `tool_executor.py` (`ToolOutcome` incl. image tool results), `intents.py` (local control phrases, no model call), `manager.py` (`AIManager` turn loop, intents, LED state signals, backchannel, history trimming, touch reactions), `reflection.py` (`INITIATIVE`: `consider()` reads working memory, pure and replayable; `Reflection` hands an `[Initiative]` turn to the mind).
+- **src/audio/** — `pcm.py` (16-bit PCM helpers), `endpointer.py` (energy VAD + utterance cutting), `stt.py` (`Transcriber` interface: `SherpaTranscriber` streaming, `WhisperTranscriber` per utterance, `FakeTranscriber`; `make_transcriber()`), `voice.py` (`VoiceInput`: robot microphone or push-to-talk → transcript → `process_user_input(source="voice")`; holds a clearly unfinished utterance for the rest), `continuation.py` (`unfinished()`, the word rule).
 - **src/world/** — working memory (docs/MEMORY.md). `observations.py` (`Observation`: source, kind, time, frame, data; the one shape everything enters in), `WorldModel.observe()` (the one way in; `note()` is the shorthand), `timeline.py` (what just happened: heard, said, arrivals, greetings, camera events), `views.py` (pure readers, e.g. `recall`). `WorldModel` keeps who is around (from the bridge's debounced `people` events and the connect snapshot) and the latest camera judgements (`seen`, `sees()`), summarised as the "Around you" line in the model's state block.
 - **src/memory/** — long-term memory (docs/MEMORY.md): `store.py` (`MemoryStore`, SQLite: people stored only with a consent note, facts, session episodes; `forget`, expiry `sweep`, FTS5 search) and `service.py` (`Memory`: what the `remember_person` / `remember` / `recall` / `forget_person` tools do; consent is taken from what Pepper heard in the last two minutes, never from the model's word). `scripts/memory_admin.py` lists, shows and forgets.
 - **src/decide/** — situation judgements by local decision models (Ollama `/v1/systemone`, `DECIDE_URL`; issue #20): `client.py` (`DecisionClient`, fails open after 0.8 s, keeps models warm), `addressee.py` (is this open-mic utterance meant for Pepper? Nimble), `router.py` (the first physical action to start at once, from Pepper's fixed list; Nimble). The state and question wording is what was benchmarked; changing it means re-running the replays.
-- **src/perception/** — `scene.py` (`ScenePass`, `SCENE_NOTES`): every 20 s while someone is in view, who is where (Clef Flash typed questions) and a place note (`qwen3.5:4b`) into the world model as a `scene` observation. `vision.py` (`FrameWatcher`): small frames from the bridge's `/ws/camera` to Clef Flash about once a second while someone is in view (waving? showing something? facing?), into the world model, with events on judgements that hold for two frames.
+- **src/perception/** — `scene.py` (`ScenePass`, `SCENE_NOTES`): every 20 s while someone is in view, who is where (Clef Flash typed questions) and a place note (`qwen3.5:4b`) into the world model as a `scene` observation. `vision.py` (`FrameWatcher`): small frames from the bridge's `/ws/camera` to Clef Flash about once a second while someone is in view or a conversation is under way (waving? showing something? facing?), into the world model, with events on judgements that hold for two frames; when the detector sees nobody, it asks where the nearest person is in the frame (the camera fallback, #24). `geometry.py`: a spot in a photo to a body-frame direction (`look_at`, `point_at`).
 - **src/session.py** — `SessionRecorder`: one folder per run (`SESSION_DIR`) with `turns.jsonl` and `events.jsonl`; `scripts/review_session.py` turns it into a timed transcript with flags.
 - **src/communication/** — `api.py`: `create_app()` (FastAPI routes, `/ws`, `/voice/*`, `WebSocketHub`), `execute_command()` (direct commands), `APIServer` (uvicorn).
 - **src/sensors/**, **src/actuators/** — thin boolean-returning wrappers kept for convenience.
@@ -135,6 +137,9 @@ Copy `env.example` to `.env`. Key variables:
 | `SESSION_DIR` | | One folder per run for review (log, audio, photos, turns, events) |
 | `SOUND_DIRECTION` | `false` | Bridge 0.6+: `sound` events (ALSoundLocalization) give each voice turn a direction |
 | `MEMORY_DIR` | | Long-term memory store (`pepper.sqlite`): people who agreed, facts, episodes; empty = off |
+| `SCENE_NOTES` / `SCENE_MODEL` | `false` / `qwen3.5:4b` | With `DECIDE_URL`: who is where and a place note every 20 s while someone is in view |
+| `WAIT_FOR_UNFINISHED` | `true` | Hold a clearly unfinished utterance up to 2.5 s for the rest (`src/audio/continuation.py`) |
+| `INITIATIVE` | `false` | Reflection loop (`src/ai/reflection.py`): Pepper may speak unprompted; judged on the robot |
 | `PHOTO_RECORD_DIR` | | Keep every photo with its measured head angle (overridden by `SESSION_DIR`) |
 | `LED_STATE_SIGNALS` | `true` | Eye colour shows listening / thinking / speaking |
 | `BACKCHANNEL_AFTER` | `2.0` | Seconds of model silence before a spoken filler (0 = off) |

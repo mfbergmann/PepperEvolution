@@ -82,7 +82,7 @@ define("log_level", default="INFO", type=str, help="Logging level")
 define("pip", default="", type=str, help="ignored (passed by NAOqi autoload)")
 define("pport", default=0, type=int, help="ignored (passed by NAOqi autoload)")
 
-BRIDGE_VERSION = "0.6.0"  # kept equal to src/__init__.py __version__ (tested)
+BRIDGE_VERSION = "0.7.0"  # kept equal to src/__init__.py __version__ (tested)
 LOGGER = logging.getLogger("pepper_bridge")
 START_TIME = time.time()
 IOLOOP = None  # the main IOLoop, captured in main(); worker threads must only touch this one

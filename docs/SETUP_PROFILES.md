@@ -64,6 +64,8 @@ Also available in either profile (all off by default, `docs/MEMORY.md`):
 ```bash
 MEMORY_DIR=results/memory # long-term memory of people who agree to it (no GPU needed)
 SOUND_DIRECTION=false     # true with bridge 0.6+: the direction each voice came from
+WAIT_FOR_UNFINISHED=true  # wait up to 2.5 s for the rest of a sentence that stops mid-way
+INITIATIVE=false          # true: Pepper may speak unprompted (someone lingering, an unanswered question)
 ```
 
 What it adds (measured on our data, 2026-10-03; see `docs/ARCHITECTURE.md`, "Situation judgements"):

@@ -150,7 +150,7 @@ Derived state (the "Around you" string already in `turns.jsonl`) is recorded for
 |---|---|
 | #27 remember where people were | pose in the odometry frame (bridge `pose` in the sensors snapshot, a `pose` event when it changes, the measured pose returned by moves); tracks with positions; the "Around you" line for people out of view |
 | #12 sound localisation, detail tool | sound: a bridge `sound` event (`ALSoundLocalization`, dropped while Pepper speaks) and a `sound` observation; detail: the `recall` tool |
-| #24 come to me | `speaker_bearing(at)`, from the sound heard during the utterance or else the nearest remembered track; then turn and drive as today. The camera fallback is a `camera` observation with the head angle attached |
+| #24 come to me | the voice's direction (sound heard during the utterance), else the nearest remembered track; then turn and drive as today. The camera fallback (built in 0.7.0) is a `person_seen` camera observation: while the detector sees nobody during a conversation, Clef Flash says which third of the frame the nearest person is in, and the head angles that come with each frame turn that into a direction |
 | #11 periodic vision pass | a `scene` observation (short text, pose, head angle) every 10-20 s and when the people change; "last look N s ago" in the summary; detail through `recall`; frames never stored |
 | #13 memory tools | `remember` / `recall` over `facts` and `episodes` |
 | #14 face or voice identity | an `identity` source that compares embeddings on the host and attaches a long-term person id to a track; enrolment only through the consent flow |

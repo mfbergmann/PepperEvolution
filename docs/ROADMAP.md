@@ -4,7 +4,7 @@ Last updated: September 2026. The design these milestones build towards is in [A
 
 ## Where we are
 
-*Updated 2026-10-08, version 0.6.0.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in six robot sessions so far: the office, the open space outside it, and an evening with two visitors. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
+*Updated 2026-10-09, version 0.7.0.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in six robot sessions so far: the office, the open space outside it, and an evening with two visitors. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
 
 What works on the robot today:
 - **Conversation by voice** through Pepper's own microphone. NVIDIA's Nemotron streaming recogniser runs on the host's CPU, and Claude Sonnet 5.5 answers about 2 s after the transcript; it speaks sentence by sentence with gestures and tablet captions.
@@ -22,10 +22,18 @@ What works on the robot today:
   - It also knows where a voice came from and keeps occasional scene notes.
   - Long-term memory keeps people who agreed to be remembered, with consent checked in code and "forget me".
 
+- **Built offline in 0.7.0, also not yet on the robot:**
+  - waiting for the rest of a sentence that stops mid-way (#26);
+  - shorter replies (#19);
+  - pointing and looking at a spot in a photo (#28, #6);
+  - a camera fallback that completes "come to me" (#24);
+  - a bridge watchdog (#15);
+  - a first, opt-in initiative loop (Pepper may speak unprompted).
+
 What is not there yet:
-- **Memory on the robot:** the 0.6.0 checks in `docs/HANDOFF.md`; then identity (face or voice, opt-in, #14).
+- **All of the above on the robot:** the checks in `docs/HANDOFF.md`; then identity (face or voice, opt-in, #14).
 - **Spatial grounding:** "come to me", pointing, looking at a point in a photo, follow me (Milestone 3).
-- **Conversation:** replies that are still too long, sentences cut in two at pauses, side talk with two people still to be tested, and barge-in (Milestone 2).
+- **Conversation:** side talk with two people still to be tested, and barge-in (Milestone 2).
 
 Off the robot, about 590 tests run in CI (including the real bridge process under a fake NAOqi and the bridge suite under Python 2.7 + Tornado 3.1.1); NAOqi's desktop build runs as a headless virtual Pepper; and recorded sessions can be replayed.
 
@@ -89,8 +97,8 @@ Goal: people talk to Pepper instead of typing.
 - [x] Transcript logging (`VOICE_RECORD_DIR`) for tuning on real audio.
 - [x] Measured on the robot: 7-12.5 s from the final transcript to the first sound at first; after the "speak first" prompt and filler changes, 2.6-3.9 s; with Sonnet 5.5 (2026-10-08) a median of about 2 s, plus 1 s of end-of-speech silence before the transcript. Target is still under 2 s from end of speech (#3).
 - [x] Addressee gate (0.5, #19): open-microphone speech is answered only when it seems meant for Pepper. Alone with Pepper, anything said in a conversation is answered (0.5.1). Still to test with two people; the judgement should also see what Pepper just said (#25).
-- [ ] Sentences cut in two at a pause longer than 1 s (#26): wait for the rest when a sentence is clearly unfinished.
-- [ ] Shorter replies in conversation (#19): 4-5 sentence answers are common and people talk over them.
+- [x] Sentences cut in two at a pause longer than 1 s (#26): built in 0.7.0. A word rule holds a clearly unfinished utterance for 2.5 s and joins what follows (10 of 11 recorded cut-offs, none of 140 complete utterances held). Robot test next.
+- [x] Shorter replies in conversation (#19): built in 0.7.0. One or two sentences, then stop. Replayed on 37 recorded turns: 3 sentences on average down to 2.3, replies of four or more from about 42 % to about 20 %. Robot test next.
 - [x] Acceptance met: a five-turn spoken conversation with tool use (head turns, photos, gestures, the quiet intent) through Pepper's own microphone, twice.
 - [ ] Barge-in: let a spoken "stop" interrupt while Pepper is speaking. Today the bridge mutes the microphone for the whole reply (sentences follow each other with a 0.4 s tail), so a spoken "stop" only lands between turns; typed, button and hold-to-talk stops work at any time. Needs either echo cancellation on the host (the bridge would have to stream during speech) or keyword spotting on the muted-out audio; not planned before M0 shows how much Pepper hears of itself.
 - [ ] A neural VAD (Silero/TEN through sherpa-onnx) in front of the whisper path if the energy detector proves too crude in the lab.
@@ -178,9 +186,9 @@ Goal: Claude can act on what it sees, not just describe it.
 - **Handshake** (built 2026-10-08): Pepper holds its right hand out (`/pose/offer_hand`), notices a firm handshake by the shoulder motor's current dropping as a hand takes the arm's weight, a real shake (4° or more) or the back-of-hand touch sensor, speaks without body language while the hand is out, and lowers it after 15 s if nobody takes it. A gentle grip is not detectable from the arm (lower priority, issue #23: judge it with the camera).
 - **Follow me** (asked for on the robot 2026-10-01: "can you follow me back into my office?"; Pepper had no way to). Candidates: NAOqi's `ALTracker` in `Move` mode (follows a face or person with the base, keeping a set distance), or the host steering short base moves from the world model's direction and distance. Safety first: slow speed (at most 0.3 m/s), a minimum distance of about 0.8 m, the sonar guard and NAOqi collision avoidance stay on, stop at once on "stop", on touching the head, when the person is lost for more than a couple of seconds, or after a time limit; only on explicit request, never on its own. Test in the open room first.
 
-- **Pointing** (#28): Pepper cannot aim a point yet; its canned gestures look like ordinary talking hands on the robot (2026-10-08), so the model now says so instead of claiming to point. To build: an aimed arm pose from a direction.
+- **Pointing and look_at** (#28, #6): built in 0.7.0. `point_at` aims the arm with `ALTracker.pointAt` at a spot in the last photo, the person, or a direction (within 2-6° on the virtual Pepper); `look_at` turns the head to a spot in the last photo. Robot test next.
 
-Acceptance: "look at the person on the left", "is the door open?", "go towards the chair", "come to me" and "follow me" work reliably. "Come to me" uses the person's direction in the "Around you" line since 2026-10-01 (turn by that angle, then drive). On the robot (2026-10-08) it got there only after several tries, because the detector keeps losing people (#24: voice direction and a camera fallback, and #27: remembering where people were).
+Acceptance: "look at the person on the left", "is the door open?", "go towards the chair", "come to me" and "follow me" work reliably. "Come to me" uses the person's direction in the "Around you" line since 2026-10-01 (turn by that angle, then drive). On the robot (2026-10-08) it got there only after several tries, because the detector keeps losing people. Since 0.6.0 and 0.7.0 three things fill in when the detector has lost someone: remembered positions (#27), the voice's direction (#12), and a camera fallback that finds the person in the frame (#24). Robot test next.
 
 ## Milestone 4: world model (continuous perception)
 
@@ -226,7 +234,7 @@ Goal: Pepper remembers who it talked to and what was said.
 
 ## Milestone 6: robustness and operations
 
-- Bridge autostart on robot boot: **done**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`); verified on the robot after a reboot (2026-10-01) and a cold power-on (2026-10-08). Still to do: a watchdog that restarts a crashed bridge (#15).
+- Bridge autostart on robot boot: **done**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`); verified on the robot after a reboot (2026-10-01) and a cold power-on (2026-10-08). Watchdog (#15): built in 0.7.0. `watchdog.sh` starts the bridge and starts it again if it exits or stops answering; tested on the desktop NAOqi.
 - Latency budget per turn in the log; per-sentence speech timing.
 - **Session recording and review (issue #16): done in 0.5.** Every robot session is recorded and reviewed, because real interactions are the main source of fixes. `SESSION_DIR` gives one folder per run with the host and bridge logs, utterance audio, photos with the measured head angle, `turns.jsonl` (per turn: end of speech, the judgements, the router's action and timing, tools, first word, what Pepper said) and `events.jsonl` (people, greetings, camera events, handshakes). `scripts/review_session.py` prints a timed transcript with flags (slow first words, long replies, unanswered speech, failed tools). Records stay local and git-ignored (`CLAUDE.md`, "Session records").
 

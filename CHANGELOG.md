@@ -4,9 +4,33 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Unreleased
+## 0.7.0 (2026-10-09): conversation fixes, pointing, the camera fallback, a watchdog, initiative
 
-- The lab's Basecamp (TRiPL project, Pepper section) is kept in step with the repository by `scripts/basecamp_sync.py` (2026-10-09). It mirrors the process documentation into Pepper / Pepper Evolution, and keeps a PepperEvolution to-do list as the running log: milestones with their issues, robot sessions and releases.
+Built offline after the 2026-10-08 robot session, each measured on recorded data, the virtual Pepper or both. The robot test comes next session (`docs/HANDOFF.md`, "Before the next robot session").
+
+- **Waiting for the rest of an unfinished sentence** (#26, `WAIT_FOR_UNFINISHED`, on):
+  - The problem: about one utterance in fifteen ended mid-sentence ("...onto the", "Can you"), and Pepper answered the fragment.
+  - The fix: a word rule holds such a fragment for 2.5 s and joins it to what follows. A model judgement could not separate them.
+  - On the 151 recorded utterances the rule caught 10 of 11 cut-offs and held none of the 140 complete ones.
+  - With the real recogniser at real-time pace, speech resuming within about 3 s was joined.
+- **Shorter replies** (#19): one or two sentences, then stop and listen. Replaying 37 recorded turns through the model (`scripts/bench_reply_length.py`), replies went from about 3 sentences to 2.3, and those of four or more from 41-43 % to 19-22 %.
+- **Pointing and looking at a spot in a photo** (#28, #6):
+  - Bridge `/pose/point` aims the arm with `ALTracker.pointAt`, looking the same way. On the virtual Pepper the arm landed within 2-6° of the direction asked.
+  - New tools `point_at` (a spot in the last photo, the person, or a direction) and `look_at` (a spot in the last photo).
+  - The photo geometry agreed with the people detector within about 5° on two recorded photos.
+- **Come to me, camera fallback** (#24):
+  - The camera stream stays open while someone is talking with Pepper, and each frame carries the head's angles.
+  - When the detector has lost everyone, Clef Flash says which third of the frame the nearest real person is in, and that becomes a remembered direction.
+  - Together with voice direction (#12) and remembered positions (#27), all three pieces of #24 are built.
+- **Bridge watchdog** (#15): `watchdog.sh` starts the bridge (deploy and autostart) and starts it again if it exits or stops answering `/health`. "deploy.py --stop" stands it down first. On the desktop NAOqi:
+  - killed with -9: back in about 5 s;
+  - frozen: replaced in 34 s;
+  - stopped deliberately: stayed down.
+- **Initiative** (`INITIATIVE`, off by default): a first, small reflection loop that may let Pepper say one short thing unprompted.
+  - Two rules: someone lingering quietly, or a question left unanswered.
+  - At most once every 3 minutes, and never after "be quiet".
+  - Replayed on the 58 minutes recorded on 2026-10-08, it fired three times, none during real conversations.
+- **Basecamp:** `scripts/basecamp_sync.py` keeps the TRiPL project's Pepper section in step with the repository (2026-10-09). It mirrors the process documentation and keeps a to-do list as the running log of milestones, issues, robot sessions and releases.
 
 ## 0.6.0 (2026-10-08): memory
 

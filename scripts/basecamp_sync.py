@@ -341,7 +341,8 @@ def next_session() -> Optional[Tuple[str, str]]:
     if not match:
         return None
     label = match.group(1) or "next"
-    return f"next:{sha(label)}", f"Next robot session: {label} (the checks are in the Handoff notes)"
+    # one key for the planned session whatever its label, so a renamed plan updates the to-do instead of closing it
+    return "next", f"Next robot session: {label} (the checks are in the Handoff notes)"
 
 
 def ensure_list(state: Dict[str, Any], dry: bool) -> Optional[int]:
@@ -436,10 +437,13 @@ def sync_tasks(state: Dict[str, Any], dry: bool) -> None:
         description = f"{row['findings']}\n\n{more}"
         sync_todo(state, key, "Robot sessions", title, description, True, dry)
     upcoming = next_session()
-    for key in [k for k in state.get("todos", {}) if k.startswith("next:")]:
-        if upcoming is None or key != upcoming[0]:
-            known = state["todos"][key]
-            sync_todo(state, key, "Robot sessions", known["title"], "", True, dry)  # held: close the old plan
+    todos = state.setdefault("todos", {})
+    for key in [k for k in todos if k.startswith("next:")]:  # the old per-label keys: keep the to-do, new key
+        todos.setdefault("next", todos.pop(key))
+    if upcoming is None and "next" in todos:  # the plan is gone from HANDOFF: the session was held
+        known = todos.pop("next")
+        todos[f"held:{known['id']}"] = known
+        sync_todo(state, f"held:{known['id']}", "Robot sessions", known["title"], "", True, dry)
     if upcoming is not None:
         description = f"[Before the next robot session]({GITHUB}/blob/main/docs/HANDOFF.md) in the Handoff notes."
         sync_todo(state, upcoming[0], "Robot sessions", upcoming[1], description, False, dry)

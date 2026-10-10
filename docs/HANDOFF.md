@@ -1,10 +1,10 @@
 # Handoff: where the work stopped and how to pick it up
 
-Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot, and 2026-10-08 after the first session with system one in the loop and the offline build of memory (0.6.0). Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
+Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot, and 2026-10-08/09 after the first session with system one in the loop and the offline builds of memory (0.6.0) and 0.7.0. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
 
 ## State of the code
 
-*Updated 2026-10-08.* `main` is at 0.6.0 (tag `v0.6.0`, memory) with CI green on Python 3.12 and 3.13. The robot still runs the 0.5.1 bridge, which starts by itself at boot; deploy 0.6.0 at the next session (above).
+*Updated 2026-10-09.* `main` is at 0.7.0 (tag `v0.7.0`) with CI green on Python 3.12 and 3.13. The robot still runs the 0.5.1 bridge, which starts by itself at boot; deploy 0.7.0 at the next session (above).
 
 - **Host** (`src/`, Python 3.12+):
   - FastAPI on one port (REST, `/ws`, web UI with hold-to-talk).
@@ -125,33 +125,48 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 
 **Next milestones after Tuesday:** finish Milestone 4 (vision pass into the world model, #11; the detail tool, #12), get the spoken loop under 2 s and barge-in (#3, #4), verify-after-act and `look_at` (#7, #6), then follow me (#18) and memory of people (Milestone 5, opt-in only).
 
-## Before the next robot session (0.6.0: memory)
+## Before the next robot session (0.6.0 and 0.7.0)
 
-Built offline on 2026-10-08 after the session below: the memory architecture (`docs/MEMORY.md`, issue #29). Nothing of it has run on the robot yet. Steps:
+Built offline on 2026-10-08 and 2026-10-09 after the session below:
+- 0.6.0: the memory architecture (`docs/MEMORY.md`, issue #29);
+- 0.7.0: waiting for unfinished sentences, shorter replies, pointing and look_at, the camera fallback for "come to me", the bridge watchdog, and initiative.
 
-1. **Deploy the 0.6.0 bridge.** Run `python robot_bridge/deploy.py`, then `python robot_bridge/deploy.py --install-autostart` (the package version changed). The robot still runs 0.5.1, which the host handles: without the new bridge it dead-reckons from its own moves.
-2. **Settings in `.env`: done on 2026-10-08.** All three are switched on for the next session (each is off by default in the code):
+Nothing of it has run on the robot yet. Steps:
+
+1. **Deploy the 0.7.0 bridge:** `python robot_bridge/deploy.py`, then `python robot_bridge/deploy.py --install-autostart`. The package changed: the autostart now runs the watchdog. The robot still runs 0.5.1, which the host handles: without the new bridge it dead-reckons its pose, and pointing, sound direction and the head angles on camera frames are missing.
+2. **Settings in `.env`.** Done on 2026-10-08 (each is off by default in the code):
    - `MEMORY_DIR=results/memory` (long-term memory);
-   - `SOUND_DIRECTION=true` (voice direction, needs the 0.6.0 bridge);
+   - `SOUND_DIRECTION=true` (voice direction);
    - `SCENE_NOTES=true` with `SCENE_MODEL=qwen3.5:4b` (already pulled into the private Ollama on Alien3).
+
+   `WAIT_FOR_UNFINISHED` is on by default. **`INITIATIVE=true` is your choice:** it lets Pepper say one short thing unprompted when someone lingers quietly or a question goes unanswered, at most once every 3 minutes. Recommended for one part of the session, to judge whether it feels right.
 3. **Checks, in this order:**
-   1. **Pose:** turn Pepper 90° and look for a `pose` event at the end of the turn and `pose` in the people events. Push Pepper gently with nobody in view and the host log should say it moved unexpectedly.
-   2. **Remembering where people were (#27):** "turn ninety degrees", then "turn towards me" should turn back to you in one go. `scripts/replay_world.py` on the session shows the predictions.
-   3. **Sound direction (#12, #24):**
+   1. **Watchdog (#15):** `python robot_bridge/deploy.py --status` shows the watchdog running. Optionally, kill the bridge over ssh (`pkill -9 -f '[p]epper_bridge.py'`): it should be back in about 5 s, and the host should reconnect.
+   2. **Pose:** turn Pepper 90° and look for a `pose` event at the end of the turn and `pose` in the people events. Push Pepper gently with nobody in view: the host log should say it moved unexpectedly.
+   3. **Remembering where people were (#27):** "turn ninety degrees", then "turn towards me" should turn back to you in one go. `scripts/replay_world.py` on the session shows the predictions.
+   4. **Sound direction and come to me (#12, #24):**
       - `curl http://10.0.100.100:8888/sound/localization` should report `available: true`.
       - Measure the robot's CPU with and without it (`results/logs/robot_load.py`).
       - Speak from about 60° to one side, out of the camera's view; the turn record's `voice` and the mind's state should give the direction.
-      - Try "come to me" from out of view.
-   4. **Memory by voice:**
+      - "Come to me" from out of view: voice direction, then remembered position, then the camera fallback ("person_seen" observations in `events.jsonl`).
+   5. **Pointing and looking (#28, #6):**
+      - "What do you see?", then "point at the chair" (a spot in the photo).
+      - "Point at me" (the person).
+      - "Look at the door" (look_at).
+      - Check the arm goes down afterwards, and that collision protection does not stop the arm near furniture.
+   6. **Unfinished sentences (#26):** pause mid-sentence on purpose ("Can you ... turn left"; "I was going to say that ... it's cold today"). The host log shows "sounds unfinished: waiting" and "joined across a pause". The review script shows joined turns.
+   7. **Reply length (#19):** in free conversation, judge by ear; the review script flags replies of four sentences or more (baseline: a third of replies).
+   8. **Memory by voice:**
       - "I'm <name>", Pepper asks, "yes".
       - Later, "what do you remember about me?".
       - Then "forget me".
       - Check with `scripts/memory_admin.py list`.
-   5. **Scene notes:** with `SCENE_NOTES=true`, watch the "Your last look around" sentence and its accuracy, and the GPU load on Alien3 with all three models (about 24 GB with nimble, clef-flash and qwen3.5:4b loaded). The host keeps nimble and clef-flash warm but not qwen3.5:4b (each request asks Ollama to keep it 30 minutes), so the first note after a long idle spell may be missed while it loads.
-4. **Still owed from before:** side talk with two people (#19, #25; turn records now keep Pepper's last sentence for the re-benchmark), cut-off sentences (#26), shorter replies.
+   9. **Scene notes:** watch the "Your last look around" sentence and its accuracy, and the GPU load on Alien3 with all three models (about 24 GB). The host keeps nimble and clef-flash warm but not qwen3.5:4b, so the first note after a long idle spell may be missed while it loads.
+   10. **Initiative (if switched on):** stand in front of Pepper quietly for half a minute; leave a question of Pepper's unanswered. At most one unprompted remark every 3 minutes; tell me how it feels.
+4. **Still owed from before:** side talk with two people (#19, #25; turn records now keep Pepper's last sentence for the re-benchmark).
 
 Notes:
-- The scene pass's people count is a typed question that was benchmarked on 12 frames, separately from the camera judgements; it feeds `recall` and the scene note, not the people in the "Around you" line.
+- The scene pass's people count and the camera fallback use typed questions benchmarked on 12 frames (11 counts right), separately from the camera judgements.
 - Facts and consent notes are personal data: `results/memory/` is git-ignored like the session records, and "forget me" clears it (the session records follow their own rules).
 
 ## Robot session 2026-10-08: results (system one in the loop)

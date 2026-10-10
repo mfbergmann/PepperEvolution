@@ -110,6 +110,8 @@ PepperEvolution/
 | `play_animation` | Wave, bow, nod, shake head, think, explain, happy, ... |
 | `offer_hand` | Hold the right hand out for a handshake (up to 15 s), shake it when taken, then lower it |
 | `move_head` | Look in a direction |
+| `look_at` | Turn the head to a spot in the last photo |
+| `point_at` | Aim the arm at a spot in the last photo, the person in view, or a direction (holds 3 s) |
 | `turn` / `move_forward` | Turn in place, drive short distances (sonar-checked, max 2 m) |
 | `set_posture` | Stand, StandInit, StandZero, Crouch |
 | `set_eye_color` | Eye LED colour |
@@ -143,6 +145,9 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`) |
 | `SOUND_DIRECTION` | `false` | With bridge 0.6: each spoken turn gets the direction the voice came from (NAOqi sound localisation), for "come to me" out of the camera's view |
 | `MEMORY_DIR` | | Long-term memory: people who agreed to be remembered, facts, session episodes ([docs/MEMORY.md](docs/MEMORY.md); `scripts/memory_admin.py`); empty = off |
+| `SCENE_NOTES` / `SCENE_MODEL` | `false` / `qwen3.5:4b` | With `DECIDE_URL`: every 20 s while someone is in view, who is where and a short note on the place |
+| `WAIT_FOR_UNFINISHED` | `true` | Voice: when an utterance clearly stops mid-sentence ("How do you feel about"), wait up to 2.5 s for the rest and answer the whole sentence |
+| `INITIATIVE` | `false` | Pepper may speak unprompted: to someone lingering quietly nearby, or once more after an unanswered question (at most every 3 minutes) |
 | `PHOTO_RECORD_DIR` / `VOICE_RECORD_DIR` | | Keep photos (with head angle and sharpness) / utterance audio for testing; inside `SESSION_DIR` when that is set |
 | `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |
@@ -158,7 +163,7 @@ PEPPER_VIRTUAL_BRIDGE=http://127.0.0.1:8899 pytest tests/test_virtual_naoqi.py -
 python scripts/smoke_host.py --fake            # the whole host stack with the real model, no robot
 ```
 
-Version 0.6.0; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
+Version 0.7.0; see [CHANGELOG.md](CHANGELOG.md). Milestones and progress are also tracked in the [wiki](https://github.com/mfbergmann/PepperEvolution/wiki) and under [GitHub milestones](https://github.com/mfbergmann/PepperEvolution/milestones).
 
 Picking the work up in a new session: start with [docs/HANDOFF.md](docs/HANDOFF.md). The design the project is building towards is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
