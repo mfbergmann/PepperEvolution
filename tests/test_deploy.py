@@ -58,14 +58,14 @@ class FakeSSHClient:
         self.commands.append(cmd)
         out = b""
         rc = 0
-        if "nohup /bin/sh launch.sh" in cmd:
+        if "nohup /bin/sh watchdog.sh" in cmd:  # the watchdog starts the bridge (#15)
             assert cmd.startswith(f"cd {REMOTE_DIR}; "), "must not use 'cd && ... &' (wrong $!)"
             self.running = True
             out = b"4242\n"
         elif cmd.startswith("pgrep -f '[p]epper_bridge.py'"):
             out = b"4242\n" if self.running else b""
             rc = 0 if self.running else 1
-        elif cmd.startswith("test -f") and cmd.endswith("launch.sh"):
+        elif cmd.startswith("test -f") and cmd.endswith(("launch.sh", "watchdog.sh")):
             rc = 0 if self.launcher_on_robot else 1
         elif "qicli call PackageManager" in cmd:
             out = self.qicli_answer
@@ -235,9 +235,12 @@ class TestDeployFlow:
         assert client.uploaded == [
             (deploy.BRIDGE_FILE, deploy.REMOTE_SCRIPT),
             (deploy.LAUNCH_FILE, deploy.REMOTE_LAUNCH),
+            (deploy.WATCHDOG_FILE, deploy.REMOTE_WATCHDOG),
         ]
         joined = "\n".join(client.commands)
         assert "pkill -f '[p]epper_bridge.py'" in joined
+        # the watchdog is told to stand down before the bridge is stopped, so it does not start it again (#15)
+        assert joined.index("touch /home/nao/pepper_bridge/watchdog.stop") < joined.index("pkill -f '[p]epper_bridge.py'")
         settings = [c for c in client.commands if deploy.REMOTE_ENV in c][0]
         assert f"PORT={health_server.server_address[1]}" in settings and "API_KEY=k" in settings
         assert settings.startswith("umask 077")  # the API key is not world-readable
@@ -259,7 +262,7 @@ class TestDeployFlow:
 
         monkeypatch.setattr(FakeSSHClient, "__init__", init)
         assert deploy.deploy(make_args(deploy, health_server.server_address[1], restart=True)) == 0
-        assert (deploy.LAUNCH_FILE, deploy.REMOTE_LAUNCH) in FakeSSHClient.instances[-1].uploaded
+        assert (deploy.WATCHDOG_FILE, deploy.REMOTE_WATCHDOG) in FakeSSHClient.instances[-1].uploaded
 
 
 class TestAutostart:
@@ -275,7 +278,8 @@ class TestAutostart:
         assert package.getAttribute("uuid") == deploy.AUTOSTART_UUID
         service = doc.getElementsByTagName("service")[0]
         assert service.getAttribute("autorun") == "true" and service.getAttribute("name") == "PepperBridge"
-        assert b"pepper_bridge/launch.sh" in pkg.read("service.sh")
+        service_sh = pkg.read("service.sh")
+        assert b"watchdog.sh" in service_sh and b"launch.sh" in service_sh  # launch.sh: bridges before 0.7
 
     def test_manifest_version_matches_the_bridge(self, deploy):
         import re
@@ -288,7 +292,7 @@ class TestAutostart:
     def test_launch_script_is_valid_shell(self, deploy):
         import subprocess
 
-        for script in (deploy.LAUNCH_FILE, str(Path(deploy.AUTOSTART_DIR) / "service.sh")):
+        for script in (deploy.LAUNCH_FILE, deploy.WATCHDOG_FILE, str(Path(deploy.AUTOSTART_DIR) / "service.sh")):
             assert subprocess.run(["sh", "-n", script]).returncode == 0
 
     def test_install_uploads_and_installs_the_package(self, deploy, capsys):
