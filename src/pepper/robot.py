@@ -355,6 +355,19 @@ class PepperRobot:
         finally:
             self.holding_pose -= 1
 
+    async def point(self, yaw: float, pitch: float = 0.0, hold: float = 3.0, look: bool = True) -> Dict[str, Any]:
+        """Point an arm at a direction (body frame: yaw left positive, pitch down positive), looking the same way,
+        for ``hold`` seconds, then arms down (#28). Speech meanwhile does not gesture over it."""
+        self.holding_pose += 1
+        try:
+            result = await self.bridge.point(yaw, pitch, hold=hold, look=look)
+        finally:
+            self.holding_pose -= 1
+        if look:
+            self.last_head_yaw = float(result.get("yaw", yaw)) if isinstance(result, dict) else float(yaw)
+            self.last_head_move_at = time.monotonic()
+        return result
+
     async def neutral_pose(self) -> Dict[str, Any]:
         """Arms and legs back to the standing pose after gestures (the head is left alone)."""
         return await self.bridge.neutral_pose()

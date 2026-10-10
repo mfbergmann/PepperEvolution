@@ -272,6 +272,15 @@ DEFAULT_STIMULI = ("People", "Touch")  # Sound (and Movement) pull the head arou
 # Pepper head limits in degrees (NAOqi 2.5 joints_pep.html). HeadPitch range shrinks
 # as |HeadYaw| grows because the head would hit the casing/tablet.
 HEAD_YAW_LIMIT_DEG = 119.5
+FRAME_ROBOT = 2  # NAOqi frames: 0 torso, 1 world, 2 robot
+POINT_DISTANCE = 2.0  # metres from the shoulder to the point the arm aims at
+POINT_YAW_LIMIT = 100.0  # degrees either side; further back an arm cannot point
+POINT_PITCH_UP = -60.0
+POINT_PITCH_DOWN = 45.0
+POINT_DOWN_GAIN = 1.2  # downward points fell about 25 % short on the virtual Pepper; 1.2 lands within about 5 degrees
+POINT_HOLD = 3.0
+POINT_MAX_HOLD = 10.0
+POINT_SPEED = 0.3
 HEAD_PITCH_LIMITS = [  # (max |yaw| deg, pitch min deg, pitch max deg)
     (33.33, -40.5, 25.5),
     (61.6, -35.2, 20.9),
@@ -1180,6 +1189,56 @@ class Robot(object):
         motion.angleInterpolationWithSpeed(names, [a for _, a in NEUTRAL_JOINTS], NEUTRAL_SPEED)
         return {"joints": len(names)}
 
+    def point(self, yaw_deg, pitch_deg, hold=POINT_HOLD, look=True, speed=POINT_SPEED):
+        """Point an arm at a direction (body frame, degrees: yaw left positive, pitch down positive), looking the
+        same way, hold it, then arms back down (issue #28).
+
+        ALTracker.pointAt aims the arm on the target's side at a point 2 m away from that shoulder. On the virtual
+        Pepper (2026-10-09) it landed within about 5 degrees except downward, where it fell about 25 % short, so
+        downward pitch is asked for 20 % more (POINT_DOWN_GAIN). NAOqi's arm collision protection stays on
+        throughout.
+        """
+        yaw = clamp(as_float(yaw_deg, 0.0), -POINT_YAW_LIMIT, POINT_YAW_LIMIT)
+        pitch = clamp(as_float(pitch_deg, 0.0), POINT_PITCH_UP, POINT_PITCH_DOWN)
+        hold = clamp(as_float(hold, POINT_HOLD), 0.5, POINT_MAX_HOLD)
+        speed = clamp(as_float(speed, POINT_SPEED), 0.1, 0.5)
+        motion = self.svc("ALMotion")
+        self._ensure_awake(motion)
+        side = "L" if yaw > 0 else "R"
+        if look:
+            head_yaw = clamp(yaw, -HEAD_YAW_LIMIT_DEG, HEAD_YAW_LIMIT_DEG)
+            self.move_head(head_yaw, min(max(pitch, -20.0), 20.0), 0.3, wait=False)
+        shoulder = motion.getPosition(side + "ShoulderPitch", FRAME_ROBOT, True)[:3]
+        aim = pitch * POINT_DOWN_GAIN if pitch > 0 else pitch
+        target = [
+            shoulder[0] + POINT_DISTANCE * math.cos(math.radians(aim)) * math.cos(math.radians(yaw)),
+            shoulder[1] + POINT_DISTANCE * math.cos(math.radians(aim)) * math.sin(math.radians(yaw)),
+            shoulder[2] - POINT_DISTANCE * math.sin(math.radians(aim)),
+        ]
+        self.svc("ALTracker").pointAt(side + "Arm", target, FRAME_ROBOT, speed)
+        aimed = self._arm_direction(motion, side)
+        waited = 0.0
+        while waited < hold and not self.halted:
+            self.sleep(0.1)
+            waited += 0.1
+        result = {"arm": side + "Arm", "yaw": yaw, "pitch": pitch, "held": round(waited, 1), "aimed": aimed}
+        if not self.halted:
+            result["neutral"] = self.neutral_pose()
+        return result
+
+    def _arm_direction(self, motion, side):
+        """Where the arm really points: [yaw, pitch] in degrees from the shoulder to the hand, or None."""
+        try:
+            shoulder = motion.getPosition(side + "ShoulderPitch", FRAME_ROBOT, True)[:3]
+            hand = motion.getPosition(side + "Hand", FRAME_ROBOT, True)[:3]
+        except Exception:
+            return None
+        v = [hand[i] - shoulder[i] for i in range(3)]
+        return [
+            round(math.degrees(math.atan2(v[1], v[0])), 1),
+            round(-math.degrees(math.atan2(v[2], math.hypot(v[0], v[1]))), 1),
+        ]
+
     def offer_hand(self, hold=8.0, moved=HANDSHAKE_MOVED):
         """Hold the right hand out for a handshake; when someone takes it, shake gently, then arms back down.
 
@@ -1914,6 +1973,19 @@ class OfferHandHandler(JSONHandler):
         return self.run_in_thread(ROBOT.offer_hand, self.arg("hold", 8.0), self.arg("moved", HANDSHAKE_MOVED))
 
 
+class PointHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(
+            ROBOT.point,
+            self.arg("yaw", 0),
+            self.arg("pitch", 0),
+            self.arg("hold", POINT_HOLD),
+            as_bool(self.arg("look"), True),
+            self.arg("speed", POINT_SPEED),
+        )
+
+
 class NeutralPoseHandler(JSONHandler):
     @async_handler
     def post(self):
@@ -2565,6 +2637,7 @@ def make_app():
             (r"/posture", PostureHandler),
             (r"/posture/neutral", NeutralPoseHandler),
             (r"/pose/offer_hand", OfferHandHandler),
+            (r"/pose/point", PointHandler),
             (r"/wake_up", WakeUpHandler),
             (r"/rest", RestHandler),
             (r"/prepare", PrepareHandler),

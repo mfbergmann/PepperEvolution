@@ -154,6 +154,11 @@ class FakeBridgeClient:
         result.update(taken=True, waited=1.0)
         return result
 
+    async def point(self, yaw: float, pitch: float = 0.0, hold: float = 3.0, look: bool = True) -> Dict[str, Any]:
+        result = self._record("point", yaw=yaw, pitch=pitch, hold=hold, look=look)
+        result.update(arm="LArm" if yaw > 0 else "RArm", aimed=[yaw, pitch], held=hold)
+        return result
+
     async def neutral_pose(self) -> Dict[str, Any]:
         return self._record("neutral_pose")
 

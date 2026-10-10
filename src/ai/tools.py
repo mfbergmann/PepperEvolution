@@ -196,6 +196,38 @@ TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "look_at",
+        "description": "Turn your head to look at a spot in your last photo: x from 0 (left edge) to 1 (right edge), "
+        "y from 0 (top) to 1 (bottom). Use it to look at someone or something you just saw; take a new photo "
+        "afterwards if you need to check.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number", "description": "0 = left edge of the photo, 1 = right edge."},
+                "y": {"type": "number", "description": "0 = top of the photo, 1 = bottom."},
+            },
+            "required": ["x", "y"],
+        },
+    },
+    {
+        "name": "point_at",
+        "description": "Point at something with your arm for a few seconds, looking the same way, then lower it. Say "
+        "where: a spot in your last photo (x and y from 0 to 1, as for look_at), the person you are talking with "
+        '(target "person"), or a direction (yaw in degrees, left positive; pitch in degrees, down positive). You '
+        "can point to the front and the sides, not behind you.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number", "description": "A spot in your last photo: 0 = left edge, 1 = right edge."},
+                "y": {"type": "number", "description": "A spot in your last photo: 0 = top, 1 = bottom."},
+                "target": {"type": "string", "enum": ["person"], "description": "Point at the person you see."},
+                "yaw": {"type": "number", "description": "A direction: degrees, left positive."},
+                "pitch": {"type": "number", "description": "A direction: degrees, down positive."},
+                "hold": {"type": "number", "description": "Seconds to keep pointing (default 3, at most 10)."},
+            },
+        },
+    },
+    {
         "name": "emergency_stop",
         "description": "Immediately stop all movement and speech and put the robot to rest (motors off). Only for "
         "emergencies; the robot needs a wake-up afterwards.",

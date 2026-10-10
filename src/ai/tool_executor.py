@@ -9,11 +9,13 @@ the model can actually see what the camera saw.
 import asyncio
 import difflib
 import json
+import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
+from ..perception.geometry import CHEST_BELOW_EYES, photo_direction
 from ..pepper.robot import PepperRobot, Photo
 from .tools import EYE_COLORS, KNOWN_ANIMATIONS, MEMORY_TOOL_NAMES, POSTURES
 
@@ -74,12 +76,16 @@ def _photo_direction(yaw: Optional[float]) -> str:
     )
 
 
+POINT_REACH = 100.0  # degrees either side: further back an arm cannot point (the bridge clamps there too)
+
+
 class ToolExecutor:
     """Validates and executes tool calls against the robot."""
 
-    def __init__(self, robot: PepperRobot, memory: Optional[Any] = None):
+    def __init__(self, robot: PepperRobot, memory: Optional[Any] = None, world: Optional[Any] = None):
         self.robot = robot
         self.memory = memory  # src/memory Memory, when long-term memory is on (MEMORY_DIR)
+        self.world = world  # WorldModel: where the person is, for point_at
         self.logger = logger.bind(module="ToolExecutor")
         self._already: Optional[Any] = None  # (tool name, task) started by the command router this turn
 
@@ -124,6 +130,86 @@ class ToolExecutor:
         getattr(self.logger, level)(f"Tool {tool_name} -> {outcome.summary()[:2000]}")  # full, for reviewing sessions
         return outcome
 
+    PHOTO_STALE = 30.0  # seconds: an older photo may not show where things are now
+
+    def _photo_spot(self, inp: Dict[str, Any]):
+        """(yaw, pitch, notes) of a spot in the last photo, or a ToolOutcome failure."""
+        photo = getattr(self.robot, "last_photo", None)
+        if photo is None or getattr(photo, "taken_at", None) is None:
+            return ToolOutcome.failure("You have no photo to find that spot in: take one first.")
+        try:
+            x, y = float(inp["x"]), float(inp["y"])
+        except (KeyError, TypeError, ValueError):
+            return ToolOutcome.failure("Give x and y, each from 0 to 1, for the spot in your last photo.")
+        yaw, pitch, measured = photo_direction(photo, x, y)
+        notes = []
+        if not measured:
+            notes.append("Where your head pointed for that photo was not measured, so this may be off.")
+        age = time.monotonic() - photo.taken_at
+        if age > self.PHOTO_STALE:
+            notes.append(f"That photo is {int(age)} s old; things may have moved since.")
+        return yaw, pitch, notes
+
+    async def _look_at(self, inp: Dict[str, Any]) -> ToolOutcome:
+        """#6: turn the head to a spot in the last photo."""
+        spot = self._photo_spot(inp)
+        if isinstance(spot, ToolOutcome):
+            return spot
+        yaw, pitch, notes = spot
+        result = await self.robot.move_head(yaw, pitch)
+        data: Dict[str, Any] = {"yaw": result.get("yaw", yaw), "pitch": result.get("pitch", pitch)}
+        if result.get("measured") and not result.get("settled", True):
+            data["measured"] = result["measured"]
+        if notes:
+            data["note"] = " ".join(notes)
+        return ToolOutcome(True, data)
+
+    async def _point_at(self, inp: Dict[str, Any]) -> ToolOutcome:
+        """#28: aim an arm at a spot in the last photo, at the person, or at a direction."""
+        notes: List[str] = []
+        if inp.get("target") == "person":
+            person = self._person_direction()
+            if person is None:
+                return ToolOutcome.failure("You don't know where anyone is right now: look for them first.")
+            yaw, pitch = person
+        elif inp.get("x") is not None and inp.get("y") is not None:
+            spot = self._photo_spot(inp)
+            if isinstance(spot, ToolOutcome):
+                return spot
+            yaw, pitch, notes = spot
+        elif inp.get("yaw") is not None:
+            yaw, pitch = float(inp["yaw"]), float(inp.get("pitch") or 0.0)
+        else:
+            return ToolOutcome.failure("Say where to point: x and y in your last photo, target person, or yaw.")
+        if abs(yaw) > POINT_REACH:
+            turn = int(round(yaw))
+            return ToolOutcome.failure(
+                f"That is behind you (about {abs(turn)} degrees to your {'left' if yaw > 0 else 'right'}); "
+                f"turn towards it first (turn {turn}), then point."
+            )
+        hold = min(max(float(inp.get("hold") or 3.0), 0.5), 10.0)
+        result = await self.robot.point(yaw, pitch, hold=hold)
+        data: Dict[str, Any] = {
+            "pointed": {"yaw": round(yaw, 1), "pitch": round(pitch, 1)},
+            "arm": result.get("arm"),
+            "note": f"Your arm pointed there for {result.get('held', hold)} s and is down again.",
+        }
+        if notes:
+            data["note"] += " " + " ".join(notes)
+        return ToolOutcome(True, data)
+
+    def _person_direction(self) -> Optional[Tuple[float, float]]:
+        """Where the nearest person is (in view, or just seen), aimed at their chest."""
+        world = self.world
+        if world is None:
+            return None
+        tracks = world.tracker.present() or world.tracker.remembered(world.now())
+        for track in tracks:
+            bearing = track.bearing(world.pose)
+            if bearing is not None:
+                return bearing, (track.pitch if track.pitch is not None else 0.0) + CHEST_BELOW_EYES
+        return None
+
     def _memory_tool(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:
         """remember_person, remember, recall, forget_person (src/memory/service.py enforces consent)."""
         if self.memory is None:
@@ -147,6 +233,12 @@ class ToolExecutor:
     async def _dispatch(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:
         if name in MEMORY_TOOL_NAMES:
             return self._memory_tool(name, inp)
+
+        if name == "look_at":
+            return await self._look_at(inp)
+
+        if name == "point_at":
+            return await self._point_at(inp)
 
         if name == "speak":
             text = str(inp.get("text", "")).strip()

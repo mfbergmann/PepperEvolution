@@ -147,6 +147,11 @@ class BridgeClient:
         """Hold the right hand out for a handshake, shake when it is taken (back-of-hand touch), arms back down."""
         return await self._post("/pose/offer_hand", json={"hold": hold}, timeout=self.action_timeout)
 
+    async def point(self, yaw: float, pitch: float = 0.0, hold: float = 3.0, look: bool = True) -> Dict[str, Any]:
+        """Point an arm at a body-frame direction (from 0.7), looking the same way, then arms down."""
+        body = {"yaw": yaw, "pitch": pitch, "hold": hold, "look": look}
+        return await self._post("/pose/point", json=body, timeout=self.action_timeout)
+
     async def neutral_pose(self) -> Dict[str, Any]:
         """Arms and legs back to StandInit (not the head); skipped while resting, halted or animating."""
         return await self._post("/posture/neutral", json={})

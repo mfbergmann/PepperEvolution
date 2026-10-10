@@ -27,6 +27,8 @@ class TestToolDefinitions:
             "take_photo",
             "get_sensors",
             "show_on_tablet",
+            "look_at",
+            "point_at",
             "emergency_stop",
         }
         assert expected == set(TOOL_NAMES)

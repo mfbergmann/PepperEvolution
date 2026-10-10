@@ -53,6 +53,17 @@ class FakeService:
     def _respond(self, method, args):
         if method == "getRobotPosition":
             return list(self.pose)
+        if method == "pointAt":  # ALTracker: remember where the arm was sent (shared with ALMotion's hand)
+            self.memory["__pointed"] = (args[0], list(args[1]))
+            return None
+        if method == "getPosition" and str(args[0]).endswith("ShoulderPitch"):
+            return [-0.047, 0.15 if str(args[0]).startswith("L") else -0.15, 0.909, 0.0, 0.0, 0.0]
+        if method == "getPosition" and str(args[0]).endswith("Hand"):
+            target = self.memory.get("__pointed", (None, [1.0, 0.0, 0.909]))[1]
+            shoulder = [-0.047, 0.15 if str(args[0]).startswith("L") else -0.15, 0.909]
+            d = [target[i] - shoulder[i] for i in range(3)]
+            n = math.sqrt(sum(v * v for v in d)) or 1.0
+            return [shoulder[i] + 0.35 * d[i] / n for i in range(3)] + [0.0, 0.0, 0.0]
         if method == "moveTo":
             x, y, theta = (float(a) for a in args[:3])
             c, s = math.cos(self.pose[2]), math.sin(self.pose[2])
@@ -1407,3 +1418,31 @@ class TestSoundDirection:
 
         locator = bridge.SoundLocator(NoSound(), types.SimpleNamespace(speaking=0, tts_active=False, muted_until=0.0))
         assert locator.start()["available"] is False and locator.wanted is True
+
+
+class TestPointing:
+    """/pose/point (#28): aim the arm on the target's side, look the same way, hold, arms down."""
+
+    def test_points_with_the_arm_on_that_side(self, robot):
+        result = robot.point(-45, 0, hold=0.5)
+        arm, target = robot.session.service("ALMemory").memory["__pointed"]
+        assert arm == "RArm" and result["arm"] == "RArm"
+        assert target[1] < -0.15 and abs(target[2] - 0.909) < 0.01  # to the right, level with the shoulder
+        assert result["aimed"] == [-45.0, 0.0] and result["held"] >= 0.5 and "neutral" in result
+        head = [
+            c for c in calls(robot, "ALMotion") if c[0] == "setAngles" and list(c[1][0]) == ["HeadYaw", "HeadPitch"]
+        ]
+        assert head and abs(head[-1][1][1][0] + math.radians(45)) < 0.01  # looking the same way
+
+    def test_downward_is_asked_for_a_little_more_and_limits_hold(self, robot):
+        robot.point(80, 30, hold=0.5)
+        arm, target = robot.session.service("ALMemory").memory["__pointed"]
+        shoulder_z = 0.909
+        asked = math.degrees(math.atan2(shoulder_z - target[2], math.hypot(target[0] + 0.047, target[1] - 0.15)))
+        assert arm == "LArm" and asked == pytest.approx(36.0, abs=0.1)  # 30 x 1.2
+        assert robot.point(170, -90, hold=0.5)["yaw"] == 100.0  # clamped: no pointing behind
+
+    def test_refused_while_resting(self, robot):
+        robot.session.service("ALMotion").awake = False
+        with pytest.raises(RuntimeError, match="resting"):
+            robot.point(10, 0)

@@ -74,6 +74,7 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 | POST | `/stop` | | Stops any running animation (`ALBehaviorManager.stopAllBehaviors`) and the base (`stopMove()` + `killMove()`) |
 | POST | `/emergency_stop` | | Stops all behaviours (animations, animated speech gestures) and speech, kills all motion tasks, then `rest()` (Pepper does not allow manual body stiffness control). Sets `halted`: every motion/animation call is refused until `/wake_up` or `/prepare`. |
 | POST | `/posture` | `{"posture": "Stand", "speed": 0.5}` | `Stand`, `StandInit`, `StandZero`, `Crouch` |
+| POST | `/pose/point` | `{"yaw": -45, "pitch": 10, "hold": 3, "look": true, "speed": 0.3}` | (from 0.7) Point the arm on that side at a body-frame direction (yaw left positive, ±100°; pitch down positive, -60..45°) with `ALTracker.pointAt` at a point 2 m from the shoulder, looking the same way (`look`), hold, then `/posture/neutral`. Downward pitch is asked for 20 % more (it fell short on the virtual Pepper). Returns `arm`, the clamped `yaw`/`pitch`, `aimed` (the arm's real [yaw, pitch], shoulder to hand), `held`. Refused while resting or halted; an emergency stop ends the hold. Collision protection stays on. |
 | POST | `/posture/neutral` | — | Arms and legs back to StandInit (not the head) at 20 % speed, e.g. after a gesture left a hand raised. Skipped (`{"skipped": "resting"|"halted"|"animation running"}`), not an error, when it should not move. |
 
 ### Camera & audio

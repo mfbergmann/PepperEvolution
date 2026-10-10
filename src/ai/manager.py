@@ -117,7 +117,7 @@ class AIManager:
         self.world = world  # WorldModel: its summary goes into the state block on every turn
         self.provider = provider
         self.memory = memory  # src/memory Memory (long-term memory, MEMORY_DIR), or None
-        self.executor = ToolExecutor(robot, memory=memory)
+        self.executor = ToolExecutor(robot, memory=memory, world=world)
         self.tools = TOOLS + (MEMORY_TOOLS if memory is not None else [])
         # memory's instructions go before the closing line, which must stay last (models.CLOSING)
         self.system_prompt = SYSTEM_PROMPT.replace(CLOSING, (MEMORY_PROMPT if memory is not None else "") + CLOSING)
@@ -979,7 +979,9 @@ class AIManager:
         gestured = "^start(" in spoken or "^run(" in spoken or "play_animation" in tools
         routed = (rec or {}).get("router") or {}
         # a head move the router started counts too: the model is told not to repeat it
-        moved_head = "move_head" in tools or (routed.get("executed") and routed.get("tool") == "move_head")
+        moved_head = bool({"move_head", "look_at", "point_at"} & set(tools)) or (
+            routed.get("executed") and routed.get("tool") == "move_head"
+        )
         if not gestured and not moved_head:
             return
 
