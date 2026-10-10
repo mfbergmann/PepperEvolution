@@ -558,6 +558,11 @@ class AIManager:
         if kind == "greeting":
             self.stats["greetings"] += 1
 
+    async def initiate(self, prompt: str, rule: str):
+        """The reflection loop noticed something (src/ai/reflection.py): the mind decides, one short thing or nothing."""
+        self._event("initiative", rule=rule)
+        await self._react(prompt, self._clock(), kind="initiative")
+
     def in_conversation(self, within: float = 60.0) -> bool:
         """Someone talked with Pepper in the last ``within`` seconds (the camera stays open to find them, #24)."""
         return self._last_talk_at is not None and self._clock() - self._last_talk_at < within

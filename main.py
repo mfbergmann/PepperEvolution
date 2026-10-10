@@ -40,6 +40,7 @@ from src.decide.addressee import MODEL as ADDRESSEE_MODEL  # noqa: E402
 from src.perception import FrameWatcher  # noqa: E402
 from src.perception.scene import ScenePass  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
+from src.ai.reflection import Reflection  # noqa: E402
 from src.memory import Memory, MemoryStore  # noqa: E402
 from src.session import SessionRecorder  # noqa: E402
 from src.world import Observation, WorldModel  # noqa: E402
@@ -102,6 +103,7 @@ class Settings:
     scene_notes: bool = False
     scene_model: str = "qwen3.5:4b"
     wait_for_unfinished: bool = True
+    initiative: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -157,6 +159,7 @@ class Settings:
             scene_notes=env_bool("SCENE_NOTES", False),
             scene_model=os.getenv("SCENE_MODEL") or "qwen3.5:4b",
             wait_for_unfinished=env_bool("WAIT_FOR_UNFINISHED", True),
+            initiative=env_bool("INITIATIVE", False),
         )
 
 
@@ -323,6 +326,12 @@ class PepperEvolution:
             self.logger.info(f"Session records: {self.recorder.folder}")
         if s.sound_direction and not s.fake_bridge:
             await self._start_sound_direction()
+        self.reflection: Optional[Reflection] = None
+        if s.initiative:
+            # Pepper may act unprompted: someone lingering, a question left unanswered (src/ai/reflection.py)
+            self.reflection = Reflection(self.world, self.ai_manager)
+            self.reflection.start()
+            self.logger.info("Initiative on: Pepper may speak unprompted (at most once every 3 minutes)")
         if self.world.count == 0:
             self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
         self.robot.start_state_loop(interval=10.0)
@@ -433,6 +442,8 @@ class PepperEvolution:
             await self.vision.stop()
         if getattr(self, "scene", None) is not None:
             await self.scene.close()
+        if getattr(self, "reflection", None) is not None:
+            await self.reflection.stop()
         await self._save_bridge_log()
         if self.decider is not None:
             await self.decider.close()

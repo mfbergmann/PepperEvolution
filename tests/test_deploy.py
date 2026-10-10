@@ -240,7 +240,9 @@ class TestDeployFlow:
         joined = "\n".join(client.commands)
         assert "pkill -f '[p]epper_bridge.py'" in joined
         # the watchdog is told to stand down before the bridge is stopped, so it does not start it again (#15)
-        assert joined.index("touch /home/nao/pepper_bridge/watchdog.stop") < joined.index("pkill -f '[p]epper_bridge.py'")
+        assert joined.index("touch /home/nao/pepper_bridge/watchdog.stop") < joined.index(
+            "pkill -f '[p]epper_bridge.py'"
+        )
         settings = [c for c in client.commands if deploy.REMOTE_ENV in c][0]
         assert f"PORT={health_server.server_address[1]}" in settings and "API_KEY=k" in settings
         assert settings.startswith("umask 077")  # the API key is not world-readable
