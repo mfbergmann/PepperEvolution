@@ -90,3 +90,6 @@ recordings/
 
 # Model and speech-to-text comparison outputs
 results/
+
+# Basecamp CLI project config and the sync state (lab-internal IDs; scripts/basecamp_sync.py)
+.basecamp/

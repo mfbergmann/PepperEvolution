@@ -160,6 +160,10 @@ Copy `env.example` to `.env`. Key variables:
 
 - Pre-1.0 versions `0.MINOR.PATCH` (one minor per milestone-sized step); `src/__init__.py` `__version__` and `BRIDGE_VERSION` in the bridge must match (tested). Record each version in `CHANGELOG.md` and tag it (`git tag -a v0.X.Y`).
 - `docs/ROADMAP.md` is the source of truth. GitHub milestones M0-M6 and their issues track open work, and the GitHub wiki (`https://github.com/mfbergmann/PepperEvolution.wiki.git`: Home, Roadmap, Architecture, Test-sessions, Versions) summarises it. When a milestone item is finished or added, close or open the issue and update the wiki's status table and Test-sessions page.
+- **Basecamp (the lab's running log):** after the docs, issues and wiki are updated, run `python scripts/basecamp_sync.py` (`--dry-run` first if unsure). It mirrors the process docs, the changelog, the wiki's Test-sessions page and the recording notice into the TRiPL project (Docs & Files, Pepper / Pepper Evolution, with a "Start here" document). It also keeps the PepperEvolution to-do list in step: a section per milestone with its issues, plus robot sessions and releases.
+  - It needs the Basecamp CLI (`~/.local/bin/basecamp`, logged in as Michael) and `.basecamp/pepper-sync.json`, which holds the IDs and the sync state and is git-ignored; never commit it.
+  - Edit documents in the repository, not in Basecamp: the sync overwrites them there.
+  - Session records never go to Basecamp.
 
 ## Session records (development practice)
 

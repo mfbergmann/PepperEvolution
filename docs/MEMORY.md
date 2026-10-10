@@ -1,6 +1,6 @@
 # Memory: where Pepper keeps what it knows
 
-Status: design, 2026-10-08. The first slices are being built offline (see "Build order"). This document is the plan that Milestones 4 and 5 and issues #27, #12, #24, #11, #13, #14 build on, so that each new piece plugs into one structure instead of being wired to the others by hand. `ARCHITECTURE.md` places it among the layers; this is the detail.
+Status: built offline in 0.6.0 (2026-10-08), slices 1 to 5 of the build order; tested in unit tests, on the virtual Pepper and on replays of recorded sessions, not yet on the robot (the checks are in `HANDOFF.md`, "Before the next robot session"). Identity (slice 6) is still to come. This document is the plan that Milestones 4 and 5 and issues #27, #12, #24, #11, #13, #14 build on, so that each new piece plugs into one structure instead of being wired to the others by hand. `ARCHITECTURE.md` places it among the layers; this is the detail.
 
 It was drafted with an independent proposal from a second model (Claude Fable 5.1, asked to read the code and the robot session records). The two agreed on the shape. The proposal's sharpest point is kept here: remembering where someone stood a minute ago and remembering someone's name next week are different problems. They share a vocabulary, but not a store.
 
