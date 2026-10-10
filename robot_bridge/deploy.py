@@ -40,7 +40,8 @@ except ImportError:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRIDGE_FILE = os.path.join(HERE, "pepper_bridge.py")
-LAUNCH_FILE = os.path.join(HERE, "launch.sh")  # the one way the bridge is started (here and at boot)
+LAUNCH_FILE = os.path.join(HERE, "launch.sh")  # starts the bridge itself
+WATCHDOG_FILE = os.path.join(HERE, "watchdog.sh")  # the one way the bridge is started (here and at boot), #15
 AUTOSTART_DIR = os.path.join(HERE, "autostart")  # NAOqi package whose service runs launch.sh at boot
 AUTOSTART_UUID = "pepper-bridge-autostart"
 REMOTE_PKG = "/tmp/" + AUTOSTART_UUID + ".pkg"
@@ -51,6 +52,10 @@ REMOTE_SCRIPT = REMOTE_DIR + "/pepper_bridge.py"
 REMOTE_LOG = REMOTE_DIR + "/bridge.log"
 PID_FILE = REMOTE_DIR + "/bridge.pid"
 REMOTE_LAUNCH = REMOTE_DIR + "/launch.sh"
+REMOTE_WATCHDOG = REMOTE_DIR + "/watchdog.sh"
+WATCHDOG_PID = REMOTE_DIR + "/watchdog.pid"
+WATCHDOG_STOP = REMOTE_DIR + "/watchdog.stop"
+WATCHDOG_LOG = REMOTE_DIR + "/watchdog.log"
 REMOTE_ENV = REMOTE_DIR + "/bridge.env"
 HEALTH_TIMEOUT = 150.0  # bridge retries NAOqi for ~120 s after a robot boot; give it time
 DEAD_AFTER = 30.0  # seconds without any /health answer before we check whether the process died
@@ -77,6 +82,9 @@ def run_cmd(client, cmd, check=False):
 
 def stop_bridge(client):
     print("Stopping bridge (if running)...")
+    # first the watchdog, so it does not start the bridge again (watchdog.stop also covers a watchdog mid-restart)
+    run_cmd(client, f"touch {WATCHDOG_STOP}; cat {WATCHDOG_PID} 2>/dev/null | xargs -r kill 2>/dev/null")
+    run_cmd(client, f"rm -f {WATCHDOG_PID}")
     run_cmd(client, f"cat {PID_FILE} 2>/dev/null | xargs -r kill 2>/dev/null; rm -f {PID_FILE}")
     run_cmd(client, "pkill -f '[p]epper_bridge.py' 2>/dev/null")  # [p] so pkill does not match this shell
     # The bridge rests the robot before it exits, which can take several seconds; starting the new one
@@ -101,6 +109,7 @@ def upload(client):
     try:
         sftp.put(BRIDGE_FILE, REMOTE_SCRIPT)
         sftp.put(LAUNCH_FILE, REMOTE_LAUNCH)
+        sftp.put(WATCHDOG_FILE, REMOTE_WATCHDOG)
     finally:
         sftp.close()
 
@@ -149,9 +158,9 @@ def remove_autostart(client):
 
 def start_bridge(client, port, api_key):
     write_settings(client, port, api_key)
-    # launch.sh writes its PID (it execs python, so that is the bridge's PID) and the log itself.
+    # watchdog.sh runs launch.sh (which writes the bridge's PID and log) and starts it again if it dies (#15).
     # "cd DIR; cmd &" (not "cd && cmd &"): with && the job is a subshell and $! is not the launcher's PID.
-    cmd = f"cd {REMOTE_DIR}; nohup /bin/sh launch.sh > /dev/null 2>&1 < /dev/null & echo $!"
+    cmd = f"cd {REMOTE_DIR}; nohup /bin/sh watchdog.sh > /dev/null 2>&1 < /dev/null & echo $!"
     print(f"Starting bridge on port {port}...")
     pid_out, _, _ = run_cmd(client, cmd)
     pid = pid_out.strip().splitlines()[-1] if pid_out.strip() else ""
@@ -230,6 +239,11 @@ def deploy(args):
         if args.status:
             running = is_running(client)
             print(f"Bridge process: {'running' if running else 'not running'}")
+            _, _, rc = run_cmd(client, f"kill -0 $(cat {WATCHDOG_PID} 2>/dev/null) 2>/dev/null", check=False)
+            print(f"Watchdog: {'running' if rc == 0 else 'not running'}")
+            restarts, _, _ = run_cmd(client, f"tail -n 3 {WATCHDOG_LOG} 2>/dev/null", check=False)
+            if restarts:
+                print("Watchdog log (latest):\n  " + restarts.replace("\n", "\n  "))
             health = wait_for_health(args.host, args.port, args.api_key, timeout=4)
             print(f"/health: {json.dumps(health) if health else 'no answer'}")
             return 0 if running and health else 1
@@ -246,7 +260,7 @@ def deploy(args):
             return 0
 
         stop_bridge(client)
-        if not args.restart or run_cmd(client, f"test -f {REMOTE_LAUNCH}", check=False)[2] != 0:
+        if not args.restart or run_cmd(client, f"test -f {REMOTE_WATCHDOG}", check=False)[2] != 0:
             upload(client)
         start_bridge(client, args.port, args.api_key)
 
