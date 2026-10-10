@@ -161,6 +161,9 @@ class WorldModel:
             self._apply_motion(obs, measured)
         elif obs.source == CAMERA and obs.kind == "judgement":
             self.update_seen(obs.data.get("p") or {}, at=obs.at)
+        elif obs.source == CAMERA and obs.kind == "person_seen" and obs.data.get("bearing") is not None:
+            track = self.tracker.camera(self.pose.heading_of(float(obs.data["bearing"])), self.pose, obs.at)
+            self.timeline.add("track", obs.at, track=track.id, camera=True, bearing=obs.data["bearing"])
         else:
             self.timeline.add(obs.kind, obs.at, **{**obs.data, "source": obs.source})
         for sink in self._sinks:

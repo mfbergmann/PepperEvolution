@@ -1636,7 +1636,7 @@ class CameraStream(object):
                     data = self.encode(image)
                     if data:
                         self.frames += 1
-                        main_ioloop().add_callback(CameraWebSocket.broadcast, data)
+                        main_ioloop().add_callback(CameraWebSocket.broadcast, data, self._head())
                 self._sleep(max(0.0, 1.0 / self.fps - (self._clock() - started)))
         except Exception as exc:
             self.last_error = "%s" % exc
@@ -1650,6 +1650,15 @@ class CameraStream(object):
                 except Exception:
                     pass
             LOGGER.info("camera stream ended after %d frames", self.frames)
+
+    def _head(self):
+        """The head's measured [yaw, pitch] in degrees as the frame was taken, or None (from 0.7: a spot in the frame
+        then has a direction, e.g. where the nearest person is when the people detector has lost them, #24)."""
+        try:
+            angles = self.session.service("ALMotion").getAngles(["HeadYaw", "HeadPitch"], True)
+            return [round(math.degrees(a), 1) for a in angles]
+        except Exception:
+            return None
 
     @staticmethod
     def encode(image):
@@ -2404,7 +2413,8 @@ class AudioWebSocket(tornado.websocket.WebSocketHandler):
 
 
 class CameraWebSocket(tornado.websocket.WebSocketHandler):
-    """Camera stream (/ws/camera?fps=1): a JSON ``hello`` text frame, then one binary JPEG per frame (320x240)."""
+    """Camera stream (/ws/camera?fps=1): a JSON ``hello`` text frame, then per frame a JSON ``frame`` text frame with
+    the head's measured angles (from 0.7) and one binary JPEG (320x240)."""
 
     clients = set()
 
@@ -2450,12 +2460,15 @@ class CameraWebSocket(tornado.websocket.WebSocketHandler):
             return False
 
     @classmethod
-    def broadcast(cls, data):
-        """IOLoop thread. A client still writing the previous frame skips this one: frames are disposable."""
+    def broadcast(cls, data, head=None):
+        """IOLoop thread. A client still writing the previous frame skips this one: frames are disposable. Each frame
+        is preceded by a small text frame with the head's angles when it was taken (clients may ignore it)."""
         for client in list(cls.clients):
             if client._still_writing():
                 continue
             try:
+                if head is not None:
+                    client.write_message(json.dumps({"type": "frame", "head": head}))
                 client.write_message(data, binary=True)
             except Exception:
                 cls.clients.discard(client)

@@ -558,6 +558,10 @@ class AIManager:
         if kind == "greeting":
             self.stats["greetings"] += 1
 
+    def in_conversation(self, within: float = 60.0) -> bool:
+        """Someone talked with Pepper in the last ``within`` seconds (the camera stays open to find them, #24)."""
+        return self._last_talk_at is not None and self._clock() - self._last_talk_at < within
+
     def _note_heard(self, text: str, source: str, addressed: bool = True, **data: Any):
         """What was said near Pepper, answered or not, into working memory (recall, consent, the gate later)."""
         if self.world is not None and source in ("user", "voice"):

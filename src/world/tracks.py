@@ -25,6 +25,7 @@ REMEMBER_FOR = 120.0
 MATCH_DEGREES = 20.0
 MATCH_METRES = 0.7
 VOICE_MATCH_DEGREES = 25.0  # sound direction is about 10 degrees accurate on Pepper (NAOqi docs)
+CAMERA_MATCH_DEGREES = 30.0  # the camera fallback only says which third of the frame (about 19 degrees apart)
 
 
 @dataclass
@@ -166,6 +167,35 @@ class Tracker:
         best.spoke_at = now
         if best.heard_only:
             best.heading, best.last_seen = heading, now
+        return best
+
+    def camera(self, heading: float, pose: Pose, now: float, within: float = CAMERA_MATCH_DEGREES) -> PersonTrack:
+        """The camera saw someone in direction ``heading`` (absolute, radians) while the detector saw nobody (#24):
+        refresh the person remembered there (keeping their distance), or start a track known only from the camera."""
+        self._expire(now)
+        best, best_gap = None, None
+        for track in self.tracks:
+            if now - track.last_seen > REMEMBER_FOR or not track.placed:
+                continue
+            bearing = track.bearing(pose)
+            gap = abs(bearing - pose.bearing_of(heading)) if bearing is not None else None
+            if gap is not None and gap <= within and (best_gap is None or gap < best_gap):
+                best, best_gap = track, gap
+        if best is None:
+            best = PersonTrack(
+                id=self._next_id, first_seen=now, last_seen=now, present=False, heading=heading, sources=["camera"]
+            )
+            self._next_id += 1
+            self.tracks.append(best)
+            return best
+        distance = best.distance_from(pose)
+        if distance is not None:
+            best.x, best.y = pose.to_odom(pose.bearing_of(heading), distance)
+        else:
+            best.heading = heading
+        best.last_seen = now
+        if "camera" not in best.sources:
+            best.sources.append("camera")
         return best
 
     def forget_positions(self):

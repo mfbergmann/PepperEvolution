@@ -1237,13 +1237,15 @@ class TestCameraStream:
     """/ws/camera: one persistent subscription, JPEG frames, released when the last client leaves."""
 
     def make(self, bridge, robot, monkeypatch, frames=3):
-        sent, scheduled = [], []
+        sent, scheduled, heads = [], [], []
+        self.heads = heads
 
         class Loop:
             def add_callback(self, fn, *args):
                 scheduled.append(fn.__name__)
                 if fn.__name__ == "broadcast":
                     sent.append(args[0])
+                    heads.append(args[1] if len(args) > 1 else None)
 
         monkeypatch.setattr(bridge, "main_ioloop", lambda: Loop())
         video = robot.session.service("ALVideoDevice")
@@ -1269,6 +1271,7 @@ class TestCameraStream:
         stream._running = True
         stream._loop()
         assert len(sent) == 3 and all(f[:2] == b"\xff\xd8" for f in sent)  # JPEG
+        assert self.heads == [[0.0, 0.0]] * 3  # the head's angles with every frame (#24)
         assert naps == [0.5, 0.5, 0.5]
         names = [c[0] for c in video.calls]
         assert names[0] == "subscribeCamera" and video.calls[0][1][0] == "pepper_bridge_stream"

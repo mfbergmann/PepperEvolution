@@ -10,12 +10,18 @@ PHOTO_RECORD_DIR set, only the frame that triggered an event is kept, for review
 
 import asyncio
 import base64
+import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from loguru import logger
+
+from ..world.observations import CAMERA
+from .geometry import offsets
+from .scene import PEOPLE_MODEL, PEOPLE_QUESTIONS
+from .scene import STATE as SCENE_STATE
 
 try:
     from websockets.asyncio.client import connect as ws_connect
@@ -34,6 +40,9 @@ FIRE_AT = {"waving": 0.7, "showing": 0.6}  # probability that counts as "yes", p
 # a wave scored 0.89-0.92, an object held up 0.68-0.77 (missed at 0.7), standing still at most 0.21 waving and
 # 0.35 showing
 CONSECUTIVE = 2  # frames in a row before an event fires
+FIND_EVERY = 1.5  # seconds between "where is the nearest person?" questions while the detector sees nobody (#24)
+FIND_AT = 0.7  # how sure Clef Flash must be that a real person is in the frame (11/12 counts right, the miss at 0.53)
+THIRDS = {"left": offsets(1 / 6, 0.5)[0], "centre": 0.0, "right": offsets(5 / 6, 0.5)[0]}  # degrees from the middle
 COOLDOWN = 30.0  # seconds between events of the same kind
 JUDGE_TIMEOUT = 1.0
 STOP_AFTER_EMPTY = 5.0  # seconds with nobody in view before the stream is closed (Wi-Fi, shared GPU)
@@ -54,8 +63,15 @@ class FrameWatcher:
         photo_dir: Optional[str] = None,
         clock: Callable[[], float] = time.monotonic,
         scene: Optional[Any] = None,
+        wanted: Optional[Callable[[], bool]] = None,
     ):
         self.scene = scene  # ScenePass (src/perception/scene.py): an occasional scene note from the same frames
+        # stream while this is true: someone in view, or (main.py) someone talking with Pepper whom the detector lost
+        self._wanted = wanted or (lambda: bool(self.world.count))
+        self.head: Optional[List[float]] = None  # the head's [yaw, pitch] for the latest frame (bridge 0.7)
+        self._last_find: Optional[float] = None
+        self._finding = False
+        self.found = 0
         self.url = url
         self.decider = decider
         self.world = world
@@ -100,8 +116,8 @@ class FrameWatcher:
 
     async def _loop(self):
         while self._running:
-            if not self.world.count:
-                await asyncio.sleep(0.5)  # NAOqi's people detection is the always-on trigger
+            if not self._wanted():
+                await asyncio.sleep(0.5)  # NAOqi's people detection (or a conversation) is the trigger
                 continue
             try:
                 async with ws_connect(self._stream_url(), open_timeout=10, max_size=None) as ws:
@@ -110,7 +126,9 @@ class FrameWatcher:
                     async for message in ws:
                         if isinstance(message, (bytes, bytearray)):
                             self.frame(bytes(message))
-                        if self.world.count:
+                        else:
+                            self._text(message)
+                        if self._wanted():
                             empty_since = None
                         elif empty_since is None:
                             empty_since = self._clock()
@@ -128,8 +146,11 @@ class FrameWatcher:
     def frame(self, jpeg: bytes):
         """A new frame: judge it unless the previous judgement is still running (then drop it)."""
         self.frames += 1
+        head_yaw = self.head[0] if self.head else None
         if self.scene is not None:
-            self.scene.offer(jpeg)
+            self.scene.offer(jpeg, head_yaw=head_yaw)
+        if self.world.count == 0:  # the detector reported nobody (None: no report yet)
+            self._find_person(jpeg, head_yaw)
         if self._busy:
             self.dropped += 1
             return
@@ -137,6 +158,50 @@ class FrameWatcher:
         task = asyncio.create_task(self._judge(jpeg))
         self._judging.add(task)
         task.add_done_callback(self._judging.discard)
+
+    def _text(self, message: Any):
+        """A text frame: ``hello``, or (bridge 0.7) the head's angles for the frame that follows."""
+        try:
+            data = json.loads(message)
+        except (TypeError, ValueError):
+            return
+        if isinstance(data, dict) and data.get("type") == "frame" and isinstance(data.get("head"), list):
+            self.head = [float(v) for v in data["head"][:2]]
+
+    # -- the camera fallback for "come to me" (#24) ---------------------------------------------------------------
+
+    def _find_person(self, jpeg: bytes, head_yaw: Optional[float]):
+        """The people detector sees nobody, but the stream is open (someone is talking with Pepper): ask where the
+        nearest person is in the frame, every FIND_EVERY seconds, one question at a time."""
+        now = self._clock()
+        if self._finding or (self._last_find is not None and now - self._last_find < FIND_EVERY):
+            return
+        self._finding = True
+        self._last_find = now
+        task = asyncio.create_task(self._find(jpeg, head_yaw))
+        self._judging.add(task)
+        task.add_done_callback(self._judging.discard)
+
+    async def _find(self, jpeg: bytes, head_yaw: Optional[float]):
+        try:
+            answers = await self.decider.ask(
+                PEOPLE_MODEL, SCENE_STATE, PEOPLE_QUESTIONS, images=[base64.b64encode(jpeg).decode("ascii")]
+            )
+            try:
+                choice = answers["people"]["choice"]
+                p = float(answers["people"]["probabilities"][choice])
+                where = answers["where"]["choice"]
+            except (KeyError, TypeError, ValueError):
+                return
+            if choice == "none" or where not in THIRDS or p < FIND_AT:
+                return
+            bearing = (head_yaw or 0.0) + THIRDS[where]
+            self.found += 1
+            self.world.note(
+                CAMERA, "person_seen", bearing=round(bearing, 1), p=round(p, 2), where=where, head_yaw=head_yaw
+            )
+        finally:
+            self._finding = False
 
     async def _judge(self, jpeg: bytes):
         try:

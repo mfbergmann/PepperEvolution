@@ -304,6 +304,9 @@ class PepperEvolution:
                 recorder=self.recorder,
                 photo_dir=s.photo_record_dir,
                 scene=self.scene,
+                # stream while someone is in view, or while someone talks with Pepper whom the detector has lost:
+                # then the camera looks for them (#24)
+                wanted=lambda: bool(self.world.count) or self.ai_manager.in_conversation(),
             )
             self.vision.start()  # streams only while someone is in view
         if self.decider is not None:
@@ -387,7 +390,7 @@ class PepperEvolution:
 
     def _record_observation(self, obs: Observation):
         """World-model inputs that are not bridge events into events.jsonl, so sessions can be replayed."""
-        if self.recorder is not None and obs.source in self.RECORDED_SOURCES:
+        if self.recorder is not None and (obs.source in self.RECORDED_SOURCES or obs.kind == "person_seen"):
             self.recorder.record_event("observation", **obs.record())
 
     def _end_memory_session(self):

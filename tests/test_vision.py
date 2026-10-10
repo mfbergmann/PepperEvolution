@@ -132,3 +132,69 @@ class TestManagerReactions:
         rec = {}
         assert await manager._meant_for_pepper([], "Emer, can you come to me", rec) is True
         assert rec["addressee"]["someone_looking"] is True
+
+
+class TestCameraFallback:
+    """#24: the detector has lost the person who is talking; the camera says where they are."""
+
+    def finder(self, people="one", where="right", p=0.9, head=None):
+        clock = [100.0]
+        world = WorldModel(clock=lambda: clock[0])
+        world.handle_people(0, [])
+
+        class Decider:
+            calls = 0
+
+            async def ask(self, model, state, questions, images=None, timeout=None):
+                if "people" not in questions:
+                    return {"waving": {"noul": 0.0}}
+                Decider.calls += 1
+                return {
+                    "people": {"choice": people, "probabilities": {people: p}},
+                    "where": {"choice": where, "probabilities": {where: p}},
+                }
+
+        async def on_event(kind, data):
+            pass
+
+        w = FrameWatcher("ws://x", Decider(), world, on_event, clock=lambda: clock[0], wanted=lambda: True)
+        if head is not None:
+            w._text('{"type": "frame", "head": [%s, -5.0]}' % head)
+        return w, world, clock, Decider
+
+    async def settle(self, w):
+        for _ in range(20):
+            await asyncio.sleep(0)
+        if w._judging:
+            await asyncio.gather(*w._judging)
+
+    async def test_a_person_on_the_right_with_the_head_turned_left(self):
+        w, world, clock, _ = self.finder(where="right", head=40.0)
+        w.frame(b"jpeg")
+        await self.settle(w)
+        assert w.found == 1 and w.head == [40.0, -5.0]
+        line = world.summary()
+        assert "you last saw someone just now" in line and "about 20° to your left" in line  # 40 - 19.6
+
+    async def test_unsure_or_nobody_changes_nothing_and_it_asks_at_most_every_1_5_s(self):
+        w, world, clock, decider = self.finder(people="one", p=0.55)
+        w.frame(b"a")
+        await self.settle(w)
+        w.frame(b"b")  # too soon to ask again
+        await self.settle(w)
+        assert w.found == 0 and decider.calls == 1 and not world.tracker.tracks
+        clock[0] += 2.0
+        w.frame(b"c")
+        await self.settle(w)
+        assert decider.calls == 2
+
+    async def test_a_remembered_person_keeps_their_distance(self):
+        w, world, clock, _ = self.finder(where="left", head=0.0)
+        world.handle_people(1, [{"id": 1, "yaw": 0.0, "distance": 2.0}])
+        world.handle_people(0, [])
+        w.frame(b"jpeg")
+        await self.settle(w)
+        track = world.tracker.tracks[0]
+        assert len(world.tracker.tracks) == 1 and "camera" in track.sources
+        assert track.bearing(world.pose) == __import__("pytest").approx(19.6, abs=0.1)
+        assert track.distance_from(world.pose) == __import__("pytest").approx(2.0)
