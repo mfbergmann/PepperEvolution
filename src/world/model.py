@@ -34,6 +34,8 @@ MOVED_UNEXPECTEDLY_METRES = 0.3
 ARRIVAL_ABSENCE_SECONDS = 20.0  # someone "arrives" only after nobody was in view this long; shorter gaps are
 # the detector losing a person who looked away (seen on the robot), not a new arrival
 MAX_PEOPLE_DESCRIBED = 3
+CROWD_MIN_SECONDS = 5.0  # two or more in view this long make a crowd; a shorter blip (a monitor's glare, 4 s on
+# 2026-10-20) does not
 
 
 @dataclass
@@ -118,7 +120,8 @@ class WorldModel:
         self.last_seen_someone_at: Optional[float] = None
         self.empty_since: Optional[float] = None  # when the view last became empty; -inf if empty since start-up
         self.changes: Deque[Tuple[float, str]] = deque(maxlen=20)  # (time, "arrived" | "left")
-        self._crowd: Deque[Tuple[float, int]] = deque(maxlen=50)  # (time, count) when two or more were in view
+        self._crowd: Deque[Tuple[float, float, int]] = deque(maxlen=50)  # (start, end, most) of each crowd
+        self._crowd_now: Optional[List[float]] = None  # [start, most] while two or more are in view
         self._arrival_callbacks: List[ArrivalCallback] = []
         self.timeline = Timeline()
         self.pose = Pose()  # Pepper's own position and heading (odometry when the bridge reports it)
@@ -363,7 +366,13 @@ class WorldModel:
         self.people = [Person.from_dict(p) for p in people]
         self.updated_at = now
         if count >= 2:
-            self._crowd.append((now, count))
+            if self._crowd_now is None:
+                self._crowd_now = [now, count]
+            else:
+                self._crowd_now[1] = max(self._crowd_now[1], count)
+        elif self._crowd_now is not None:
+            self._crowd.append((self._crowd_now[0], now, int(self._crowd_now[1])))
+            self._crowd_now = None
         self.most_people = max(self.most_people, count)
         if count > 0:
             self.last_seen_someone_at = now
@@ -394,10 +403,17 @@ class WorldModel:
         return Arrival(count=count, nearest=self.people[0] if self.people else None, empty_for=empty_for)
 
     def most_in_view(self, within: float) -> int:
-        """The most people in view at once over the last ``within`` seconds (0 before the first report)."""
+        """The most people in view at once over the last ``within`` seconds (0 before the first report), counting a
+        crowd only once it lasted CROWD_MIN_SECONDS, and until it ended rather than from when it began (on 2026-10-20
+        a crowd of 77 s was forgotten 60 s after it started)."""
         now = self._clock()
-        crowd = [n for t, n in self._crowd if now - t <= within]
-        return max([self.count or 0] + crowd)
+        most = min(self.count or 0, 1)
+        if self._crowd_now is not None and now - self._crowd_now[0] >= CROWD_MIN_SECONDS:
+            most = max(most, int(self._crowd_now[1]))
+        for start, end, n in self._crowd:
+            if now - end <= within and end - start >= CROWD_MIN_SECONDS:
+                most = max(most, n)
+        return most
 
     SEEN_FRESH = 5.0  # seconds a camera judgement counts as "now"
 

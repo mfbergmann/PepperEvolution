@@ -214,6 +214,7 @@ class TestAlone:
     async def test_someone_else_seen_recently_keeps_the_gate(self, mock_robot, mock_ai_provider):
         people = [{"id": 1, "distance": 1.4, "looking": True}, {"id": 2, "distance": 2.0, "looking": False}]
         manager = await gated_manager(mock_robot, mock_ai_provider, 0.061, people=people)
+        manager.world._crowd_now[0] -= 30  # both had been in view for half a minute (a blip would not count)
         manager.world.update_people(1, people[:1])  # the second visitor turned away: the detector lost them
         manager._last_answered_at = manager._clock()
         rec = {}
@@ -227,6 +228,7 @@ class TestAlone:
         rec = {}
         assert await manager._meant_for_pepper([], "It is a pretty cool space", rec) is True
         manager.world.update_people(2, [person, {"id": 2}])  # with someone else around, 32 s is too long
+        manager.world._crowd_now[0] -= 10  # for longer than a blip
         rec = {}
         assert await manager._meant_for_pepper([], "It is a pretty cool space", rec) is False
 
@@ -240,3 +242,35 @@ class TestAlone:
         await manager._meant_for_pepper([], "Yeah, pretty good", rec)
         assert rec["addressee"]["pepper_said"] == "Am I facing you now?"
         assert rec["addressee"]["pepper_said_ago"] is not None
+
+
+class TestCrowds:
+    """robot 2026-10-20: a 4 s blip of two people (a monitor) cost two answers; a 77 s crowd was forgotten early."""
+
+    def world(self):
+        now = [0.0]
+        return WorldModel(clock=lambda: now[0]), now
+
+    def test_a_blip_is_not_a_crowd(self):
+        world, now = self.world()
+        two = [{"id": 1}, {"id": 2}]
+        world.update_people(2, two)
+        now[0] = 2.0
+        assert world.most_in_view(60) == 1  # not yet: two for only 2 s
+        now[0] = 4.1
+        world.update_people(0, [])
+        now[0] = 20.0
+        assert world.most_in_view(60) == 0
+
+    def test_a_long_crowd_counts_until_it_ends(self):
+        world, now = self.world()
+        two = [{"id": 1}, {"id": 2}]
+        world.update_people(2, two)
+        now[0] = 6.0
+        assert world.most_in_view(60) == 2  # under way for 6 s
+        now[0] = 77.5
+        world.update_people(0, [])
+        now[0] = 89.0  # 89 s after it began, 11.5 s after it ended
+        assert world.most_in_view(60) == 2
+        now[0] = 140.0
+        assert world.most_in_view(60) == 0
