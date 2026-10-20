@@ -340,9 +340,9 @@ def next_session() -> Optional[Tuple[str, str]]:
     match = re.search(r"^## Before the next robot session(?: \((.+?)\))?\s*$", text, flags=re.M)
     if not match:
         return None
-    label = match.group(1) or "next"
+    label = f": {match.group(1)}" if match.group(1) else ""
     # one key for the planned session whatever its label, so a renamed plan updates the to-do instead of closing it
-    return "next", f"Next robot session: {label} (the checks are in the Handoff notes)"
+    return "next", f"Next robot session{label} (the checks are in the Handoff notes)"
 
 
 def ensure_list(state: Dict[str, Any], dry: bool) -> Optional[int]:
