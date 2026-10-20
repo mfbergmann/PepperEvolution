@@ -104,6 +104,14 @@ class TestRoutingInTheManager:
             routed = await manager._choose_action("", "Give us a wave", {})
         assert routed is None
 
+    async def test_an_unfinished_fragment_starts_nothing(self, mock_robot, mock_ai_provider):
+        # 2026-10-20: "I was going to say that" (held, nothing followed) after "turn left" turned Pepper again
+        mock_ai_provider.chat.side_effect = words_only("Go on?")
+        manager = routed_manager(mock_robot, mock_ai_provider, "turn_left", 0.99)
+        await manager.process_user_input("I was going to say that", source="voice", open_mic=True, unfinished=True)
+        await asyncio.sleep(0)
+        mock_robot.connection.bridge.move_turn.assert_not_awaited()
+
     async def test_events_are_never_routed(self, mock_robot, mock_ai_provider):
         manager = routed_manager(mock_robot, mock_ai_provider, "wave", 0.99)
         await manager.process_user_input("[Sensor event] Someone walked up.", source="event")

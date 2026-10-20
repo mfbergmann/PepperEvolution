@@ -217,6 +217,7 @@ class VoiceInput:
         held, self._held = self._held, None
         if held is not None:
             self.logger.info(f"[voice] no more after {seconds:.1f}s: answering {held.text!r}")
+            held.unfinished = True
             self._spawn(self._deliver(held, "voice"))
 
     def _spawn(self, coro: Awaitable[Any]):
@@ -293,6 +294,7 @@ class VoiceInput:
             open_mic=source == "voice",
             spoke_for=transcript.duration or None,
             **({"parts": transcript.parts} if transcript.parts > 1 else {}),
+            **({"unfinished": True} if transcript.unfinished else {}),
         )
         return {"text": text, "response": result}
 

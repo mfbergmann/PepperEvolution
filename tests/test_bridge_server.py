@@ -763,6 +763,10 @@ class TestApplication:
     def test_tablet_page_is_html(self, bridge):
         assert "<html" in bridge.TABLET_PAGE and "/tablet/state" in bridge.TABLET_PAGE
 
+    def test_tablet_page_answers_head(self, bridge):
+        # the tablet checks the URL with HEAD first; a 405 kept the subtitles off the screen (2026-10-20)
+        assert "head" in bridge.TabletPageHandler.__dict__
+
 
 # ---------------------------------------------------------------------------
 # Awareness options
@@ -1436,6 +1440,8 @@ class TestPointing:
             c for c in calls(robot, "ALMotion") if c[0] == "setAngles" and list(c[1][0]) == ["HeadYaw", "HeadPitch"]
         ]
         assert head and abs(head[-1][1][1][0] + math.radians(45)) < 0.01  # looking the same way
+        hand = [c for c in calls(robot, "ALMotion") if c[0] == "setAngles" and c[1][0] == "RHand"]
+        assert hand and hand[0][1][1] == 1.0  # an open hand, not a fist (robot, 2026-10-20)
 
     def test_downward_is_asked_for_a_little_more_and_limits_hold(self, robot):
         robot.point(80, 30, hold=0.5)

@@ -18,9 +18,9 @@ Replayed on the twelve robot sessions of 2026-10-08 (58 minutes): three initiati
 conversations: one "lingering" while the tester stood quietly through a load measurement, two "unanswered" during
 tests where the tester moved on without answering.
 
-Guards: at most one initiative every 3 minutes; never while a turn or a command runs, while halted, within 5 minutes
-of "be quiet" or "stop", or with three or more people in view. Off by default (``INITIATIVE``): it speaks unprompted,
-which is judged on the robot.
+Guards: at most one initiative every 3 minutes (90 s before following up an unanswered question); never while a
+turn or a command runs, while halted, within 5 minutes of "be quiet" or "stop", or with three or more people in view.
+Off by default (``INITIATIVE``): it speaks unprompted, which is judged on the robot.
 """
 
 import asyncio
@@ -32,7 +32,8 @@ LINGER_MAX_DISTANCE = 2.5
 QUIET_FOR = 60.0  # nobody spoke and Pepper said nothing for this long
 AFTER_GREETING = 90.0
 QUESTION_AFTER = (20.0, 60.0)
-EVERY = 180.0  # at most one initiative this often
+EVERY = 180.0  # at most one initiative this often...
+EVERY_FOR_A_QUESTION = 90.0  # ...but an unanswered question may follow sooner (tester's choice, robot 2026-10-20)
 AFTER_HUSH = 300.0  # no initiative this long after "be quiet" or "stop"
 MAX_PEOPLE = 2
 TICK = 5.0
@@ -56,7 +57,8 @@ def consider(world: Any, now: float, done: Optional[Set[str]] = None) -> Optiona
         return None
     timeline = world.timeline
     last_initiative = timeline.last("initiative")
-    if last_initiative is not None and now - last_initiative.at < EVERY:
+    since_last = now - last_initiative.at if last_initiative is not None else None
+    if since_last is not None and since_last < EVERY_FOR_A_QUESTION:
         return None
     hushed = any(
         e.data.get("intent") in ("quiet", "stop", "emergency_stop")
@@ -81,6 +83,8 @@ def consider(world: Any, now: float, done: Optional[Set[str]] = None) -> Optiona
             )
 
     # lingering
+    if since_last is not None and since_last < EVERY:
+        return None
     quiet_since = max((e.at for e in (heard, said) if e is not None), default=None)
     if quiet_since is not None and now - quiet_since < QUIET_FOR:
         return None

@@ -52,6 +52,9 @@ class TestMatchIntent:
             ("quiet", "quiet"),
             ("shhh", "quiet"),
             ("stop talking", "quiet"),
+            ("that's enough", "quiet"),
+            ("Okay, that's enough now.", "quiet"),
+            ("enough talking", "quiet"),
             ("wake up", "wake_up"),
             ("stand up", "wake_up"),
             ("sit down", "rest"),
@@ -79,6 +82,8 @@ class TestMatchIntent:
             "okstop",
             "pepperstop",
             "history",
+            "enough",  # answers "good enough?" (2026-10-20)
+            "good enough",
             "x" * 60,
         ],
     )

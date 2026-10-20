@@ -287,3 +287,20 @@ class TestAIManager:
         result = await mock_ai_manager.process_user_input("Wave")
         assert mock_ai_provider.chat.call_count == 2
         assert "invoke" not in result["text"] and result["text"]
+
+
+class TestSubtitleClearing:
+    async def test_the_last_subtitle_clears_after_silence(self, mock_robot, mock_ai_provider):
+        import asyncio
+
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=True)
+        manager.SUBTITLE_CLEAR_AFTER = 0.05
+
+        async def chat(messages, tools=None, system=None, on_text=None):
+            await on_text("Hello there.")
+            return text("Hello there.")
+
+        mock_ai_provider.chat = AsyncMock(side_effect=chat)
+        await manager.process_user_input("Hi")
+        await asyncio.sleep(0.1)
+        assert mock_robot.connection.bridge.tablet_text.await_args_list[-1].args[0] == ""

@@ -42,6 +42,8 @@ class EventStream:
         self.logger = logger.bind(module="EventStream")
         self._callbacks: Dict[str, List[EventCallback]] = {}
         self._global_callbacks: List[EventCallback] = []
+        self._reconnect_callbacks: List[Callable[[], Coroutine[Any, Any, None]]] = []
+        self._connections = 0
         self._ws: Any = None
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -56,6 +58,11 @@ class EventStream:
     def on_any(self, callback: EventCallback):
         """Register a callback for all events."""
         self._global_callbacks.append(callback)
+
+    def on_reconnect(self, callback: Callable[[], Coroutine[Any, Any, None]]):
+        """Run after every connection but the first: a restarted bridge (watchdog, deploy) has forgotten what the
+        host asked of it, such as sound localisation (2026-10-20)."""
+        self._reconnect_callbacks.append(callback)
 
     @property
     def url(self) -> str:
@@ -101,6 +108,10 @@ class EventStream:
                     self._ws = ws
                     self.connected = True
                     self.logger.info("Event stream connected")
+                    self._connections += 1
+                    if self._connections > 1:
+                        for callback in self._reconnect_callbacks:
+                            asyncio.create_task(self._run_reconnect(callback))
                     async for raw in ws:
                         await self._handle_raw(raw)
             except asyncio.CancelledError:
@@ -115,6 +126,12 @@ class EventStream:
                 self._ws = None
             if self._running:
                 await asyncio.sleep(self._backoff or self.RECONNECT_DELAY)
+
+    async def _run_reconnect(self, callback: Callable[[], Coroutine[Any, Any, None]]):
+        try:
+            await callback()
+        except Exception as exc:  # noqa: BLE001 - never break the listen loop
+            self.logger.warning(f"Reconnect callback failed: {exc}")
 
     async def _handle_raw(self, raw: Any):
         try:

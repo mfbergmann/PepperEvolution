@@ -103,7 +103,22 @@ class TestUnanswered:
         world2.timeline.add("initiative", c2.t, rule="lingering")
         said(world2, "Anything else?")
         c2.t += 25
-        assert consider(world2, c2.t) is None  # one every 3 minutes
+        assert consider(world2, c2.t) is None  # too soon after another
+
+    def test_a_question_may_follow_after_90_seconds_lingering_after_3_minutes(self):
+        # robot, 2026-10-20: a second unanswered question 32 s after the first follow-up got nothing
+        world, clock = room()
+        world.timeline.add("initiative", clock.t, rule="unanswered")
+        clock.t += 70
+        said(world, "What brings you to the lab today?")
+        clock.t += 25  # 95 s after the last initiative
+        assert consider(world, clock.t).rule == "unanswered"
+        lingering, c3 = room()
+        lingering.timeline.add("initiative", c3.t, rule="unanswered")
+        c3.t += 120  # someone has looked on quietly all along, but lingering still waits 3 minutes
+        assert consider(lingering, c3.t) is None
+        c3.t += 61
+        assert consider(lingering, c3.t).rule == "lingering"
 
 
 class TestLoop:

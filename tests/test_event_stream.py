@@ -62,3 +62,39 @@ class TestEventStream:
         es = EventStream("ws://localhost:8888/ws/events")
         await es.stop()
         assert es.connected is False
+
+
+class TestReconnect:
+    async def test_reconnect_callbacks_run_after_a_bridge_restart_only(self, monkeypatch):
+        # 2026-10-20: a redeployed bridge forgot sound localisation and the host never asked again
+        import asyncio
+
+        import src.pepper.event_stream as module
+
+        class FakeWs:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise StopAsyncIteration  # the bridge went away at once
+
+        class FakeConnect:
+            async def __aenter__(self):
+                return FakeWs()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(module, "ws_connect", lambda *a, **k: FakeConnect())
+        es = EventStream("ws://localhost:8888/ws/events")
+        es.RECONNECT_DELAY = 0.0
+        resubscribe = AsyncMock()
+        es.on_reconnect(resubscribe)
+        await es.start()
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if es._connections >= 3:
+                break
+        await es.stop()
+        assert es._connections >= 3
+        assert 1 <= resubscribe.await_count < es._connections  # never on the first connection

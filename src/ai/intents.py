@@ -74,7 +74,17 @@ INTENTS: List[Intent] = [
     ),
     Intent(
         "quiet",
-        [r"(?:be )?quiet", r"shush", r"sh+", r"hush", r"stop talking", r"silence", r"shut up", r"enough"],
+        [
+            r"(?:be )?quiet",
+            r"shush",
+            r"sh+",
+            r"hush",
+            r"stop talking",
+            r"silence",
+            r"shut up",
+            r"that'?s enough",
+            r"enough (?:talking|already)",
+        ],  # not a bare "enough": it answers "good enough?" (2026-10-20)
         "Stop speaking and finish the turn silently.",
         hushes=True,
     ),

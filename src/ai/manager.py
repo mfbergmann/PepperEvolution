@@ -160,6 +160,7 @@ class AIManager:
         self._pending_arrival: Optional[Any] = None  # (time, Arrival) waiting for the person to qualify
         self._recentre_task: Optional[asyncio.Task] = None
         self._tablet_ok = True
+        self._subtitle_clear: Optional[asyncio.Task] = None
         self._tasks: Set[asyncio.Task] = set()
         self.intents = IntentExecutor(robot)
         self.led_signals = led_signals  # eye colour shows listening / thinking / speaking
@@ -204,6 +205,7 @@ class AIManager:
         open_mic: bool = False,
         spoke_for: Optional[float] = None,
         parts: int = 1,
+        unfinished: bool = False,
     ) -> Dict[str, Any]:
         """Process user input through the AI with tool calling.
 
@@ -222,6 +224,8 @@ class AIManager:
         rec = self._new_record(user_input, source, heard_at)
         if parts > 1:
             rec["parts"] = parts  # joined across a pause (#26)
+        if unfinished:
+            rec["unfinished"] = True  # a fragment answered after the hold: no action starts from it (2026-10-20)
         voice_line = self._voice_direction(source, heard_at, spoke_for, rec)
         if source in ("user", "voice"):
             intent = match_intent(user_input)
@@ -239,7 +243,7 @@ class AIManager:
             heard_before = list(self._heard)
             self._heard.append(user_input)
             gate_on = open_mic and self.decider is not None and self.addressee_gate
-            route_on = self.decider is not None and self.router
+            route_on = self.decider is not None and self.router and not unfinished
             # Both judgements run at once: ~0.05 s and ~0.15 s on the Creative AI Hub
             gate_task = asyncio.create_task(self._meant_for_pepper(heard_before, user_input, rec)) if gate_on else None
             previous = heard_before[-1] if heard_before else ""
@@ -517,7 +521,7 @@ class AIManager:
             "tools": rec.get("tools", []),
             "around": rec.get("around", ""),
         }
-        for key in ("intent", "addressee", "router"):
+        for key in ("intent", "addressee", "router", "voice", "parts", "unfinished"):
             if key in rec:
                 out[key] = rec[key]
         self.recorder.record_turn(out)
@@ -896,6 +900,20 @@ class AIManager:
             except Exception as exc:  # noqa: BLE001
                 self.logger.warning(f"Tablet subtitles disabled after error: {exc}")
                 self._tablet_ok = False
+            else:
+                if self._subtitle_clear is not None:
+                    self._subtitle_clear.cancel()
+                self._subtitle_clear = asyncio.ensure_future(self._clear_subtitle_later())
+
+    SUBTITLE_CLEAR_AFTER = 8.0  # seconds after the last sentence was shown: its speech plus a few seconds of silence
+
+    async def _clear_subtitle_later(self):
+        """The last subtitle stayed on the tablet indefinitely (robot, 2026-10-20): clear it once Pepper is quiet."""
+        await asyncio.sleep(self.SUBTITLE_CLEAR_AFTER)
+        try:
+            await self.robot.tablet_text("")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug(f"clearing the subtitle failed: {exc}")
 
     # ------------------------------------------------------------------
     # Sensor events -> reactions

@@ -283,6 +283,7 @@ class TestUnfinishedSentences:
         call = manager.process_user_input.await_args
         assert call.args == ("Can you",)
         assert call.kwargs["heard_at"] < __import__("time").monotonic() - 0.04  # counted from when it was heard
+        assert call.kwargs["unfinished"] is True  # so no action starts from it
 
     async def test_complete_sentences_are_not_held(self):
         manager, source = fake_manager(), FakeSource()

@@ -66,6 +66,13 @@ class TestTurnRecords:
         turn = lines(tmp_path / "turns.jsonl")[0]
         assert turn["intent"] == "stop" and turn["stop_reason"] == "intent"
 
+    async def test_joined_parts_are_recorded(self, mock_robot, mock_ai_provider, tmp_path):
+        mock_ai_provider.chat = AsyncMock(side_effect=streaming("Turning left now."))
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=True, tablet_subtitles=False)
+        manager.recorder = SessionRecorder(str(tmp_path))
+        await manager.process_user_input("Can you turn left", source="voice", parts=2)
+        assert lines(tmp_path / "turns.jsonl")[0]["parts"] == 2  # #26; "voice" goes through the same copy
+
 
 class TestSettings:
     def test_session_dir_puts_everything_in_one_folder(self, monkeypatch, tmp_path):

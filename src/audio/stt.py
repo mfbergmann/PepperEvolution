@@ -34,6 +34,7 @@ class Transcript:
     backend: str = ""
     at: Optional[float] = None  # time.monotonic() when the final arrived (VoiceInput); None = when delivered
     parts: int = 1  # finals joined into this one across a pause (#26)
+    unfinished: bool = False  # held as unfinished and answered when nothing more came (#26)
 
 
 class TranscriberUnavailable(RuntimeError):
@@ -215,7 +216,7 @@ class SherpaTranscriber(Transcriber):
         self,
         model_dir: str,
         num_threads: int = 2,
-        trailing_silence: float = 1.0,
+        trailing_silence: float = 1.4,  # end of a turn; 1.0 cut people off mid-thought (robot, 2026-10-20)
         decoding_method: str = "greedy_search",
     ):
         self.model_dir = os.path.expanduser(model_dir or "")

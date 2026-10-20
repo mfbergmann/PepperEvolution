@@ -326,12 +326,15 @@ class PepperEvolution:
             self.logger.info(f"Session records: {self.recorder.folder}")
         if s.sound_direction and not s.fake_bridge:
             await self._start_sound_direction()
+            self.robot.connection.events.on_reconnect(self._start_sound_direction)  # a restarted bridge forgets it
         self.reflection: Optional[Reflection] = None
         if s.initiative:
             # Pepper may act unprompted: someone lingering, a question left unanswered (src/ai/reflection.py)
             self.reflection = Reflection(self.world, self.ai_manager)
             self.reflection.start()
-            self.logger.info("Initiative on: Pepper may speak unprompted (at most once every 3 minutes)")
+            self.logger.info(
+                "Initiative on: Pepper may speak unprompted (at most every 3 minutes; 90 s for a question)"
+            )
         if self.world.count == 0:
             self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
         self.robot.start_state_loop(interval=10.0)

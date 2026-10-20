@@ -1216,6 +1216,12 @@ class Robot(object):
             shoulder[2] - POINT_DISTANCE * math.sin(math.radians(aim)),
         ]
         self.svc("ALTracker").pointAt(side + "Arm", target, FRAME_ROBOT, speed)
+        try:
+            # an open hand: pointAt leaves it closed, which read as a fist (robot, 2026-10-20); the neutral pose
+            # afterwards relaxes it again
+            motion.setAngles(side + "Hand", 1.0, 0.3)
+        except Exception:
+            pass
         aimed = self._arm_direction(motion, side)
         waited = 0.0
         while waited < hold and not self.halted:
@@ -2200,6 +2206,11 @@ class TabletPageHandler(tornado.web.RequestHandler):
     def get(self):
         self.set_header("Content-Type", "text/html; charset=utf-8")
         self.write(TABLET_PAGE)
+
+    def head(self):
+        # ALTabletService checks the URL with HEAD before loading it; a 405 left the tablet on its idle orb
+        # (2026-10-20)
+        self.set_header("Content-Type", "text/html; charset=utf-8")
 
 
 class TabletStateHandler(tornado.web.RequestHandler):
