@@ -147,7 +147,7 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `MEMORY_DIR` | | Long-term memory: people who agreed to be remembered, facts, session episodes ([docs/MEMORY.md](docs/MEMORY.md); `scripts/memory_admin.py`); empty = off |
 | `SCENE_NOTES` / `SCENE_MODEL` | `false` / `qwen3.5:4b` | With `DECIDE_URL`: every 20 s while someone is in view, who is where and a short note on the place |
 | `WAIT_FOR_UNFINISHED` | `true` | Voice: when an utterance clearly stops mid-sentence ("How do you feel about"), wait up to 2.5 s for the rest and answer the whole sentence |
-| `INITIATIVE` | `false` | Pepper may speak unprompted: to someone lingering quietly nearby, or once more after an unanswered question (at most every 3 minutes) |
+| `INITIATIVE` | `false` | Pepper may speak unprompted: to someone lingering quietly nearby, or once more after an unanswered question (at most every 3 minutes; 90 s for a follow-up question) |
 | `PHOTO_RECORD_DIR` / `VOICE_RECORD_DIR` | | Keep photos (with head angle and sharpness) / utterance audio for testing; inside `SESSION_DIR` when that is set |
 | `PEPPER_AWARENESS` | `false` | `true`: head-only face tracking while someone is in view (off for an empty room, so the head can look out for the next person); `keep` leaves it alone; head moves pause it for 8 s |
 | `STT_BACKEND` / `STT_MODEL` | `none` | Voice input: `sherpa` + model directory, or `whisper` + `base`/`small` (see `requirements-voice.txt`) |

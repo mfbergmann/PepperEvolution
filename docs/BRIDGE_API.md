@@ -98,7 +98,7 @@ Sonar values are metres from Pepper's front/back ultrasonic sensors (`Device/Sub
 
 | Method | Path | Body | Description |
 |--------|------|------|-------------|
-| POST | `/tablet/text` | `{"text": "Hello", "title": "Pepper"}` | Show text. The bridge serves a page at `/tablet/page` that the tablet loads once and then polls `/tablet/state`, so later calls update instantly. |
+| POST | `/tablet/text` | `{"text": "Hello", "title": "Pepper"}` | Show text. The bridge serves a page at `/tablet/page` that the tablet loads once and then polls `/tablet/state`, so later calls update instantly. The page also answers `HEAD`, which the tablet sends first (without it the tablet stayed on its idle screen, 2026-10-20). `{"text": ""}` clears the text. |
 | POST | `/tablet/web` | `{"url": "https://..."}` | Show a web page |
 | POST | `/tablet/image` | `{"url": "https://..."}` | Show an image |
 | POST | `/tablet/hide` | | Hide web view / image |

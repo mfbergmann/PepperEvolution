@@ -1,10 +1,10 @@
 # Handoff: where the work stopped and how to pick it up
 
-Written 2026-09-13, updated 2026-09-22 after the first session with the physical robot, and 2026-10-08/09 after the first session with system one in the loop and the offline builds of memory (0.6.0) and 0.7.0. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
+Written 2026-09-13. Updated 2026-09-22 after the first session with the physical robot; 2026-10-08/09 after the first session with system one in the loop and the offline builds of memory (0.6.0) and 0.7.0; and 2026-10-20 after 0.6.0 and 0.7.0 ran on the robot. Read this first in a new session; it says what exists, what has been verified where, and exactly how to resume testing. `ARCHITECTURE.md` has the target design, `ROADMAP.md` the plan, `SAFETY.md` the bounds, `BRIDGE_API.md` the endpoints.
 
 ## State of the code
 
-*Updated 2026-10-09.* `main` is at 0.7.0 (tag `v0.7.0`) with CI green on Python 3.12 and 3.13. The robot still runs the 0.5.1 bridge, which starts by itself at boot; deploy 0.7.0 at the next session (above).
+*Updated 2026-10-20.* `main` is 0.7.0 (tag `v0.7.0`) plus the fixes from the 2026-10-20 session (commits bf75e97 and 8d6aa67, unreleased; CHANGELOG "Unreleased"). The robot runs that bridge, deployed with its watchdog and autostart package; it starts by itself at boot.
 
 - **Host** (`src/`, Python 3.12+):
   - FastAPI on one port (REST, `/ws`, web UI with hold-to-talk).
@@ -125,7 +125,7 @@ Theme: **System one in the loop.** Fast local decision models (#20) judge the si
 
 **Next milestones after Tuesday:** finish Milestone 4 (vision pass into the world model, #11; the detail tool, #12), get the spoken loop under 2 s and barge-in (#3, #4), verify-after-act and `look_at` (#7, #6), then follow me (#18) and memory of people (Milestone 5, opt-in only).
 
-## Before the next robot session (0.6.0 and 0.7.0)
+## Checklist for 0.6.0 and 0.7.0 (run on the robot on 2026-10-20; results in the next section)
 
 Built offline on 2026-10-08 and 2026-10-09 after the session below:
 - 0.6.0: the memory architecture (`docs/MEMORY.md`, issue #29);
@@ -169,6 +169,44 @@ Notes:
 - The scene pass's people count and the camera fallback use typed questions benchmarked on 12 frames (11 counts right), separately from the camera judgements.
 - Facts and consent notes are personal data: `results/memory/` is git-ignored like the session records, and "forget me" clears it (the session records follow their own rules).
 
+## Robot session 2026-10-20: results (0.6.0 and 0.7.0 on the robot)
+
+Solo, in the tester's office (small, with glass walls and a monitor). Five host runs (`results/sessions/2026-10-20_*`), 70 spoken turns, initiative on for the last three. Analysed the same evening; fixes went in between runs (bf75e97) and after the session (8d6aa67).
+
+| Check | Result |
+|-------|--------|
+| 1 Deploy, watchdog (#15) | Bridge 0.7.0 deployed with its watchdog and autostart package. `pkill -9`: back in 10.6 s. A restarted bridge forgot sound localisation; the host now asks again on every reconnect (checked on the robot) |
+| 2 Pose (#27) | A pose event at the end of every turn. Turning Pepper by hand (21°, 0.28 m) was detected and cleared remembered positions; a very gentle push stayed under the threshold, as intended |
+| 3 Turn towards me (#27) | One turn, but 140° where about 108° was right: the remembered position had been overwritten by a monitor seen as a person (#32). Pepper then corrected by looking |
+| 4 Sound direction, come to me (#12, #24) | Out of view, "in relation to you" read +83° and Pepper turned 85° to face the tester. In front, readings matched the camera within 1-16°. Wrong for a speaker behind Pepper, and unreliable on a single sound (#31). Both drives were blocked by collision protection within 0.02 s in the small office, so the camera fallback never ran during a drive: test it in the open space |
+| 5 Pointing, look_at (#28, #6) | Jacket, the tester, and two people beyond a door frame: all landed. The arm went down each time. It pointed with a fist; the hand now opens (deployed, not yet seen by eye). "Look at the door" used the door it had seen earlier, checked with a photo, and centred with look_at |
+| 6 Unfinished sentences (#26) | "Can you ... turn left" was joined (`parts: 2`). A 10 s pause was answered as a fragment, as designed, but the router then turned Pepper again; fragments now start no action. Two cut-offs the rule misses ("...and designing", "...remember about"): the end-of-turn silence is now 1.4 s (tester's choice; their verdict is still to come) |
+| 7 Reply length (#19) | Of 70 replies, 16 % had four or more sentences (fillers not counted). In free conversation, 0 of 16 did (baseline 41-43 %). Box ticked |
+| 8 Memory by voice (#29) | Name with consent, recall (name and courses), "forget me", then "do you remember my name?" got "No ... I've deleted it". Re-learned later and recognised by name in the next run. **The store holds the tester again** (consented at 19:09) |
+| 9 Scene notes | Notes came steadily and were roughly right ("office with glass walls and colorful balloons"), but drift with the head ("home office with striped wallpaper" for the same spot) |
+| 10 Initiative | "Unanswered" fired once (22 s after "What's your name?"; felt natural). "Lingering" fired twice (45 s, 70 s). A second question within 3 minutes got nothing; a question may now follow 90 s after the last initiative |
+
+**Also found and fixed:**
+- **Subtitles never showed:** the tablet checks the page with HEAD first and got 405. The page now answers HEAD, and the last subtitle clears after 8 s.
+- **Two answers ignored by the gate:** "No, this project is just for class", answering Pepper's question, at p=0.15. A 4 s blip of a second "person" had turned off the alone rule. Crowds now count only after 5 s, and until they end (8d6aa67).
+- **Router after a fragment:** fixed as described in check 6.
+- **A bare "enough"** silenced a reply ("Good enough?" "Enough"). It no longer does.
+- **Turn records** dropped `voice` and `parts`; they keep them now.
+
+**Issues:**
+- New: #31 (voice direction) and #32 (things seen as people).
+- Face identity across encounters (#14) is now wanted. Pepper re-greeted the tester twice as a newcomer, and asked their name again after a short absence.
+
+## Before the next robot session
+
+1. Ask the tester how the 1.4 s end-of-turn silence felt; check the open hand when pointing.
+2. **In the open space:**
+   - "Come to me" from out of view (camera fallback, #24).
+   - Voice direction at 0°, ±90° and 180°, head centred and turned (#31).
+3. **With a second person:** side talk (#19, #25). This also provides the data to re-benchmark the gate with Pepper's last sentence.
+4. Cold boot: the bridge and watchdog come up by themselves (#15).
+5. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
+
 ## Robot session 2026-10-08: results (system one in the loop)
 
 The Tuesday plan ran on Thursday 2026-10-08, solo, first in the small office and then in the open space. There were 12 host runs (`results/sessions/2026-10-08_*`) with 111 spoken turns. Everything was reviewed the same day, and the fixes went out between runs (commits 2ac2782 to a623131; CHANGELOG 0.5.1).
@@ -202,6 +240,7 @@ Every robot session is recorded in full and reviewed afterwards; real interactio
 | 2026-09-29 | `results/logs/blind-*.log`, `greeting*-2026-09-29.*`, `results/llm/` | `recordings/round5-blind-*`, `recordings/greeting-2026-09-29` | `results/models-2026-09-29/`, `results/logs/greeting-view*.jpg` |
 | 2026-10-01 | `results/logs/{photos,photos2,photos3,photos4,drive}-2026-10-01.*` (photos4: directing Pepper and the two visitors) | `recordings/2026-10-01/` (28 utterances) | `results/photos-2026-10-01/` (ten-turn measurement), `results/photos/` |
 | 2026-10-08 | `results/sessions/2026-10-08_*` (12 runs, each with `review.md` where reviewed), `results/logs/host*-2026-10-08.stdout`, `results/logs/robot-load-2026-10-08.txt` | in each session folder | in each session folder |
+| 2026-10-20 | `results/sessions/2026-10-20_*` (5 runs) | in each session folder | in each session folder |
 
 Since 0.5 (issue #16, done), `SESSION_DIR` puts everything from one run in one folder, with per-turn timings and decisions (`turns.jsonl`) and events (`events.jsonl`); `scripts/review_session.py <folder> --out review.md` turns it into a timed transcript with flags.
 
@@ -256,4 +295,10 @@ The previous session's standing instruction from the user: once Pepper is on the
 
 ## Next
 
-The memory architecture (0.6.0) and the 0.7.0 fixes are built; "Before the next robot session" above lists their robot checks. The next robot session runs them, together with what is still owed: side talk with two people (#19, #25). After that: identity, opt-in (#14), and more of the reflection loop once the first slice of initiative has been judged on the robot. `ROADMAP.md` has the full plan.
+0.6.0 and 0.7.0 ran on the robot on 2026-10-20 (results above). Next:
+- the robot checks under "Before the next robot session";
+- face identity across encounters, opt-in (#14), which the tester now wants;
+- voice direction (#31) and things seen as people (#32);
+- more of the reflection loop: initiative has been judged and kept.
+
+`ROADMAP.md` has the full plan.

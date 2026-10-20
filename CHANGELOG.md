@@ -4,6 +4,20 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Unreleased (fixes from the 2026-10-20 robot session)
+
+0.6.0 and 0.7.0 ran on the robot for the first time (results in `docs/HANDOFF.md`). Fixed during and after the session:
+
+- **Tablet subtitles never showed.** The tablet checks the subtitle page with `HEAD` before loading it, and the bridge answered 405, so the tablet stayed on its idle screen. The page now answers `HEAD`, and the last subtitle clears 8 s after it was shown.
+- **Sound direction switched off after a bridge restart** (deploy or watchdog). The host now asks for it again on every reconnect.
+- **Two answers to Pepper's own question went unanswered.** A 4 s sighting of a second "person" (a monitor) had turned off the alone-with-Pepper rule. A crowd now counts once it has lasted 5 s, and until 60 s after it ended rather than after it began.
+- **A fragment answered after the unfinished-sentence hold starts no action.** "I was going to say that", just after "turn left", had turned Pepper again.
+- **End of a turn after 1.4 s of silence instead of 1.0 s,** at the tester's request: people were cut off mid-thought.
+- **A bare "enough" no longer silences a reply.** "Good enough?" "Enough" had cut Pepper off; "that's enough" still works.
+- **Initiative may follow up an unanswered question 90 s after the last initiative.** Lingering still waits 3 minutes.
+- **Pointing opens the hand** instead of making a fist.
+- **Turn records keep `voice`, `parts` and `unfinished`.** They had been dropped.
+
 ## 0.7.0 (2026-10-09): conversation fixes, pointing, the camera fallback, a watchdog, initiative
 
 Built offline after the 2026-10-08 robot session, each measured on recorded data, the virtual Pepper or both. The robot test comes next session (`docs/HANDOFF.md`, "Before the next robot session").
