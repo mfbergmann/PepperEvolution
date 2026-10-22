@@ -89,3 +89,28 @@ class TestDownsampler:
         x = np.stack([np.sin(2 * np.pi * 12000 * t)] * 4, axis=1)  # above the new Nyquist (8 kHz)
         y = Downsampler().process(x)
         assert np.sqrt(np.mean(y[50:-50, 0] ** 2)) < 0.02
+
+
+class TestHeadTurnsAndGaps:
+    def test_a_head_turn_forgets_the_voice_and_passes_the_front_microphone_through(self):
+        x, _, _ = room()
+        bf = Beamformer()
+        run(bf, x)
+        assert bf.adapted
+        bf.viewpoint_changed()
+        assert not bf.adapted and bf.speech_frames == 0 and np.allclose(bf.weights[:, REFERENCE], 1.0)
+        assert bf.noise_frames > 0  # the fans are still known
+        quiet, _, _ = room(seconds_quiet=1.0, seconds_talk=0.0, seed=3)
+        bf.gap()  # a fresh stretch of audio, so the output lines up with the input
+        y = run(bf, quiet)
+        n = len(y) - 2 * HOP  # whole hops only
+        assert np.allclose(y[HOP:n], quiet[HOP:n, REFERENCE], atol=1e-9)
+
+    def test_a_gap_restarts_the_buffers_but_keeps_what_was_learned(self):
+        x, _, _ = room()
+        bf = Beamformer()
+        run(bf, x)
+        weights = bf.weights.copy()
+        bf.gap()
+        assert np.all(bf._overlap == 0) and np.all(bf._input == 0) and len(bf._pending) == 0
+        assert np.array_equal(bf.weights, weights)

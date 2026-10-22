@@ -4,6 +4,29 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## 0.8.0 (unreleased): beamforming, a steady camera stream, glances towards voices
+
+Built offline after the 2026-10-22 robot session; nothing below has run on the robot yet. The bridge version changed,
+so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All four new switches are off by
+default.
+
+- **Beamforming over the four head microphones (#34, `BEAMFORM`).** The bridge streams all four microphones on request
+  (`/ws/audio?channels=4`, resampled to 16 kHz on the robot), and the host beamforms them into one channel before
+  speech recognition: a streaming MVDR beamformer that learns the fans' noise from quiet moments and the voice's
+  direction from speech, with no microphone geometry needed. Offline on four-channel recordings from the robot: 4-8 dB
+  more speech above noise once adapted, and Nemotron's word errors 24.9 % on the front microphone against 19.5 % on
+  the first pass. Head turns reset what it learned about the voice; pauses while Pepper speaks restart its buffers.
+  Neural denoisers were tried first and made recognition worse (18 % to 33 % word errors), so there is none.
+- **`RECORD_MICROPHONES`** keeps the four microphones of a session (`microphones.wav` in the session folder, 16 kHz),
+  so the beamformer can be tuned again offline.
+- **A steady camera stream (#33, `WATCH_ROOM`).** While nobody is in view the camera keeps streaming at 0.5 fps. A
+  cheap change check on every frame decides when to look closer: a changed view asks where the nearest person is and
+  brings the next scene note forward. Nothing wakes the mind; what is found goes into working memory.
+- **Glances towards voices (#33, `VOICE_GLANCES`, with `SOUND_DIRECTION` and `WATCH_ROOM`).** When someone speaks from
+  where Pepper sees nobody, its head turns that way so the camera can find them; head only. Replayed on the
+  2026-10-20 and 2026-10-22 sessions: no glance on 2026-10-20 in the office, three on 2026-10-22, including one
+  towards a voice 94° to the left and one for a whole stretch of side talk.
+
 ## Unreleased (fixes from the 2026-10-20 robot session)
 
 0.6.0 and 0.7.0 ran on the robot for the first time (results in `docs/HANDOFF.md`). Fixed during and after the session:

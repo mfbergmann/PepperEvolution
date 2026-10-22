@@ -11,9 +11,16 @@ reaches them with a fixed pattern, while a voice comes from one direction. This 
   (covariance whitening), so no microphone geometry is needed;
 - the weights pass the voice as the front microphone hears it (distortionless) and minimise everything else.
 
-Until enough speech has been heard, and for frames where the beamformer would cut the voice itself by more than
-MAX_SUPPRESSION_DB, the front microphone passes through unchanged. Offline, on four-channel recordings from the robot
-(open space and office, 2026-10-22), an oracle version gained 2-4 dB of speech above noise.
+Until enough speech has been heard (MIN_SPEECH_FRAMES, about 0.6 s, after at least 0.5 s of quiet), and for frames
+where the beamformer would cut the voice itself by more than MAX_SUPPRESSION_DB, the front microphone passes through
+unchanged. When the head turns, the voice reaches the microphones differently while the fans (in the head) do not:
+``viewpoint_changed()`` forgets the voice and passes the front microphone through until it has been heard again.
+After a gap in the stream (the bridge drops the microphone while Pepper speaks), ``gap()`` restarts the frame buffers
+so the old audio does not run into the new.
+
+Offline, on four-channel recordings from the robot (open space and office, 2026-10-22, Pepper's own prompt cut out):
+4-8 dB more speech above noise once adapted, and Nemotron's word errors 24.9 % on the front microphone, 19.5 % on the
+first pass and 20.3 % once adapted (fixed weights from the whole recording: 16.9 %).
 """
 
 from collections import deque
@@ -76,6 +83,22 @@ class Beamformer:
         self._pending = np.zeros((0, self.channels))
         self._overlap = np.zeros(N_FFT)
         self.passthrough_frames = 0
+
+    def viewpoint_changed(self):
+        """The head turned: forget the voice (not the fans), pass the front microphone through until it is heard
+        again."""
+        eye = np.eye(self.channels, dtype=complex)
+        self.speech_cov = np.tile(eye * 1e-9, (self.bins, 1, 1))
+        self.weights = np.zeros((self.bins, self.channels), dtype=complex)
+        self.weights[:, self.reference] = 1.0
+        self.speech_frames = 0
+        self.adapted = False
+
+    def gap(self):
+        """The stream paused (Pepper was speaking): start the frame buffers again, keep what was learned."""
+        self._input = np.zeros((N_FFT, self.channels))
+        self._pending = np.zeros((0, self.channels))
+        self._overlap = np.zeros(N_FFT)
 
     def process(self, samples: np.ndarray) -> np.ndarray:
         """Beamform a chunk; returns as many mono samples as whole hops were completed."""

@@ -4,7 +4,7 @@ Written 2026-09-13. Updated 2026-09-22 after the first session with the physical
 
 ## State of the code
 
-*Updated 2026-10-20.* `main` is 0.7.0 (tag `v0.7.0`) plus the fixes from the 2026-10-20 session (commits bf75e97 and 8d6aa67, unreleased; CHANGELOG "Unreleased"). The robot runs that bridge, deployed with its watchdog and autostart package; it starts by itself at boot.
+*Updated 2026-10-22.* `main` is 0.8.0, unreleased (CHANGELOG "0.8.0 (unreleased)"): 0.7.0 (tag `v0.7.0`), the fixes from the 2026-10-20 and 2026-10-22 sessions, and, built offline on 2026-10-22, beamforming over the four head microphones, a steady camera stream and glances towards voices. The robot still runs bridge 0.7.0, deployed with its watchdog and autostart package; it starts by itself at boot. **Deploy 0.8.0 with `python robot_bridge/deploy.py --install-autostart`** (the version changed).
 
 - **Host** (`src/`, Python 3.12+):
   - FastAPI on one port (REST, `/ws`, web UI with hold-to-talk).
@@ -215,12 +215,23 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 - 12 of 36 replies had four sentences or more; 9 of those were tool turns narrating moves and photos.
 - Three slow first words (11-14 s) were the tester speaking while a 25-30 s move turn was still running.
 
+## Hardware and audio findings, 2026-10-22 (after the session)
+
+- **Microphones (#34):** all four head microphones are about equally noisy (-33 to -36 dBFS). Speech at 1.5 m was 4-7 dB above the noise in the open space and 10-12 dB in the office. A steady tone near 415 Hz in every recording, in both rooms, comes from Pepper itself. The fans report no faults and have no speed control (NAOqi offers only on/off).
+- **Neural denoisers** (GTCRN, DPDFNet) in front of Nemotron made recognition worse (18 % to 33 % word errors), so none is used. The **beamformer** (0.8.0) helps instead; offline numbers are in CHANGELOG.
+- **The 3D camera's stereo microphone** (ALSA card 1) is on but hears nothing: it is not fitted, or sealed in.
+- **Under the clip-on cover at the back of the head:** an RJ45 port and a micro-USB socket, next to two 50 mm 5 V fans (SEPA MFB50E-05). With a cable in the RJ45 port Pepper got 10.0.100.236 by DHCP at 1 Gbit/s, and Wi-Fi switched itself off until the cable was out. Whether the micro-USB socket is a host or a device port is still to test with an adapter (a USB microphone on a cable to the chest would avoid the fans).
+- **External microphone options** (for the tester to choose): a wireless clip-on kit into the host, or a microphone array on a small board streaming over Wi-Fi (ReSpeaker XVF3800 class).
+
 ## Before the next robot session
 
-1. Check the open hand when pointing (#28), and whether 1.2 s of end-of-turn silence feels right.
-2. **In the open space:** "come to me" from out of view, so the camera fallback runs during a drive (#24); voice direction behind Pepper and with the head turned (#31), now that the mind prefers the voice.
-3. **With a second person,** once a side-talk fix is chosen and built (#25).
-4. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
+1. **Deploy bridge 0.8.0 with `--install-autostart`.** In `.env`, turn on `BEAMFORM` and `RECORD_MICROPHONES`; also `WATCH_ROOM` and `VOICE_GLANCES` once the tester has decided about the camera running while nobody is in view.
+2. **Beamforming A/B, in the open space:** the same phrases with `BEAMFORM` off and on, from 1.5 m in front, beside and behind. `RECORD_MICROPHONES` keeps the four channels, so the comparison can be re-run offline. Also check the robot's CPU and Wi-Fi with four channels and the steady camera stream together.
+3. **Glances:** speak from ±90° and from behind while out of view. The head should turn once, and face tracking should take over.
+4. Check whether 1.2 s of end-of-turn silence feels right.
+5. **In the open space:** "come to me" from out of view, so the camera fallback runs during a drive (#24); voice direction behind Pepper and with the head turned (#31).
+6. **With a second person,** once a side-talk fix is chosen and built (#25).
+7. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
 
 ## Robot session 2026-10-08: results (system one in the loop)
 

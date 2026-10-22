@@ -17,6 +17,7 @@ four-channel 16 kHz audio itself (for recording a session).
 
 import asyncio
 import json
+import time
 from typing import Any, Awaitable, Callable, List, Optional
 
 from loguru import logger
@@ -46,6 +47,7 @@ class AudioStream:
         self.beamformer: Any = None  # src.audio.beamformer.Beamformer while four channels arrive
         self._downsampler: Any = None
         self._raw_callbacks: List[RawCallback] = []
+        self._last_frame_at: Optional[float] = None
         self.logger = logger.bind(module="AudioStream")
         self.sample_rate = 16000
         self.channels = 1
@@ -171,9 +173,17 @@ class AudioStream:
             else:
                 self._backoff = 5.0  # e.g. NAOqi still booting: the bridge closes us, we retry a little later
 
+    GAP = 0.3  # seconds between frames (85 ms apart while streaming) that count as a pause: Pepper was speaking
+
+    def viewpoint_changed(self):
+        """The head turned (main.py, from the camera's head angles): the beamformer learns the voice again."""
+        if self.beamformer is not None:
+            self.beamformer.viewpoint_changed()
+
     def _prepare_beamforming(self):
         """A new stream: fresh beamformer state (a restarted bridge, or the robot moved and the room changed)."""
         self.beamformer = self._downsampler = None
+        self._last_frame_at = None
         if not self.beamform:
             return
         if self.channels != 4:
@@ -193,10 +203,16 @@ class AudioStream:
         import numpy as np
 
         x = np.frombuffer(pcm, dtype="<i2").astype(float).reshape(-1, 4) / 32768.0
+        now = time.monotonic()
+        paused = 0.0 if self._last_frame_at is None else now - self._last_frame_at
+        self._last_frame_at = now
+        if paused > self.GAP:
+            self.beamformer.gap()
         if self._downsampler is not None:
             x = self._downsampler.process(x)
         if self._raw_callbacks:
-            raw = (np.clip(x, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+            silence = b"\x00" * (8 * int(paused * 16000)) if paused > self.GAP else b""  # keep the recording's timeline
+            raw = silence + (np.clip(x, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
             for raw_cb in self._raw_callbacks:
                 try:
                     raw_cb(raw, 4)

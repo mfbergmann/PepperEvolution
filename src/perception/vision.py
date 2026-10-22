@@ -53,6 +53,7 @@ COOLDOWN = 30.0  # seconds between events of the same kind
 JUDGE_TIMEOUT = 1.0
 STOP_AFTER_EMPTY = 5.0  # seconds with nobody in view before the stream is closed or slowed (Wi-Fi, shared GPU)
 IDLE_FPS = 0.5  # watching an empty room (WATCH_ROOM): the robot's CPU and Wi-Fi carry this all the time
+HEAD_TURNED = 10.0  # degrees of head movement between frames that the beamformer is told about
 
 EventCallback = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
@@ -75,6 +76,7 @@ class FrameWatcher:
         idle_fps: float = IDLE_FPS,
     ):
         self.watch = watch  # keep a slow stream open while nobody is in view, looking for changes (#33)
+        self.head_moved: List[Callable[[], None]] = []  # called when the head turned between frames (the beamformer)
         self.idle_fps = idle_fps
         self.changes = ChangeDetector()
         self.scene = scene  # ScenePass (src/perception/scene.py): an occasional scene note from the same frames
@@ -214,7 +216,14 @@ class FrameWatcher:
         except (TypeError, ValueError):
             return
         if isinstance(data, dict) and data.get("type") == "frame" and isinstance(data.get("head"), list):
-            self.head = [float(v) for v in data["head"][:2]]
+            head = [float(v) for v in data["head"][:2]]
+            if self.head is not None and max(abs(a - b) for a, b in zip(head, self.head)) > HEAD_TURNED:
+                for callback in self.head_moved:
+                    try:
+                        callback()
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.debug(f"head-moved callback failed: {exc}")
+            self.head = head
             self.head_at = self._clock()
 
     # -- the camera fallback for "come to me" (#24) ---------------------------------------------------------------

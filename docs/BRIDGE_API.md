@@ -150,6 +150,8 @@ On connect the client gets one JSON text frame, then binary frames:
 
 Frames are **not sent while the robot is speaking** (Pepper has no echo cancellation): the bridge mutes capture around every `/speak`, on `ALTextToSpeech/Status` events from any other source, and for 0.4 s after speech ends. `{"type": "error", "error": "..."}` reports a failed subscription (for example NAOqi not connected yet).
 
+**All four microphones (0.8):** `ws://<PEPPER_IP>:8888/ws/audio?channels=4` subscribes `ALAudioDevice` to all four head microphones, which NAOqi gives only at 48 kHz. The bridge resamples them to 16 kHz on the robot (`audioop`), so the binary frames are interleaved 16-bit PCM in the order left, right, front, rear, and the hello says `"channels": 4, "sample_rate": 16000`. A bridge running under Python 3.13 or later has no `audioop` and sends 48 kHz instead; the hello says so and the host resamples. One-channel clients connected at the same time keep getting the front microphone at 16 kHz. Used by the host's beamformer (`BEAMFORM`, `src/audio/beamformer.py`).
+
 Clients may send `{"type": "ping"}` (answered with `pong`) and `{"type": "mute", "muted": true|false}` to pause the stream from the host side; the reply is `{"type": "state", "streaming": ..., "muted": ...}`.
 
 The host side is `src/pepper/audio_stream.py` (`AudioStream`), consumed by `src/audio/voice.py`.

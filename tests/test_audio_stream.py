@@ -97,3 +97,29 @@ class TestBeamformingStream:
         first = stream.beamformer
         stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 4}))
         assert stream.beamformer is not first
+
+    async def test_a_pause_in_the_stream_restarts_the_buffers_and_pads_the_recording(self, monkeypatch):
+        stream = AudioStream("ws://h/ws/audio", beamform=True)
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 4}))
+        stream.on_audio(AsyncMock())
+        raw = []
+        stream.on_raw(lambda pcm, channels: raw.append(len(pcm)))
+        clock = [100.0]
+        monkeypatch.setattr("src.pepper.audio_stream.time.monotonic", lambda: clock[0])
+        gaps = []
+        monkeypatch.setattr(stream.beamformer, "gap", lambda: gaps.append(1))
+        await stream._dispatch(four_channel_pcm(512))
+        clock[0] += 0.085
+        await stream._dispatch(four_channel_pcm(512))
+        assert gaps == [] and raw == [512 * 8, 512 * 8]
+        clock[0] += 2.0  # Pepper spoke for two seconds
+        await stream._dispatch(four_channel_pcm(512))
+        assert gaps == [1] and raw[-1] == 512 * 8 + 8 * 32000
+
+    def test_head_turns_reach_the_beamformer(self):
+        stream = AudioStream("ws://h/ws/audio", beamform=True)
+        stream.viewpoint_changed()  # no beamformer yet: nothing happens
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 4}))
+        stream.beamformer.adapted = True
+        stream.viewpoint_changed()
+        assert stream.beamformer.adapted is False

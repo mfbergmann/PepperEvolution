@@ -323,7 +323,11 @@ class PepperEvolution:
             )
             self.vision.start()  # streams while someone is in view (and with WATCH_ROOM, slowly at all times)
             self.ai_manager.head_angles = lambda: self.vision.head_now() if self.vision is not None else None
-        self.ai_manager.voice_glances = s.voice_glances and s.sound_direction  # glances need voice directions
+            source = getattr(self.voice, "source", None)
+            if isinstance(source, AudioStream) and source.beamform:
+                self.vision.head_moved.append(source.viewpoint_changed)
+        # glances need voice directions, and the head's angle from a stream that stays open (or they repeat)
+        self.ai_manager.voice_glances = s.voice_glances and s.sound_direction and s.watch_room
         if self.decider is not None:
             models = [ADDRESSEE_MODEL] + ([VISION_MODEL] if self.vision is not None else [])
             self.decider.keep_warm(models)  # the first call after an unload takes ~30 s

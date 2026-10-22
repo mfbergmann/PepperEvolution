@@ -53,13 +53,28 @@ AUDIO_FRAME_SAMPLES = 1365  # 85 ms at 16 kHz, measured on the robot (NAOqi 2.5.
 AUDIO_FRAME_PERIOD = 0.085
 
 
+_TONES = {}  # (rate, channels) -> one second of the interleaved tone (440 whole cycles), computed once
+
+
 def _tone_frame(n, phase, rate=16000, channels=1):
     """n samples (per channel) of a 440 Hz tone as interleaved 16-bit little-endian PCM, like ALAudioDevice's buffers;
     channel c of a four-channel frame is scaled by (c + 1) so tests can tell the microphones apart."""
-    samples = []
-    for i in range(n):
-        value = 3000 * math.sin(2 * math.pi * 440 * (phase + i) / float(rate))
-        samples.extend(int(value * (c + 1) / channels) for c in range(channels))
+    key = (rate, channels)
+    if key not in _TONES:
+        second = []
+        for i in range(rate):
+            value = 3000 * math.sin(2 * math.pi * 440 * i / float(rate))
+            second.extend(int(value * (c + 1) / channels) for c in range(channels))
+        _TONES[key] = second
+    tone = _TONES[key]
+    start = (phase % rate) * channels
+    samples = (
+        (tone[start:] + tone)[: n * channels]
+        if start + n * channels > len(tone)
+        else tone[start : start + n * channels]
+    )
+    while len(samples) < n * channels:  # a frame longer than a second (not used)
+        samples = samples + tone[: n * channels - len(samples)]
     return struct.pack("<%dh" % len(samples), *samples)
 
 

@@ -109,6 +109,7 @@ Goal: people talk to Pepper instead of typing.
   - Replayed on 37 recorded turns: 3 sentences on average down to 2.3, replies of four or more from about 42 % to about 20 %.
   - On the robot (2026-10-20): 16 % of 70 replies had four or more sentences, and none of 16 in free conversation.
 - [x] Acceptance met: a five-turn spoken conversation with tool use (head turns, photos, gestures, the quiet intent) through Pepper's own microphone, twice.
+- [ ] Beamforming over the four head microphones (#34): built in 0.8.0, not yet on the robot. Pepper's own fans make most of the noise, at 4-7 dB below speech in the open space. Neural denoisers made recognition worse; the beamformer gave 4-8 dB more speech above noise and fewer recognition errors offline (24.9 % to 19.5 %). An external microphone away from the fans is the other route.
 - [ ] Barge-in: let a spoken "stop" interrupt while Pepper is speaking. Today the bridge mutes the microphone for the whole reply (sentences follow each other with a 0.4 s tail), so a spoken "stop" only lands between turns; typed, button and hold-to-talk stops work at any time. Needs either echo cancellation on the host (the bridge would have to stream during speech) or keyword spotting on the muted-out audio; not planned before M0 shows how much Pepper hears of itself.
 - [ ] A neural VAD (Silero/TEN through sherpa-onnx) in front of the whisper path if the energy detector proves too crude in the lab.
 
@@ -208,6 +209,7 @@ Goal: Pepper knows what is around it between turns, notices when someone arrives
 - **Built in 0.6.0, on the robot since 2026-10-20:** memory (`docs/MEMORY.md`, issue #29). One structure (observations in, views out) holds Pepper's pose and remembered people (#27), voice direction (#12, #24), scene notes (#11) and the `recall` detail tool (#12).
 - **Built in 0.7.0, on the robot since 2026-10-20:** the camera fallback for people the detector has lost (#24), and a first slice of the reflection loop. Initiative (off by default) fired three times and felt natural to the tester; an unanswered question may be followed up 90 s after the last initiative.
 - **Found on the robot:** voice direction is wrong behind Pepper (#31), and a monitor was seen as a person for minutes (#32).
+- **Built in 0.8.0, not yet on the robot (#33):** a steady camera stream that keeps looking while nobody is in view and looks closer when the view changes (`WATCH_ROOM`), and glances towards voices from where nobody is seen (`VOICE_GLANCES`).
 - **Still open:** expect, then check (#30: what each action should change, compared with what Pepper perceives), more of the reflection loop, and identity (Milestone 5).
 
 Two layers feeding one host-side world model:
