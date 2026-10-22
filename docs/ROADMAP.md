@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: September 2026. The design these milestones build towards is in [ARCHITECTURE.md](ARCHITECTURE.md); the survey behind it is in [RESEARCH_2026-09.md](RESEARCH_2026-09.md).
+Last updated: October 2026. The design these milestones build towards is in [ARCHITECTURE.md](ARCHITECTURE.md); the survey behind it is in [RESEARCH_2026-09.md](RESEARCH_2026-09.md).
 
 ## Where we are
 
@@ -73,7 +73,7 @@ Things most likely to need adjusting on the day: `bodyLanguageMode` config on `A
 
 Five bugs only the hardware showed were fixed on the day (deploy path, emergency-stop rest, looping animations, speech stop, microphone frame size); see HANDOFF.md.
 
-## Milestone 1: reactive layer (implemented in 0.2, verified on the robot 2026-09-22)
+## Milestone 1: reactive layer (implemented in 0.2, verified on the robot 2026-09-22; GitHub milestone closed 2026-10-21)
 
 Goal: Pepper looks alive while Claude is thinking, without any model call.
 
@@ -91,7 +91,7 @@ Goal: Pepper looks alive while Claude is thinking, without any model call.
 
 Acceptance: perceived latency in a conversation drops; no model calls are made by this layer.
 
-## Milestone 2: voice input (implemented in 0.2, verified on the robot 2026-09-22)
+## Milestone 2: voice input (implemented in 0.2, verified on the robot 2026-09-22; GitHub milestone closed 2026-10-21)
 
 Goal: people talk to Pepper instead of typing.
 
@@ -226,7 +226,7 @@ Situation judgements (tested 2026-10-03, issue #20): local decision models answe
 
 Compute for this milestone (2026-09-23): the Creative AI Hub at TMU (RCC230) has an always-on AI server (hal-9000: 2 x RTX 6000 Ada, 48 GB each, 128 GB RAM, 10 GbE, Ubuntu, Ollama already serving local models) and five workstations (alien1-5: RTX 5090 32 GB, Core Ultra 9, 64 GB; one on Ubuntu 24.04, being moved to Ubuntu). Plan: run the periodic vision pass as a service on the server (through its Ollama API or a vLLM server), reached from the host over the TRiPL tailnet; only the host needs to reach it, not Pepper. A 32 GB workstation is enough for fine-tuning jobs (below) and experiments. Before relying on it: agree usage with the Hub (shared machines), check that the host reaches it over the tailnet with low latency, and keep recordings of people in a private account on it. Blackwell cards (RTX 5090) need CUDA 12.8 or newer builds of PyTorch and onnxruntime.
 
-Also for these machines, once there are a few hours of corrected recordings: fine-tune Nemotron or Whisper on the lab's acoustics and voices, and rerun `scripts/compare_stt.py` with the large Whisper models. The Digital Research Alliance cluster remains an option for larger batch jobs, but it cannot host the live service.
+Also for these machines, once there are a few hours of corrected recordings: fine-tune Nemotron or Whisper on the lab's acoustics and voices, and rerun `scripts/compare_stt.py` with the large Whisper models. The Digital Research Alliance's clusters are an option for larger batch jobs like this one. Recordings of people may go there only if their consent covers it. SHARCNET's Brine, an always-on API for hosted models with chat and audio transcription, could later be a Canadian-hosted alternative model for spoken turns. Whether TMU accounts can use it is still to be asked (help@sharcnet.ca). It is too far away for the fast local judgements.
 
 Acceptance: someone walks up and Pepper greets them within a few seconds, unprompted; "who's here?" and "what's on the desk?" are answered from the world model without a new photo when the last look is recent; no frame is stored.
 
