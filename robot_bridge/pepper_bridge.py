@@ -23,6 +23,7 @@ Usage:
                             [--naoqi=tcp://127.0.0.1:9559] [--tablet-host=198.18.0.1]
 """
 
+import array
 import base64
 import io
 import json
@@ -42,6 +43,11 @@ import tornado.websocket  # noqa: E402
 from tornado.options import define, options  # noqa: E402
 
 import qi  # noqa: E402
+
+try:  # resampling the four microphones on the robot; audioop left Python in 3.13, where the test suite also runs
+    import audioop
+except ImportError:  # pragma: no cover - Python 3.13+: the four channels are sent at 48 kHz instead
+    audioop = None
 
 try:  # Python 2 / 3 compatibility shims
     text_type = unicode  # noqa: F821
@@ -82,7 +88,7 @@ define("log_level", default="INFO", type=str, help="Logging level")
 define("pip", default="", type=str, help="ignored (passed by NAOqi autoload)")
 define("pport", default=0, type=int, help="ignored (passed by NAOqi autoload)")
 
-BRIDGE_VERSION = "0.7.0"  # kept equal to src/__init__.py __version__ (tested)
+BRIDGE_VERSION = "0.8.0"  # kept equal to src/__init__.py __version__ (tested)
 LOGGER = logging.getLogger("pepper_bridge")
 START_TIME = time.time()
 IOLOOP = None  # the main IOLoop, captured in main(); worker threads must only touch this one
@@ -150,6 +156,7 @@ def _pose_moved(a, b, degrees, metres):
     """True if pose ``b`` differs from ``a`` ([x, y, theta]) by at least ``degrees`` or ``metres``."""
     turn = abs(math.degrees(math.atan2(math.sin(b[2] - a[2]), math.cos(b[2] - a[2]))))
     return turn >= degrees or math.hypot(b[0] - a[0], b[1] - a[1]) >= metres
+
 
 OBSTACLE_DISTANCE = 0.45  # metres; sonar reading below this counts as an obstacle
 MAX_ANIMATION_SECONDS = 20.0  # looping animations are stopped after this
@@ -1421,9 +1428,22 @@ class Robot(object):
 AUDIO_SERVICE_NAME = "PepperBridgeAudio"
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNEL = 3  # ALAudioDevice channel: 0=all four (48 kHz only), 1=left, 2=right, 3=front, 4=rear
+AUDIO_ALL_RATE = 48000  # ALAudioDevice gives all four microphones only at 48 kHz
+AUDIO_FRONT = 2  # index of the front microphone in a four-channel frame (left, right, front, rear)
 AUDIO_MUTE_TAIL = 0.4  # seconds of capture still dropped after speech ends (room reverb, TTS tail)
 TTS_EVENT_TIMEOUT = 60.0  # a TTS "started" event older than this without a "done" no longer mutes
-AUDIO_MAX_BEHIND = 30  # frames (~5 s) a slow client may lag before it is disconnected
+AUDIO_MAX_BEHIND = 30  # frames (2.5-5 s, by the frame size NAOqi uses) a slow client may lag before it is dropped
+
+
+def _pcm_channel(data, index, channels):
+    """One channel out of interleaved 16-bit PCM."""
+    samples = array.array("h")
+    if hasattr(samples, "frombytes"):
+        samples.frombytes(data)
+    else:  # pragma: no cover - Python 2
+        samples.fromstring(data)
+    picked = samples[index::channels]
+    return picked.tobytes() if hasattr(picked, "tobytes") else picked.tostring()
 
 
 class _AudioCallback(object):
@@ -1452,6 +1472,8 @@ class AudioTap(object):
         self.dropped = 0
         self.last_frame_at = 0.0
         self.tts_started_at = 0.0
+        self.channels = 1  # what ALAudioDevice is subscribed for: 1 (front, 16 kHz) or 4 (all, 48 kHz)
+        self._resample_state = None
         self._callback = _AudioCallback(self)
         self._tts_subscriber = None
         self._lock = threading.Lock()  # subscribe/unsubscribe
@@ -1488,18 +1510,35 @@ class AudioTap(object):
             _run_in_thread(AudioWebSocket.start_capture)
 
     def start(self):
-        """Subscribe to ALAudioDevice (front microphone, 16 kHz) while a client is connected. Idempotent."""
+        """Subscribe to ALAudioDevice while a client is connected: the front microphone at 16 kHz, or all four at
+        48 kHz when a client asked for them (/ws/audio?channels=4). Idempotent; a change of need resubscribes."""
         with self._lock:
-            if self.subscribed or not AudioWebSocket.clients:
+            if not AudioWebSocket.clients:
+                return self.info()
+            wanted = AudioWebSocket.wanted_channels()
+            if self.subscribed and self.channels == wanted:
                 return self.info()
             if self.service_id is None:
                 raise RuntimeError("audio service is not registered (NAOqi not connected?)")
             audio = self.session.service("ALAudioDevice")
-            audio.setClientPreferences(AUDIO_SERVICE_NAME, AUDIO_SAMPLE_RATE, AUDIO_CHANNEL, 0)
+            if self.subscribed:
+                audio.unsubscribe(AUDIO_SERVICE_NAME)
+                self.subscribed = False
+            if wanted == 4:
+                audio.setClientPreferences(AUDIO_SERVICE_NAME, AUDIO_ALL_RATE, 0, 0)
+            else:
+                audio.setClientPreferences(AUDIO_SERVICE_NAME, AUDIO_SAMPLE_RATE, AUDIO_CHANNEL, 0)
             audio.subscribe(AUDIO_SERVICE_NAME)
+            self.channels = wanted
+            self._resample_state = None
             self.subscribed = True
-            LOGGER.info("Microphone streaming started")
+            LOGGER.info("Microphone streaming started (%d channel%s)", wanted, "s" if wanted > 1 else "")
             return self.info()
+
+    @staticmethod
+    def rate_for(channels):
+        """The sample rate a client asking for ``channels`` receives."""
+        return AUDIO_SAMPLE_RATE if channels == 1 or audioop is not None else AUDIO_ALL_RATE
 
     def stop(self):
         """Unsubscribe unless a client is still connected. Idempotent."""
@@ -1557,8 +1596,8 @@ class AudioTap(object):
         return {
             "streaming": self.subscribed,
             "clients": len(AudioWebSocket.clients),
-            "sample_rate": AUDIO_SAMPLE_RATE,
-            "channels": 1,
+            "sample_rate": self.rate_for(self.channels),
+            "channels": self.channels,
             "format": "pcm_s16le",
             "muted": self.muted(),
             "frames": self.frames,
@@ -1581,7 +1620,15 @@ class AudioTap(object):
                 data = bytes(buffer)
             except Exception:
                 data = str(buffer)
-            main_ioloop().add_callback(AudioWebSocket.broadcast, data)
+            if self.channels == 4 and nb_channels == 4:
+                if audioop is not None:  # 48 -> 16 kHz on the robot: a third of the Wi-Fi
+                    data, self._resample_state = audioop.ratecv(
+                        data, 2, 4, AUDIO_ALL_RATE, AUDIO_SAMPLE_RATE, self._resample_state
+                    )
+                frames = {4: data, 1: _pcm_channel(data, AUDIO_FRONT, 4)}
+            else:
+                frames = {1: data}
+            main_ioloop().add_callback(AudioWebSocket.broadcast, frames)
         except Exception as exc:  # never let an error escape into libqi's thread
             self.dropped += 1
             LOGGER.debug("audio frame dropped: %s", exc)
@@ -2319,19 +2366,25 @@ class AudioWebSocket(tornado.websocket.WebSocketHandler):
                 self.send_json({"type": "error", "error": "unauthorized"})
                 self.close()
                 return
+        self.channels = 4 if self.get_argument("channels", "1") == "4" else 1  # 4: all microphones (0.8)
         AudioWebSocket.clients.add(self)
-        LOGGER.info("audio WS client connected (%d total)", len(AudioWebSocket.clients))
+        LOGGER.info("audio WS client connected (%d total, %d channels)", len(AudioWebSocket.clients), self.channels)
         self.behind = 0  # frames queued while the socket was still writing the previous ones
         self.send_json(
             {
                 "type": "hello",
                 "version": BRIDGE_VERSION,
-                "sample_rate": AUDIO_SAMPLE_RATE,
-                "channels": 1,
+                "sample_rate": AudioTap.rate_for(self.channels),
+                "channels": self.channels,
                 "format": "pcm_s16le",
             }
         )
         _run_in_thread(AudioWebSocket.start_capture)
+
+    @classmethod
+    def wanted_channels(cls):
+        """4 if any connected client asked for all four microphones, else 1."""
+        return 4 if any(getattr(client, "channels", 1) == 4 for client in list(cls.clients)) else 1
 
     @staticmethod
     def start_capture():
@@ -2378,8 +2431,9 @@ class AudioWebSocket(tornado.websocket.WebSocketHandler):
             return False
 
     @classmethod
-    def broadcast(cls, data):
-        """Send one binary PCM frame to every client (IOLoop thread only).
+    def broadcast(cls, frames):
+        """Send one binary PCM frame to every client (IOLoop thread only), in the format each asked for:
+        ``frames`` maps channels (1 or 4) to bytes; plain bytes go to everyone.
 
         Tornado 3.1 has no write-buffer limit, so a host that stops reading would make
         the robot buffer audio without bound; clients that fall AUDIO_MAX_BEHIND frames
@@ -2395,6 +2449,9 @@ class AudioWebSocket(tornado.websocket.WebSocketHandler):
                     continue
             else:
                 client.behind = 0
+            data = frames.get(getattr(client, "channels", 1), frames.get(1)) if isinstance(frames, dict) else frames
+            if data is None:
+                continue
             try:
                 client.write_message(data, binary=True)
             except Exception:

@@ -3,6 +3,7 @@ Tests for AudioStream - the bridge microphone WebSocket client.
 """
 
 import json
+import struct
 from unittest.mock import AsyncMock
 
 from src.pepper.audio_stream import AudioStream
@@ -49,3 +50,50 @@ class TestAudioStream:
         stream = AudioStream("ws://h/ws/audio")
         await stream.stop()
         assert stream.connected is False
+
+
+def four_channel_pcm(n, value=1000):
+    return struct.pack("<%dh" % (4 * n), *([value, value, value, value] * n))
+
+
+class TestBeamformingStream:
+    def test_asks_for_four_channels_only_when_beamforming(self):
+        assert AudioStream("ws://h/ws/audio", beamform=True).url == "ws://h/ws/audio?channels=4"
+        assert AudioStream("ws://h/ws/audio", api_key="k", beamform=True).url == "ws://h/ws/audio?channels=4&api_key=k"
+
+    async def test_four_channels_become_one_beamformed_channel(self):
+        stream = AudioStream("ws://h/ws/audio", beamform=True)
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 4}))
+        assert stream.beamformer is not None and stream._downsampler is None
+        cb, raw = AsyncMock(), []
+        stream.on_audio(cb)
+        stream.on_raw(lambda pcm, channels: raw.append((len(pcm), channels)))
+        await stream._dispatch(four_channel_pcm(1024))  # four hops of 256
+        pcm = cb.await_args.args[0]
+        assert len(pcm) == 1024 * 2  # mono, 16-bit
+        assert raw == [(1024 * 4 * 2, 4)]
+
+    async def test_48k_from_a_bridge_without_audioop_is_resampled(self):
+        stream = AudioStream("ws://h/ws/audio", beamform=True)
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 48000, "channels": 4}))
+        assert stream._downsampler is not None
+        cb = AsyncMock()
+        stream.on_audio(cb)
+        await stream._dispatch(four_channel_pcm(3 * 1024))
+        assert len(cb.await_args.args[0]) == 1024 * 2
+
+    async def test_an_older_bridge_with_one_channel_passes_through(self):
+        stream = AudioStream("ws://h/ws/audio", beamform=True)
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 1}))
+        assert stream.beamformer is None
+        cb = AsyncMock()
+        stream.on_audio(cb)
+        await stream._dispatch(b"\x01\x00\x02\x00")
+        cb.assert_awaited_once_with(b"\x01\x00\x02\x00")
+
+    async def test_a_new_hello_resets_the_beamformer(self):
+        stream = AudioStream("ws://h/ws/audio", beamform=True)
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 4}))
+        first = stream.beamformer
+        stream._handle_text(json.dumps({"type": "hello", "sample_rate": 16000, "channels": 4}))
+        assert stream.beamformer is not first

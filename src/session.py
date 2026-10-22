@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+import wave
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -57,3 +58,38 @@ class SessionRecorder:
                 fh.write(text + "\n")
         except Exception as exc:  # noqa: BLE001 - a lost record must never break a conversation
             self.logger.warning(f"Could not write {name}: {exc}")
+
+
+class WavWriter:
+    """A WAV file written as audio arrives (RECORD_MICROPHONES: the four microphones of a session, for tuning the
+    beamformer offline). Opened on the first write; never raises into the caller."""
+
+    def __init__(self, path: str, channels: int, rate: int):
+        self.path = path
+        self.channels = channels
+        self.rate = rate
+        self.frames = 0
+        self._wav: Any = None
+        self._lock = threading.Lock()
+
+    def write(self, pcm: bytes):
+        with self._lock:
+            try:
+                if self._wav is None:
+                    self._wav = wave.open(self.path, "wb")
+                    self._wav.setnchannels(self.channels)
+                    self._wav.setsampwidth(2)
+                    self._wav.setframerate(self.rate)
+                self._wav.writeframes(pcm)
+                self.frames += len(pcm) // (2 * self.channels)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"could not write {self.path}: {exc}")
+
+    def close(self):
+        with self._lock:
+            if self._wav is not None:
+                try:
+                    self._wav.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._wav = None

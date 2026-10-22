@@ -9,6 +9,7 @@ facade against fake NAOqi services, and check for Python-3-only syntax.
 import ast
 import math
 import importlib.util
+import struct
 import sys
 import types
 from pathlib import Path
@@ -1017,7 +1018,7 @@ class TestAudioTap:
         assert sent == [] and audio.frames == 1
         audio.start()
         audio.on_buffer(1, 4, [0, 0], bytearray(frame))
-        assert sent == [(bridge.AudioWebSocket.broadcast, (frame,))]
+        assert sent == [(bridge.AudioWebSocket.broadcast, ({1: frame},))]
         audio.speaking_begin()
         audio.on_buffer(1, 4, [0, 0], frame)
         assert len(sent) == 1 and audio.dropped == 1
@@ -1027,6 +1028,42 @@ class TestAudioTap:
         audio.muted_until = 0.0
         audio.on_buffer(1, 4, [0, 0], frame)
         assert len(sent) == 2
+
+    def test_a_four_channel_client_subscribes_all_microphones_at_48k(self, bridge, robot, audio):
+        connect_client(bridge)
+        audio.start()
+        four = connect_client(bridge)
+        four.channels = 4
+        info = audio.start()  # the need changed: resubscribe
+        device = calls(robot, "ALAudioDevice")
+        assert ("setClientPreferences", ("PepperBridgeAudio", 48000, 0, 0)) in device
+        assert device[-3:] == [
+            ("unsubscribe", ("PepperBridgeAudio",)),
+            ("setClientPreferences", ("PepperBridgeAudio", 48000, 0, 0)),
+            ("subscribe", ("PepperBridgeAudio",)),
+        ]
+        assert info["channels"] == 4 and info["sample_rate"] == bridge.AudioTap.rate_for(4)
+        audio.start()  # idempotent
+        assert calls(robot, "ALAudioDevice").count(("subscribe", ("PepperBridgeAudio",))) == 2
+
+    def test_four_channel_frames_go_out_resampled_and_the_front_one_to_mono_clients(self, bridge, audio, sent):
+        four = connect_client(bridge)
+        four.channels = 4
+        mono = connect_client(bridge)
+        audio.start()
+        n = 480  # 10 ms at 48 kHz, channel c holds the value c + 1
+        frame = struct.pack("<%dh" % (4 * n), *([1000, 2000, 3000, 4000] * n))
+        audio.on_buffer(4, n, [0, 0], frame)
+        fn, (frames,) = sent[-1]
+        fn(frames)
+        out4, out1 = four.frames[-1], mono.frames[-1]
+        values = struct.unpack("<%dh" % (len(out4) // 2), out4)
+        if bridge.audioop is not None:  # Python 2.7 on the robot: resampled to 16 kHz there
+            assert abs(len(values) // 4 - n // 3) <= 1
+        else:  # Python 3.13+: sent at 48 kHz, the host resamples
+            assert len(values) // 4 == n
+        assert set(values[2::4][2:]) == {3000}
+        assert set(struct.unpack("<%dh" % (len(out1) // 2), out1)[2:]) == {3000}  # the front microphone
 
     def test_tts_status_events_mute_capture(self, robot, audio):
         status = robot.session.service("ALMemory").subscribers[0]

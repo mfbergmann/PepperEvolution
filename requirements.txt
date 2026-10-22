@@ -10,6 +10,7 @@ websockets>=13.0
 
 # Image handling (camera frames -> JPEG for the vision model, fake camera)
 Pillow>=10.0.0
+numpy>=1.26  # the camera change check (#33) and beamforming (#34)
 
 # AI providers
 anthropic>=1.0.0

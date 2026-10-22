@@ -274,6 +274,28 @@ class TestBridgeEndToEnd:
         info = await client.audio_stream_info()
         assert info["streaming"] is False and info["clients"] == 0  # capture stops with the last client
 
+    async def test_four_microphones_are_beamformed_into_one_channel(self, client, bridge_process):
+        stream = AudioStream(f"ws://127.0.0.1:{bridge_process['port']}/ws/audio", api_key="testkey", beamform=True)
+        frames, raw = [], []
+
+        async def on_audio(pcm):
+            frames.append(pcm)
+
+        stream.on_audio(on_audio)
+        stream.on_raw(lambda pcm, channels: raw.append(len(pcm) // (2 * channels)))
+        await stream.start()
+        try:
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline and sum(len(f) for f in frames) < 16000:
+                await asyncio.sleep(0.05)
+            assert stream.channels == 4 and stream.sample_rate in (16000, 48000)  # 48 kHz: a bridge without audioop
+            assert sum(len(f) for f in frames) >= 16000, "no beamformed audio within 8s"
+            assert abs(sum(raw) - sum(len(f) for f in frames) // 2) <= 512  # mono out for every 16 kHz frame in
+            info = await client.audio_stream_info()
+            assert info["streaming"] is True and info["channels"] == 4
+        finally:
+            await stream.stop()
+
     async def test_audio_stream_requires_the_api_key(self, bridge_process):
         stream = AudioStream(f"ws://127.0.0.1:{bridge_process['port']}/ws/audio", api_key="wrong")
         await stream.start()

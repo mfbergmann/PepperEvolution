@@ -8,6 +8,11 @@ The bridge sends one JSON text frame first::
 and then binary frames of 16-bit little-endian PCM (85 ms each on the robot) while
 the robot is not speaking. ``{"type": "state", ...}`` and ``{"type": "error", ...}``
 text frames may follow. Reconnects automatically like :class:`EventStream`.
+
+With ``beamform=True`` (bridge 0.8, issue #34) it asks for all four microphones (``?channels=4``), resamples them
+to 16 kHz if the bridge could not, and beamforms them into one channel, so callbacks still receive mono 16 kHz PCM.
+An older bridge answers with one channel, which is passed through unchanged. ``on_raw`` callbacks receive the
+four-channel 16 kHz audio itself (for recording a session).
 """
 
 import asyncio
@@ -26,6 +31,7 @@ except ImportError:  # pragma: no cover - very old websockets
 
 
 AudioCallback = Callable[[bytes], Awaitable[None]]
+RawCallback = Callable[[bytes, int], None]  # interleaved PCM, channels
 
 
 class AudioStream:
@@ -33,9 +39,13 @@ class AudioStream:
 
     RECONNECT_DELAY = 3.0
 
-    def __init__(self, ws_url: str, api_key: str = ""):
+    def __init__(self, ws_url: str, api_key: str = "", beamform: bool = False):
         self.ws_url = ws_url
         self.api_key = api_key
+        self.beamform = beamform
+        self.beamformer: Any = None  # src.audio.beamformer.Beamformer while four channels arrive
+        self._downsampler: Any = None
+        self._raw_callbacks: List[RawCallback] = []
         self.logger = logger.bind(module="AudioStream")
         self.sample_rate = 16000
         self.channels = 1
@@ -55,9 +65,15 @@ class AudioStream:
         """Register an async callback receiving each PCM frame (bytes)."""
         self._callbacks.append(callback)
 
+    def on_raw(self, callback: RawCallback):
+        """Register a plain callback receiving the four-channel audio before beamforming."""
+        self._raw_callbacks.append(callback)
+
     @property
     def url(self) -> str:
         url = self.ws_url
+        if self.beamform:
+            url = f"{url}{'&' if '?' in url else '?'}channels=4"
         if self.api_key:
             sep = "&" if "?" in url else "?"
             url = f"{url}{sep}api_key={self.api_key}"
@@ -143,6 +159,7 @@ class AudioStream:
             self.logger.info(
                 f"Microphone stream connected: {self.sample_rate} Hz, {self.channels} ch, {self.audio_format}"
             )
+            self._prepare_beamforming()
         elif kind == "state":
             if "streaming" in msg:
                 self.streaming = bool(msg["streaming"])
@@ -154,9 +171,49 @@ class AudioStream:
             else:
                 self._backoff = 5.0  # e.g. NAOqi still booting: the bridge closes us, we retry a little later
 
+    def _prepare_beamforming(self):
+        """A new stream: fresh beamformer state (a restarted bridge, or the robot moved and the room changed)."""
+        self.beamformer = self._downsampler = None
+        if not self.beamform:
+            return
+        if self.channels != 4:
+            self.logger.warning("The bridge sends one microphone (older than 0.8?): beamforming is off")
+            return
+        from ..audio.beamformer import Beamformer, Downsampler  # numpy, from requirements-voice.txt
+
+        self.beamformer = Beamformer()
+        if self.sample_rate == 48000:
+            self._downsampler = Downsampler()
+        elif self.sample_rate != 16000:
+            self.logger.warning(f"Unexpected four-channel rate {self.sample_rate} Hz: beamforming is off")
+            self.beamformer = None
+
+    def _to_mono(self, pcm: bytes) -> bytes:
+        """Four channels in, the beamformed channel out (16 kHz)."""
+        import numpy as np
+
+        x = np.frombuffer(pcm, dtype="<i2").astype(float).reshape(-1, 4) / 32768.0
+        if self._downsampler is not None:
+            x = self._downsampler.process(x)
+        if self._raw_callbacks:
+            raw = (np.clip(x, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+            for raw_cb in self._raw_callbacks:
+                try:
+                    raw_cb(raw, 4)
+                except Exception as exc:  # noqa: BLE001 - recording must not stop the stream
+                    self.logger.debug(f"raw audio callback failed: {exc}")
+        y = self.beamformer.process(x)
+        return (np.clip(y, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+
     async def _dispatch(self, pcm: bytes):
         self.frames += 1
         self.bytes_received += len(pcm)
+        if self.channels == 4:
+            if self.beamformer is None:
+                return  # four channels but no beamformer: nothing sensible to hand on
+            pcm = self._to_mono(pcm)
+            if not pcm:
+                return
         for cb in self._callbacks:
             try:
                 await cb(pcm)

@@ -47,15 +47,20 @@ _STATE = {
 _SUBSCRIBERS = {}  # service -> set of subscriber names
 _SERVICES = {}  # name -> object registered with Session.registerService
 _AUDIO_PUMPS = {}  # subscriber name -> _AudioPump thread (ALAudioDevice.subscribe)
+_AUDIO_PREFS = {}  # subscriber name -> (sample rate, channel) from setClientPreferences (channel 0: all four at 48 kHz)
 
 AUDIO_FRAME_SAMPLES = 1365  # 85 ms at 16 kHz, measured on the robot (NAOqi 2.5.10)
 AUDIO_FRAME_PERIOD = 0.085
 
 
-def _tone_frame(n, phase):
-    """n samples of a 440 Hz tone as 16-bit little-endian PCM (what ALAudioDevice hands to processRemote)."""
-    samples = [int(3000 * math.sin(2 * math.pi * 440 * (phase + i) / 16000.0)) for i in range(n)]
-    return struct.pack("<%dh" % n, *samples)
+def _tone_frame(n, phase, rate=16000, channels=1):
+    """n samples (per channel) of a 440 Hz tone as interleaved 16-bit little-endian PCM, like ALAudioDevice's buffers;
+    channel c of a four-channel frame is scaled by (c + 1) so tests can tell the microphones apart."""
+    samples = []
+    for i in range(n):
+        value = 3000 * math.sin(2 * math.pi * 440 * (phase + i) / float(rate))
+        samples.extend(int(value * (c + 1) / channels) for c in range(channels))
+    return struct.pack("<%dh" % len(samples), *samples)
 
 
 class _AudioPump(object):
@@ -77,11 +82,14 @@ class _AudioPump(object):
                 continue
             now = time.time()
             stamp = [int(now), int((now - int(now)) * 1e6)]
+            rate, channel = _AUDIO_PREFS.get(self.subscriber, (16000, 3))
+            channels = 4 if channel == 0 else 1
+            n = AUDIO_FRAME_SAMPLES * rate // 16000
             try:
-                target.processRemote(1, AUDIO_FRAME_SAMPLES, stamp, _tone_frame(AUDIO_FRAME_SAMPLES, self.phase))
+                target.processRemote(channels, n, stamp, _tone_frame(n, self.phase, rate, channels))
             except Exception as exc:  # the real ALAudioDevice would just drop the frame
                 LOG.warning("processRemote failed: %s", exc)
-            self.phase += AUDIO_FRAME_SAMPLES
+            self.phase += n
 
     def stop(self):
         self.running = False
@@ -229,6 +237,8 @@ class _Service(object):
                 pump.stop()
             return None
         if method == "setClientPreferences":
+            if self.name == "ALAudioDevice":
+                _AUDIO_PREFS[args[0]] = (int(args[1]), int(args[2]))
             return None
         if method == "subscriber":
             return _Subscriber(args[0])

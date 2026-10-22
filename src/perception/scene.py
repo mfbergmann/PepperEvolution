@@ -67,6 +67,7 @@ PLACE_PROMPT = (
     "ignore reflections."
 )
 EVERY = 20.0  # seconds between looks while someone stays in view
+CHANGE_GAP = 5.0  # seconds: a changed view (WATCH_ROOM, #33) brings the next look forward, but not more often
 PLACE_TIMEOUT = 3.0
 COUNTS = {"none": 0, "one": 1, "two_or_more": 2}
 
@@ -96,15 +97,17 @@ class ScenePass:
         self.looks = 0
         self.logger = logger.bind(module="ScenePass")
 
-    def offer(self, jpeg: bytes, head_yaw: Optional[float] = None):
-        """A frame from the camera stream: look at it if a look is due (someone new, or ``every`` has passed)."""
+    def offer(self, jpeg: bytes, head_yaw: Optional[float] = None, changed: bool = False):
+        """A frame from the camera stream: look at it if a look is due (someone new, the view changed, or ``every``
+        has passed)."""
         if self._busy:
             return
         now = self._clock()
         count = self.world.count or 0
         new_people = count > self._seen_count
         self._seen_count = count
-        due = self._last_look is None or now - self._last_look >= self.every or new_people
+        since = None if self._last_look is None else now - self._last_look
+        due = since is None or since >= self.every or new_people or (changed and since >= CHANGE_GAP)
         if not due:
             return
         self._busy = True

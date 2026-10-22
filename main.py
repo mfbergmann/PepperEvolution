@@ -42,7 +42,7 @@ from src.perception.scene import ScenePass  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
 from src.ai.reflection import Reflection  # noqa: E402
 from src.memory import Memory, MemoryStore  # noqa: E402
-from src.session import SessionRecorder  # noqa: E402
+from src.session import SessionRecorder, WavWriter  # noqa: E402
 from src.world import Observation, WorldModel  # noqa: E402
 from src.world.observations import IDENTITY, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
 
@@ -104,6 +104,10 @@ class Settings:
     scene_model: str = "qwen3.5:4b"
     wait_for_unfinished: bool = True
     initiative: bool = False
+    beamform: bool = False
+    record_microphones: bool = False
+    watch_room: bool = False
+    voice_glances: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -160,6 +164,10 @@ class Settings:
             scene_model=os.getenv("SCENE_MODEL") or "qwen3.5:4b",
             wait_for_unfinished=env_bool("WAIT_FOR_UNFINISHED", True),
             initiative=env_bool("INITIATIVE", False),
+            beamform=env_bool("BEAMFORM", False),
+            record_microphones=env_bool("RECORD_MICROPHONES", False),
+            watch_room=env_bool("WATCH_ROOM", False),
+            voice_glances=env_bool("VOICE_GLANCES", False),
         )
 
 
@@ -205,6 +213,7 @@ class PepperEvolution:
         self.logger = logger.bind(module="PepperEvolution")
         self.robot: Optional[PepperRobot] = None
         self.ai_manager: Optional[AIManager] = None
+        self.microphones: Optional[WavWriter] = None  # RECORD_MICROPHONES
         self.api_server: Optional[APIServer] = None
         self.voice: Optional[VoiceInput] = None
         self.world = WorldModel()
@@ -310,8 +319,11 @@ class PepperEvolution:
                 # stream while someone is in view, or while someone talks with Pepper whom the detector has lost:
                 # then the camera looks for them (#24)
                 wanted=lambda: bool(self.world.count) or self.ai_manager.in_conversation(),
+                watch=s.watch_room,  # and slowly while nobody is, looking for changes (#33)
             )
-            self.vision.start()  # streams only while someone is in view
+            self.vision.start()  # streams while someone is in view (and with WATCH_ROOM, slowly at all times)
+            self.ai_manager.head_angles = lambda: self.vision.head_now() if self.vision is not None else None
+        self.ai_manager.voice_glances = s.voice_glances and s.sound_direction  # glances need voice directions
         if self.decider is not None:
             models = [ADDRESSEE_MODEL] + ([VISION_MODEL] if self.vision is not None else [])
             self.decider.keep_warm(models)  # the first call after an unload takes ~30 s
@@ -356,9 +368,13 @@ class PepperEvolution:
             if s.fake_bridge:
                 self.logger.warning("VOICE_INPUT ignored with the fake bridge (push-to-talk in the UI still works)")
             else:
-                source = AudioStream(config.audio_ws_url, api_key=config.api_key)
+                source = AudioStream(config.audio_ws_url, api_key=config.api_key, beamform=s.beamform)
+                if s.beamform and s.record_microphones and self.recorder is not None:
+                    self.microphones = WavWriter(self.recorder.path("microphones.wav"), channels=4, rate=16000)
+                    source.on_raw(lambda pcm, _channels: self.microphones.write(pcm))
         self.logger.info(
-            f"Voice input: backend={transcriber.name} robot_microphone={'on' if source else 'off'} " f"push_to_talk=on"
+            f"Voice input: backend={transcriber.name} robot_microphone={'on' if source else 'off'} "
+            f"beamforming={'on' if source is not None and s.beamform else 'off'} push_to_talk=on"
         )
         return VoiceInput(
             self.ai_manager,
@@ -452,6 +468,8 @@ class PepperEvolution:
             await self.decider.close()
         if self.voice:
             await self.voice.stop()
+        if self.microphones is not None:
+            self.microphones.close()
         if self.api_server:
             await self.api_server.stop()
         if self.robot:

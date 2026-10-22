@@ -2,6 +2,11 @@
 Camera judgements: small frames from the bridge (/ws/camera) go to a local decision model with images (Clef Flash)
 about once a second while someone is in view, and the answers go into the world model (issue #11, #20).
 
+With ``watch`` (WATCH_ROOM, issue #33) the stream also stays open while nobody is in view, slowly (IDLE_FPS), and a
+cheap change check on every frame (src/perception/change.py) decides when to look closer: a changed view asks where
+the nearest person is and brings the next scene note forward. Nothing wakes the mind; what is found goes into working
+memory, where the "Around you" line and recall see it.
+
 Only questions with fixed answers, no descriptions: is someone waving, holding something up to show Pepper, facing
 the camera? A judgement that holds for two frames in a row becomes an event ("[Sensor event] Someone is waving at
 you."), with a cooldown, so Claude is only woken when something happens. Frames stay in memory; with
@@ -19,6 +24,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from loguru import logger
 
 from ..world.observations import CAMERA
+from .change import ChangeDetector
 from .geometry import offsets
 from .scene import PEOPLE_MODEL, PEOPLE_QUESTIONS
 from .scene import STATE as SCENE_STATE
@@ -45,7 +51,8 @@ FIND_AT = 0.7  # how sure Clef Flash must be that a real person is in the frame 
 THIRDS = {"left": offsets(1 / 6, 0.5)[0], "centre": 0.0, "right": offsets(5 / 6, 0.5)[0]}  # degrees from the middle
 COOLDOWN = 30.0  # seconds between events of the same kind
 JUDGE_TIMEOUT = 1.0
-STOP_AFTER_EMPTY = 5.0  # seconds with nobody in view before the stream is closed (Wi-Fi, shared GPU)
+STOP_AFTER_EMPTY = 5.0  # seconds with nobody in view before the stream is closed or slowed (Wi-Fi, shared GPU)
+IDLE_FPS = 0.5  # watching an empty room (WATCH_ROOM): the robot's CPU and Wi-Fi carry this all the time
 
 EventCallback = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
@@ -64,11 +71,17 @@ class FrameWatcher:
         clock: Callable[[], float] = time.monotonic,
         scene: Optional[Any] = None,
         wanted: Optional[Callable[[], bool]] = None,
+        watch: bool = False,
+        idle_fps: float = IDLE_FPS,
     ):
+        self.watch = watch  # keep a slow stream open while nobody is in view, looking for changes (#33)
+        self.idle_fps = idle_fps
+        self.changes = ChangeDetector()
         self.scene = scene  # ScenePass (src/perception/scene.py): an occasional scene note from the same frames
         # stream while this is true: someone in view, or (main.py) someone talking with Pepper whom the detector lost
         self._wanted = wanted or (lambda: bool(self.world.count))
         self.head: Optional[List[float]] = None  # the head's [yaw, pitch] for the latest frame (bridge 0.7)
+        self.head_at: Optional[float] = None
         self._last_find: Optional[float] = None
         self._finding = False
         self.found = 0
@@ -110,30 +123,43 @@ class FrameWatcher:
             except (asyncio.CancelledError, Exception):
                 pass
 
-    def _stream_url(self) -> str:
-        url = f"{self.url}?fps={self.fps:g}"
+    def _stream_url(self, fps: Optional[float] = None) -> str:
+        url = f"{self.url}?fps={self.fps if fps is None else fps:g}"
         return f"{url}&api_key={self.api_key}" if self.api_key else url
+
+    def _rate(self) -> Optional[float]:
+        """Frames per second wanted now: the full rate while someone is in view (or talking), the idle rate while
+        watching an empty room, or None for no stream."""
+        if self._wanted():
+            return self.fps
+        return self.idle_fps if self.watch else None
 
     async def _loop(self):
         while self._running:
-            if not self._wanted():
+            rate = self._rate()
+            if rate is None:
                 await asyncio.sleep(0.5)  # NAOqi's people detection (or a conversation) is the trigger
                 continue
             try:
-                async with ws_connect(self._stream_url(), open_timeout=10, max_size=None) as ws:
-                    self.logger.info("Camera stream open (someone in view)")
+                async with ws_connect(self._stream_url(rate), open_timeout=10, max_size=None) as ws:
+                    why = "someone in view" if rate == self.fps and self._wanted() else "watching the room"
+                    self.logger.info(f"Camera stream open at {rate:g} fps ({why})")
+                    self.changes.reset()
                     empty_since: Optional[float] = None
                     async for message in ws:
                         if isinstance(message, (bytes, bytearray)):
                             self.frame(bytes(message))
                         else:
                             self._text(message)
-                        if self._wanted():
+                        wanted = self._rate()
+                        if wanted == rate:
                             empty_since = None
+                        elif wanted is not None and wanted > rate:
+                            break  # someone appeared: reopen at the full rate at once
                         elif empty_since is None:
                             empty_since = self._clock()
                         elif self._clock() - empty_since > STOP_AFTER_EMPTY:
-                            break
+                            break  # nobody for a while: slow down, or close
                     self.logger.info("Camera stream closed")
             except asyncio.CancelledError:
                 raise
@@ -144,13 +170,18 @@ class FrameWatcher:
     # -- judgements --------------------------------------------------------------
 
     def frame(self, jpeg: bytes):
-        """A new frame: judge it unless the previous judgement is still running (then drop it)."""
+        """A new frame: judge it unless the previous judgement is still running (then drop it). While only watching
+        an empty room, a frame is looked into only when the view changed."""
         self.frames += 1
         head_yaw = self.head[0] if self.head else None
+        changed = self._changed(jpeg, head_yaw)
+        active = self._wanted()
         if self.scene is not None:
-            self.scene.offer(jpeg, head_yaw=head_yaw)
-        if self.world.count == 0:  # the detector reported nobody (None: no report yet)
+            self.scene.offer(jpeg, head_yaw=head_yaw, changed=changed)
+        if self.world.count == 0 and (active or changed):  # the detector reported nobody (None: no report yet)
             self._find_person(jpeg, head_yaw)
+        if self.watch and not active:
+            return  # only watching an empty room: the judgements are for people
         if self._busy:
             self.dropped += 1
             return
@@ -158,6 +189,23 @@ class FrameWatcher:
         task = asyncio.create_task(self._judge(jpeg))
         self._judging.add(task)
         task.add_done_callback(self._judging.discard)
+
+    def head_now(self, fresh: float = 3.0) -> Optional[List[float]]:
+        """The head's [yaw, pitch] if a frame reported it in the last ``fresh`` seconds (the stream is open)."""
+        if self.head is None or self.head_at is None or self._clock() - self.head_at > fresh:
+            return None
+        return self.head
+
+    def _changed(self, jpeg: bytes, head_yaw: Optional[float]) -> bool:
+        pose = getattr(self.world, "pose", None)
+        where = (pose.x, pose.y, pose.theta) if pose is not None and hasattr(pose, "theta") else None
+        if not self.changes.feed(jpeg, head=self.head, pose=where):
+            return False
+        share = round(self.changes.last_share, 3)
+        self.world.note(CAMERA, "view_changed", share=share, head_yaw=head_yaw)
+        if self.recorder is not None:
+            self.recorder.record_event("view_changed", share=share, head_yaw=head_yaw)
+        return True
 
     def _text(self, message: Any):
         """A text frame: ``hello``, or (bridge 0.7) the head's angles for the frame that follows."""
@@ -167,6 +215,7 @@ class FrameWatcher:
             return
         if isinstance(data, dict) and data.get("type") == "frame" and isinstance(data.get("head"), list):
             self.head = [float(v) for v in data["head"][:2]]
+            self.head_at = self._clock()
 
     # -- the camera fallback for "come to me" (#24) ---------------------------------------------------------------
 

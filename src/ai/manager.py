@@ -11,7 +11,7 @@ import random
 import time
 from datetime import datetime
 from collections import deque
-from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Set
+from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Sequence, Set
 
 from loguru import logger
 
@@ -20,6 +20,7 @@ from ..decide.router import Routed
 from ..decide.router import choose as choose_action
 from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
+from .glance import glance_target, people_yaws
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import HEARD, MIND, SAID
 from ..world.views import addressee_context
@@ -177,6 +178,9 @@ class AIManager:
         self.recorder: Optional[Any] = None  # SessionRecorder (src/session.py): turns.jsonl and events.jsonl
         self._rec: Optional[Dict[str, Any]] = None  # the record of the turn being run
         self._voice_line = ""  # where the voice of the turn being run came from (sound direction)
+        self.voice_glances = False  # VOICE_GLANCES: turn the head towards a voice from where nobody is seen (#33)
+        self.head_angles: Optional[Callable[[], Optional[Sequence[float]]]] = None  # main.py: the camera's head angles
+        self._last_glance: Optional[float] = None
 
     # Backwards-compatible alias (older code/tests used context_window = pairs kept)
     @property
@@ -253,6 +257,7 @@ class AIManager:
             self._note_heard(user_input, source, addressed=meant)
             if not meant:
                 # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
+                self._glance_at_voice(rec)
                 result = self._bare_result("", source, client_id, "not_addressed")
                 self._finish_record(rec, result)
                 self._look_at_speaker()
@@ -279,6 +284,8 @@ class AIManager:
                     f"[Already started: {routed.description}. It is under way, so do not do it again; say a few "
                     f"words and do anything else that was asked.] {user_input}"
                 )
+            else:
+                self._glance_at_voice(rec)  # no action started: the head is free to look towards the voice
         submitted = self._clock()
         async with self._lock:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
@@ -467,6 +474,35 @@ class AIManager:
             "lowered it. Say something brief and friendly (they may have shaken it gently), or stay quiet."
         )
         task = asyncio.create_task(self._react(prompt, self._clock(), kind="handshake"), name="handshake-close")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _glance_at_voice(self, rec: Dict[str, Any]):
+        """Reflex, no model: the voice came from where nobody is seen, so turn the head there and let the camera and
+        face tracking find the speaker (src/ai/glance.py). Head only."""
+        if not self.voice_glances or self.world is None:
+            return
+        if self.busy or self.robot.direct_commands_running or self.robot.halted:
+            return  # a running turn may be using the head
+        head = self.head_angles() if self.head_angles is not None else None
+        now = self._clock()
+        target = glance_target(
+            rec.get("voice"), people_yaws(self.world), head[0] if head else None, now, self._last_glance
+        )
+        if target is None:
+            return
+        self._last_glance = now
+        rec["glance"] = round(target, 1)
+        self.logger.info(f"Glancing towards the voice: yaw {target:.0f}")
+        self._event("glance", yaw=round(target, 1), bearing=(rec.get("voice") or {}).get("bearing"))
+
+        async def look():
+            try:
+                await self.robot.move_head(target, self.NEUTRAL_HEAD[1], speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+            except Exception as exc:  # noqa: BLE001 - a missed glance is not worth an error
+                self.logger.debug(f"Could not glance towards the voice: {exc}")
+
+        task = asyncio.create_task(look(), name="glance-at-voice")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
