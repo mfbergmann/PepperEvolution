@@ -216,7 +216,7 @@ class SherpaTranscriber(Transcriber):
         self,
         model_dir: str,
         num_threads: int = 2,
-        trailing_silence: float = 1.4,  # end of a turn; 1.0 cut people off mid-thought (robot, 2026-10-20)
+        trailing_silence: float = 1.2,  # end of turn; 1.0 cut people off (10-20), 1.4 felt a little long (10-22)
         decoding_method: str = "greedy_search",
     ):
         self.model_dir = os.path.expanduser(model_dir or "")

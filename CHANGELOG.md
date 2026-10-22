@@ -12,7 +12,8 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 - **Sound direction switched off after a bridge restart** (deploy or watchdog). The host now asks for it again on every reconnect.
 - **Two answers to Pepper's own question went unanswered.** A 4 s sighting of a second "person" (a monitor) had turned off the alone-with-Pepper rule. A crowd now counts once it has lasted 5 s, and until 60 s after it ended rather than after it began.
 - **A fragment answered after the unfinished-sentence hold starts no action.** "I was going to say that", just after "turn left", had turned Pepper again.
-- **End of a turn after 1.4 s of silence instead of 1.0 s,** at the tester's request: people were cut off mid-thought.
+- **End of a turn after 1.2 s of silence instead of 1.0 s.** 1.0 s cut people off mid-thought (2026-10-20); 1.4 s, tried on the robot on 2026-10-22, felt a little long to the tester.
+- **The direction of the voice being answered now wins over where someone was last seen** when Pepper turns to an out-of-view speaker. On 2026-10-22 the voice line said 85° left (right) and a 20 s old sighting said 15° right; Pepper went right.
 - **A bare "enough" no longer silences a reply.** "Good enough?" "Enough" had cut Pepper off; "that's enough" still works.
 - **Initiative may follow up an unanswered question 90 s after the last initiative.** Lingering still waits 3 minutes.
 - **Pointing opens the hand** instead of making a fist.

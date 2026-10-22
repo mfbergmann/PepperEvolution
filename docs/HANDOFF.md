@@ -197,15 +197,30 @@ Solo, in the tester's office (small, with glass walls and a monitor). Five host 
 - New: #31 (voice direction) and #32 (things seen as people).
 - Face identity across encounters (#14) is now wanted. Pepper re-greeted the tester twice as a newcomer, and asked their name again after a short absence.
 
+## Robot session 2026-10-22: results
+
+The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in the office and then the open space. A second person joined for a few minutes of conversation. Pepper had been off since 2026-10-20 and was powered on cold.
+
+| Check | Result |
+|------|--------|
+| Cold boot with the watchdog (#15) | The bridge came up by itself under the watchdog; the host connected at once. #15 closed |
+| End-of-turn silence (#26) | 1.4 s was "ok, if maybe a little long" to the tester. It is now 1.2 s |
+| Side talk with two people (#19, #25) | **Failed:** Pepper joined in on all 12 side-talk utterances. Both people stood out of the camera's view, so the "alone with Pepper" rule answered 11 of them whatever the score (0.05-0.26); the first scored 0.55. Neither Pepper's last sentence in the judgement (no net gain) nor a memory of who was seen fixes it (replays in #25). Next: notice a second voice, or let the mind stay silent on low-scoring turns |
+| Voice direction (#31) | Mostly right where checkable (82° and 80° to the left, both correct). The misses were the mind's: it preferred a 20 s old sighting on the right over an 85° left voice, and it once picked the wrong person on the right side. The instructions now give the voice direction priority |
+| "Come to me" in the open space (#24) | Drives worked once the way was clear (two metres in two moves); the first three were blocked by the desk and the sonar. The camera fallback never ran, because each drive was an explicit move |
+| Open hand when pointing (#28) | Not confirmed by eye yet. Asked to point with one finger, Pepper said it could only point with its whole open hand |
+| Memory | Pepper recognised the tester from 2026-10-20 ("We met on Tuesday"). The second person wasn't stored |
+
+**Other notes:**
+- 12 of 36 replies had four sentences or more; 9 of those were tool turns narrating moves and photos.
+- Three slow first words (11-14 s) were the tester speaking while a 25-30 s move turn was still running.
+
 ## Before the next robot session
 
-1. Ask the tester how the 1.4 s end-of-turn silence felt; check the open hand when pointing.
-2. **In the open space:**
-   - "Come to me" from out of view (camera fallback, #24).
-   - Voice direction at 0°, ±90° and 180°, head centred and turned (#31).
-3. **With a second person:** side talk (#19, #25). This also provides the data to re-benchmark the gate with Pepper's last sentence.
-4. Cold boot: the bridge and watchdog come up by themselves (#15).
-5. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
+1. Check the open hand when pointing (#28), and whether 1.2 s of end-of-turn silence feels right.
+2. **In the open space:** "come to me" from out of view, so the camera fallback runs during a drive (#24); voice direction behind Pepper and with the head turned (#31), now that the mind prefers the voice.
+3. **With a second person,** once a side-talk fix is chosen and built (#25).
+4. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
 
 ## Robot session 2026-10-08: results (system one in the loop)
 

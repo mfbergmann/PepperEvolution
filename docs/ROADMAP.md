@@ -4,7 +4,7 @@ Last updated: October 2026. The design these milestones build towards is in [ARC
 
 ## Where we are
 
-*Updated 2026-10-20, version 0.7.0 plus the fixes from that day's session.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in seven robot sessions so far: the office, the open space outside it, and an evening with two visitors. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
+*Updated 2026-10-22, version 0.7.0 plus the fixes from the sessions of 2026-10-20 and 2026-10-22.* The bridge and host were rewritten in September 2026 (0.1), with a reactive layer and voice input (0.2). They have run on the physical Pepper since 2026-09-22 (Milestone 0), in eight robot sessions so far: the office, the open space outside it, an evening with two visitors, and a conversation with a colleague. Each session is recorded and reviewed, and what it shows becomes the next fixes (`docs/HANDOFF.md` has the details per session; the wiki's Test-sessions page has the summary).
 
 What works on the robot today:
 - **Conversation by voice** through Pepper's own microphone. NVIDIA's Nemotron streaming recogniser runs on the host's CPU, and Claude Sonnet 5.5 answers about 2 s after the transcript; it speaks sentence by sentence with gestures and tablet captions.
@@ -31,13 +31,14 @@ What works on the robot today:
   - a first, opt-in initiative loop (Pepper may speak unprompted).
 
 What is not there yet:
-- **What the 2026-10-20 session left open:**
-  - "come to me" with the camera fallback in the open space (#24);
-  - voice direction behind Pepper (#31);
+- **What the 2026-10-20 and 2026-10-22 sessions left open:**
+  - side talk: Pepper joins a conversation between two people (#25);
+  - "come to me" with the camera fallback during a drive (#24);
+  - voice direction behind Pepper, and the mind using it (#31);
   - things seen as people (#32);
   - then identity across encounters (face, opt-in, #14), which the tester now wants.
 - **Spatial grounding:** "come to me", pointing, looking at a point in a photo, follow me (Milestone 3).
-- **Conversation:** side talk with two people still to be tested, and barge-in (Milestone 2).
+- **Conversation:** side talk with two people. On the robot (2026-10-22) Pepper joined in, because both people stood out of view and the "alone" rule answered everything (#25). Also barge-in (Milestone 2).
 
 Off the robot, about 670 tests run in CI (including the real bridge process under a fake NAOqi and the bridge suite under Python 2.7 + Tornado 3.1.1); NAOqi's desktop build runs as a headless virtual Pepper; and recorded sessions can be replayed.
 
@@ -100,11 +101,10 @@ Goal: people talk to Pepper instead of typing.
 - [x] Turn taking: hold-to-talk in the web UI (browser microphone, raw PCM to `POST /voice/utterance`); the robot microphone path is opt-in with `VOICE_INPUT`.
 - [x] Transcript logging (`VOICE_RECORD_DIR`) for tuning on real audio.
 - [x] Measured on the robot: 7-12.5 s from the final transcript to the first sound at first; after the "speak first" prompt and filler changes, 2.6-3.9 s; with Sonnet 5.5 (2026-10-08) a median of about 2 s, plus 1 s of end-of-speech silence before the transcript. Target is still under 2 s from end of speech (#3).
-- [x] Addressee gate (0.5, #19): open-microphone speech is answered only when it seems meant for Pepper. Alone with Pepper, anything said in a conversation is answered (0.5.1). Still to test with two people; the judgement should also see what Pepper just said (#25).
-- [ ] Sentences cut in two at a pause longer than 1 s (#26): built in 0.7.0. A word rule holds a clearly unfinished utterance for 2.5 s and joins what follows (10 of 11 recorded cut-offs, none of 140 complete utterances held).
+- [x] Addressee gate (0.5, #19): open-microphone speech is answered only when it seems meant for Pepper. Alone with Pepper, anything said in a conversation is answered (0.5.1). With two people (robot, 2026-10-22) Pepper joined their side talk: both stood out of view, so "alone" held. Showing the judgement Pepper's last sentence gave no net gain, and remembering who was seen silences real answers too. The next step is to notice a second voice (#25).
+- [x] Sentences cut in two at a pause longer than 1 s (#26): built in 0.7.0. A word rule holds a clearly unfinished utterance for 2.5 s and joins what follows (10 of 11 recorded cut-offs, none of 140 complete utterances held).
   - On the robot (2026-10-20) a held fragment was joined.
-  - Two cut-offs slipped past the rule, so the end-of-turn silence is now 1.4 s instead of 1.0 s, at the tester's request.
-  - Open until the tester has judged the new timing.
+  - Two cut-offs slipped past the rule, so the end-of-turn silence went from 1.0 s to 1.4 s at the tester's request; on 2026-10-22 that felt a little long, so it is now 1.2 s.
 - [x] Shorter replies in conversation (#19): built in 0.7.0. One or two sentences, then stop.
   - Replayed on 37 recorded turns: 3 sentences on average down to 2.3, replies of four or more from about 42 % to about 20 %.
   - On the robot (2026-10-20): 16 % of 70 replies had four or more sentences, and none of 16 in free conversation.
