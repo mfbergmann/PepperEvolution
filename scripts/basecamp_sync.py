@@ -28,6 +28,7 @@ notifying anyone; new to-dos appear in the project like any other.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -427,7 +428,8 @@ def sync_tasks(state: Dict[str, Any], dry: bool) -> None:
         done = issue["state"] == "CLOSED"
         title = f"#{issue['number']} {issue['title']}"
         if done and issue.get("closedAt"):
-            title += f" (done {issue['closedAt'][:10]})"
+            closed = datetime.datetime.fromisoformat(issue["closedAt"].replace("Z", "+00:00")).astimezone()
+            title += f" (done {closed.date()})"  # the lab's date, not UTC's
         description = f"[GitHub issue #{issue['number']}]({issue['url']}) in {group}."
         sync_todo(state, f"issue:{issue['number']}", group, title, description, done, dry)
     for row in sessions():
