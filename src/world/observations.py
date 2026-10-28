@@ -21,11 +21,13 @@ HEARD = "heard"  # something said near Pepper (a final transcript), with the add
 SAID = "said"  # a sentence Pepper said
 IDENTITY = "identity"  # who someone is (opt-in)
 MIND = "mind"  # something the mind decided to note
+MAP = "map"  # where Pepper is on its saved map (ALNavigation's localization, #36): map frame, never odometry
 
 # frames for anything with a direction (docs/MEMORY.md, "Frames")
 BODY = "body"  # x forward, y left, angles positive to the left, turning with the base
 HEAD = "head"  # the camera's direction; needs the head angles to become a body direction
 ODOM = "odom"  # NAOqi's odometry frame (FRAME_WORLD), fixed from NAOqi start-up
+MAP_FRAME = "map"  # the frame of a saved exploration: kept across restarts, origin where exploring started
 
 
 @dataclass(frozen=True)

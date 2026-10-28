@@ -74,6 +74,10 @@ class FakeBridgeClient:
         }
         self.speech_delay = SIMULATED_SPEECH_SECONDS_PER_WORD
         self.speech = SpeechClock()
+        self.map_saved: List[str] = []
+        self.map_loaded: Optional[str] = None
+        self.map_localizing = False
+        self.map_pose = [0.0, 0.0, 0.0]  # x, y (metres), theta (degrees) in the map
         self.fail_next: Optional[str] = None
 
     # -- plumbing -----------------------------------------------------------
@@ -169,6 +173,76 @@ class FakeBridgeClient:
 
     async def move_to(self, x: float, y: float, theta: float = 0, speed: Optional[float] = None) -> Dict[str, Any]:
         return self._record("move_to", x=x, y=y, theta=theta)
+
+    # -- maps (#36): a pretend office (left) and open space (right) with a door between ---------------------------
+
+    FAKE_MAP = {"resolution": 0.1, "width": 80, "height": 50, "origin": [-2.0, -2.5]}
+
+    def _fake_map_pixels(self) -> bytes:
+        m = self.FAKE_MAP
+        pixels = bytearray()
+        for row in range(m["height"]):
+            for col in range(m["width"]):
+                x = m["origin"][0] + col * m["resolution"]
+                y = m["origin"][1] + row * m["resolution"]
+                outer = row in (0, m["height"] - 1) or col in (0, m["width"] - 1)
+                wall = abs(x - 2.0) < 0.1 and not -0.5 < y < 0.5  # the wall, with a 1 m door
+                pixels.append(0 if outer or wall else 100)
+        return bytes(pixels)
+
+    async def map_status(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "available": True,
+            "loaded": self.map_loaded,
+            "localizing": self.map_localizing,
+            "exploring": False,
+            "maps": list(self.map_saved),
+        }
+        if self.map_localizing:
+            out["position"] = self._fake_position()
+        return out
+
+    def _fake_position(self) -> Dict[str, Any]:
+        x, y, theta = self.map_pose
+        return {"x": round(x, 3), "y": round(y, 3), "theta": round(theta, 1), "uncertainty": [0.1, 0.1]}
+
+    async def map_explore(self, radius: float = 3.0) -> Dict[str, Any]:
+        await asyncio.sleep(0.2)
+        path = f"/home/nao/.local/share/Explorer/fake-{len(self.map_saved) + 1}.explo"
+        self.map_saved.append(path)
+        self.map_loaded, self.map_localizing, self.map_pose = path, True, [0.0, 0.0, 0.0]
+        result = self._record("map_explore", radius=radius, completed=True, status="ok", path=path)
+        return {**result, "position": self._fake_position()}
+
+    async def map_load(self, path: str) -> Dict[str, Any]:
+        self.map_loaded, self.map_localizing = path, False
+        return self._record("map_load", path=path, loaded=True)
+
+    async def map_localize(self, enabled: bool = True, guess: Optional[List[float]] = None) -> Dict[str, Any]:
+        if not enabled:
+            self.map_localizing = False
+            return self._record("map_localize", localizing=False)
+        if not self.map_loaded:
+            raise BridgeError("no map loaded; POST /map/load or /map/explore first")
+        if guess is not None:
+            self.map_pose = [float(v) for v in (list(guess) + [0.0, 0.0, 0.0])[:3]]
+        self.map_localizing = True
+        return {**self._record("map_localize", localizing=True), "position": self._fake_position()}
+
+    async def map_go(self, x: float, y: float, theta: Optional[float] = None) -> Dict[str, Any]:
+        if not self.map_localizing:
+            raise BridgeError("not localized in a map; POST /map/localize first")
+        if not self.state["awake"]:
+            raise BridgeError("robot is resting (motors off); POST /wake_up or /prepare first")
+        await asyncio.sleep(self.speech_delay)
+        self.map_pose = [float(x), float(y), float(theta) if theta is not None else self.map_pose[2]]
+        result = self._record("map_go", x=x, y=y, theta=theta, completed=True, status="target_reached", distance=0.0)
+        return {**result, "position": self._fake_position()}
+
+    async def map_image(self) -> Dict[str, Any]:
+        if not self.map_localizing:
+            raise BridgeError("ALNavigation: localization is not running")
+        return {"ok": True, **self.FAKE_MAP, "data": base64.b64encode(self._fake_map_pixels()).decode("ascii")}
 
     async def stop(self) -> Dict[str, Any]:
         return self._record("stop")

@@ -44,7 +44,7 @@ class TestStore:
             store.add_person("Mira", "")
         with pytest.raises(ConsentRequired):
             store.add_fact("likes jazz", person_id=42)  # no such (consenting) person
-        assert store.counts() == {"people": 0, "facts": 0, "episodes": 0}
+        assert store.counts() == {"people": 0, "facts": 0, "episodes": 0, "maps": 0, "places": 0}
 
     def test_names_match_loosely(self, store):
         store.add_person("Mira  Chen", '"yes please"')

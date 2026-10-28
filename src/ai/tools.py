@@ -288,3 +288,32 @@ MEMORY_TOOLS: List[Dict[str, Any]] = [
     },
 ]
 MEMORY_TOOL_NAMES = [t["name"] for t in MEMORY_TOOLS]
+
+# Offered only with a map (MAP; #36). Exploring is not a tool: only an operator starts it, from the web UI.
+_PLACE = {"type": "object", "properties": {"name": {"type": "string", "description": "The place's name."}}}
+MAP_TOOLS: List[Dict[str, Any]] = [
+    {
+        "name": "go_to_place",
+        "description": "Drive to a place you know on your map, finding a way around obstacles, and face the way you "
+        "faced when it was named. Blocks until you arrive or give up. Fails when you do not know where you are.",
+        "input_schema": {**_PLACE, "required": ["name"]},
+    },
+    {
+        "name": "remember_place",
+        "description": "Name the place where you are now, so you can come back to it (for example when someone says "
+        '"this is the office"). Naming a place again moves it here.',
+        "input_schema": {**_PLACE, "required": ["name"]},
+    },
+    {
+        "name": "forget_place",
+        "description": "Delete a named place from your map.",
+        "input_schema": {**_PLACE, "required": ["name"]},
+    },
+    {
+        "name": "i_am_at_place",
+        "description": "Someone tells you which of your places you are at, because you were lost or unsure: you "
+        "find yourself on your map again there. Does not move you.",
+        "input_schema": {**_PLACE, "required": ["name"]},
+    },
+]
+MAP_TOOL_NAMES = [t["name"] for t in MAP_TOOLS]

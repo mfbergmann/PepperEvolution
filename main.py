@@ -44,9 +44,10 @@ from src.perception.scene import ScenePass  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
 from src.ai.reflection import Reflection  # noqa: E402
 from src.memory import Memory, MemoryStore  # noqa: E402
+from src.navigation import Navigator  # noqa: E402
 from src.session import SessionRecorder, WavWriter  # noqa: E402
 from src.world import Observation, WorldModel  # noqa: E402
-from src.world.observations import IDENTITY, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
+from src.world.observations import IDENTITY, MAP, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -111,6 +112,7 @@ class Settings:
     watch_room: bool = False
     voice_glances: bool = False
     local_microphone: Optional[str] = None
+    map: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -172,6 +174,7 @@ class Settings:
             watch_room=env_bool("WATCH_ROOM", False),
             voice_glances=env_bool("VOICE_GLANCES", False),
             local_microphone=os.getenv("LOCAL_MICROPHONE", "").strip() or None,
+            map=env_bool("MAP", False),
         )
 
 
@@ -279,6 +282,13 @@ class PepperEvolution:
         )
         if self.memory is not None:
             self.logger.info(f"Long-term memory: {self.memory.store.path} {self.memory.store.counts()}")
+        # #36: a map made by exploring, places named on it, driving between them; kept in the long-term store
+        self.navigator: Optional[Navigator] = None
+        if s.map and self.memory is None:
+            self.logger.warning("MAP needs MEMORY_DIR (maps and places are kept in the long-term store): map off")
+        elif s.map:
+            self.navigator = Navigator(self.robot, self.world, self.memory.store)
+            self.ai_manager.use_navigator(self.navigator)
         self.voice = self.build_voice(config)
         self.api_server = APIServer(
             host=s.api_host,
@@ -287,6 +297,7 @@ class PepperEvolution:
             robot=self.robot,
             web_dir=ROOT / "web",
             voice=self.voice,
+            navigator=self.navigator,
         )
 
         if self.voice is not None:
@@ -307,6 +318,8 @@ class PepperEvolution:
                 "Is the bridge running? (python robot_bridge/deploy.py --status)"
             )
         self.robot.on_event(self.ai_manager.handle_event)
+        if self.navigator is not None:
+            await self.navigator.start()  # load the active map and relocalize where Pepper last was
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
         self.vision: Optional[FrameWatcher] = None
         self.scene: Optional[ScenePass] = None
@@ -458,7 +471,7 @@ class PepperEvolution:
         else:
             self.logger.info("Sound direction on: voices get the direction they came from")
 
-    RECORDED_SOURCES = (POSE, MOTION, SOUND, SCENE, IDENTITY, MIND)  # people events are recorded as they come
+    RECORDED_SOURCES = (POSE, MOTION, SOUND, SCENE, IDENTITY, MIND, MAP)  # people events are recorded as they come
 
     def _record_observation(self, obs: Observation):
         """World-model inputs that are not bridge events into events.jsonl, so sessions can be replayed."""
@@ -507,6 +520,8 @@ class PepperEvolution:
             await self.scene.close()
         if getattr(self, "reflection", None) is not None:
             await self.reflection.stop()
+        if getattr(self, "navigator", None) is not None:
+            await self.navigator.stop()  # keeps where Pepper is on the map, for relocalizing next time
         await self._save_bridge_log()
         if self.decider is not None:
             await self.decider.close()

@@ -4,7 +4,7 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 **1.0** will mean Pepper can be left running in the lab as a presence: Milestones 4 (world model) and 5 (memory and people) done, and a week of unattended daily use without a safety incident or a restart. See [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## 0.8.0 (unreleased): beamforming, a steady camera stream, glances towards voices
+## 0.8.0 (unreleased): beamforming, a steady camera stream, glances towards voices, a map and places
 
 Built offline after the 2026-10-22 robot session; nothing below has run on the robot yet. The bridge version changed,
 so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All the new switches are off by
@@ -19,6 +19,15 @@ default.
   Neural denoisers were tried first and made recognition worse (18 % to 33 % word errors), so there is none.
 - **`RECORD_MICROPHONES`** keeps the four microphones of a session (`microphones.wav` in the session folder, 16 kHz),
   so the beamformer can be tuned again offline.
+- **A map and remembered places (#36, `MAP`, needs `MEMORY_DIR`).** The bridge exposes NAOqi's own exploration and
+  localization (`/map`, `/map/explore`, `/map/load`, `/map/localize`, `/map/go`, `/map/image`); `/stop` and the
+  emergency stop also end an exploration or a navigation. An operator explores from the web UI's new map panel (radius
+  1-8 m, after a confirmation); the long-term store keeps the map, Pepper's last position on it and the places named
+  on it, and at start-up Pepper relocalizes where it last was. A "Where you are on your map" line goes into every
+  turn, arriving at and leaving places into the timeline, and the mind gets `go_to_place`, `remember_place`,
+  `forget_place` and `i_am_at_place` (never exploring). The map panel draws the map with Pepper and the places, and
+  has save-place-here, go, "Pepper is at" and explore. Checked against the method shapes in NAOqi 2.5's docs, a fake
+  NAOqi and a fake bridge with a pretend office and open space; not yet on the robot.
 - **A microphone on the host (#34, `LOCAL_MICROPHONE`).** Speech recognition can listen to a microphone plugged into
   the desktop instead of Pepper's head, for example a wireless clip-on worn on Pepper's chest, away from the fans. It
   records through `parecord` (PipeWire or PulseAudio; `default` or a source name from `pactl list short sources`) as

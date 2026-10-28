@@ -47,6 +47,9 @@
   #busy { display:none; color:var(--warn); font-size:.85rem; margin-top:6px; }
   #busy.show { display:block; }
   small { color:var(--muted); }
+  #map-img { width:100%; border-radius:8px; border:1px solid #334155; background:#0b1220; display:block; margin-top:8px; image-rendering:pixelated; }
+  .place { display:flex; align-items:center; gap:6px; margin-top:6px; }
+  .place span { flex:1; }
 </style>
 </head>
 <body>
@@ -122,6 +125,17 @@
         <select id="eye"><option>blue</option><option>green</option><option>red</option><option>yellow</option><option>purple</option><option>cyan</option><option>white</option><option>orange</option><option>pink</option><option>off</option></select>
         <button class="secondary" id="eyes">Set eyes</button>
         <input type="text" id="tablet-text" placeholder="Text for the tablet"><button class="secondary" id="tablet">Show</button>
+      </div>
+    </div>
+    <div class="section" id="map-section" style="display:none">
+      <h3>Map and places</h3>
+      <div><small id="map-state">–</small></div>
+      <img id="map-img" alt="Pepper's map: light is free space, dark is walls; red is Pepper, blue circles are places" style="display:none">
+      <div class="row"><input type="text" id="place-name" placeholder="Place name, e.g. the office"><button class="secondary" id="place-save" title="Name the spot where Pepper is now">Save here</button><button class="secondary" id="place-here" title="Pepper is lost: tell it it is at this place">Pepper is at</button></div>
+      <div id="places"></div>
+      <div class="row">
+        radius <input type="number" id="explore-radius" value="3" step="0.5" min="1" max="8" style="width:80px"> m
+        <button class="danger" id="explore" title="Pepper drives around by itself for several minutes">Explore (new map)</button>
       </div>
     </div>
     <div class="section"><small>Direct controls bypass the AI and talk to the bridge. Events from the robot appear in the chat. After an emergency stop, press <b>Wake up</b> (or Prepare) before moving again.</small></div>
@@ -319,9 +333,53 @@ async function initVoice(){
 }
 
 initWebSocket();
+// -- map and places (#36) --
+async function refreshMap(){
+  let m; try{ m=await api('/map'); }catch(err){ return; }
+  const box=document.getElementById('map-section');
+  if(!m.enabled){ box.style.display='none'; return; }
+  box.style.display='';
+  const p=m.position, img=document.getElementById('map-img');
+  let state;
+  if(m.available===false) state='The map is not available on this robot (bridge 0.8 and Pepper\'s NAOqi needed).';
+  else if(!m.map) state='No map yet: explore first, with someone watching.';
+  else if(m.exploring) state='Exploring…';
+  else if(!p) state='Not localized on the map: use "Pepper is at" with a place name.';
+  else state='Pepper is '+(p.place?'at '+p.place:'at x '+p.x.toFixed(1)+' m, y '+p.y.toFixed(1)+' m'+(m.nearest?' (nearest: '+m.nearest+')':''))
+    +((p.uncertainty||[]).some(v=>v>1)?' (unsure)':'')+'.';
+  document.getElementById('map-state').textContent=state;
+  if(m.map && m.localizing){ img.src='/map.png?t='+Date.now(); img.style.display=''; } else img.style.display='none';
+  document.getElementById('places').innerHTML=(m.places||[]).map(pl=>
+    '<div class="place"><span>'+esc(pl.name)+'</span><button class="secondary" data-go="'+esc(pl.name)+'">Go</button>'
+    +'<button class="secondary" data-forget="'+esc(pl.name)+'">Forget</button></div>').join('');
+}
+async function mapCall(label, path, method, body){
+  try{
+    setBusy(true, label+'…');
+    const r=await api(path, method, body);
+    add('sys', label+': '+(r.ok?'ok':'failed - '+esc(r.error||'')));
+  }catch(err){ add('sys', label+' failed: '+esc(err.message)); }
+  finally{ setBusy(false); refreshMap(); }
+}
+const placeName=()=>document.getElementById('place-name').value.trim();
+document.getElementById('place-save').onclick=()=>{ if(placeName()) mapCall('Save place "'+placeName()+'"','/map/place','POST',{name:placeName()}); };
+document.getElementById('place-here').onclick=()=>{ if(placeName()) mapCall('Pepper is at "'+placeName()+'"','/map/here','POST',{name:placeName()}); };
+document.getElementById('places').onclick=(e)=>{
+  const go=e.target.getAttribute('data-go'), forget=e.target.getAttribute('data-forget');
+  if(go) mapCall('Go to "'+go+'"','/map/go','POST',{name:go});
+  if(forget && confirm('Forget the place "'+forget+'"?')) mapCall('Forget "'+forget+'"','/map/place/'+encodeURIComponent(forget),'DELETE');
+};
+document.getElementById('explore').onclick=()=>{
+  const r=parseFloat(document.getElementById('explore-radius').value)||3;
+  if(confirm('Pepper will drive around by itself for several minutes, up to '+r+' m from here, and make a NEW map (places on the old map stay with the old map).\n\nStay close, keep the floor clear and the emergency stop at hand. Start?'))
+    mapCall('Explore '+r+' m','/map/explore','POST',{radius:r});
+};
+
 refreshStatus();
+refreshMap();
 initVoice();
 setInterval(refreshStatus, 10000);
+setInterval(()=>{ if(document.getElementById('map-section').style.display!=='none') refreshMap(); }, 5000);
 add('sys','Connected UI. Type a message, or use the direct controls on the right.');
 </script>
 </body>

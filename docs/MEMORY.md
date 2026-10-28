@@ -216,11 +216,22 @@ Alien3 (RTX 5090, 32 GB) has about 10 GB of GPU memory free next to Nimble and C
 
 The generative models count people in glass reflections and in Pepper's own reflection, even when told not to. So the scene pass (`src/perception/scene.py`) asks each model what it is good at. Clef Flash says who is where, with a probability. qwen3.5:4b describes only the place and the objects, with people left out of its schema; those notes matched the frames, at a median of 0.46 s. Both run in parallel on frames the camera stream already sends, once when someone comes into view and then every 20 s; a look takes about 0.5 s end to end. The scripts and the labels are in `results/system-one/` (local only, because the frames show people).
 
+## Maps and places (#36, built 2026-10-28, not yet on the robot)
+
+Pepper only works in the office and the open space outside it, and the odometry frame resets whenever NAOqi starts, so nothing placed in it survives a reboot. The map frame does: NAOqi 2.5 can explore and localize by itself (`ALNavigation`), and the bridge exposes that (`/map`, `BRIDGE_API.md`).
+
+- **One exploration is one map.** An operator starts it from the web UI with a radius, with someone watching; the mind cannot. To cover both rooms, start it from the office door.
+- **The long-term store keeps** the maps (the `.explo` path on the robot), which one is active, Pepper's last position in it (saved when it changes by 0.2 m or 10°, and at shutdown), and the **places**: a name, a point and a heading in the map frame, and a radius (1.5 m by default) within which Pepper is "at" it. These are lab data, not personal data, and do not expire. "Forget me" does not touch them.
+- **At start-up** (`MAP=true`, needs `MEMORY_DIR`), the host loads the active map and relocalizes around the last saved position. If Pepper was pushed while off, someone tells it where it is ("you're in the office", or "Pepper is at" in the UI) and it relocalizes at that place.
+- **Working memory:** the navigator reads the position every 5 s and hands it in as a `map` observation (map frame, never mixed with the odometry pose or the people tracks), with the place it falls in. Arriving at and leaving a place go into the timeline.
+- **The mind sees** one line per turn, "Where you are on your map: at the office; places you know: the office, the open space.", and has four tools: `go_to_place`, `remember_place`, `forget_place`, `i_am_at_place`.
+- **Readers stay pure:** `src/world/places.py`. The I/O (bridge, store) is in `src/navigation/navigator.py`.
+
 ## Not building (yet)
 
-- maps, SLAM or occupancy grids;
+- SLAM of our own (NAOqi's exploration is used instead);
 - multiple hypotheses per person;
-- persisting working memory across restarts;
+- persisting the rest of working memory (people tracks, the timeline) across restarts;
 - a vector database or a knowledge graph;
 - memory summaries written by the mind every turn;
 - face or voice embeddings before the consent flow exists;

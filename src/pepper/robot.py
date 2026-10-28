@@ -308,6 +308,19 @@ class PepperRobot:
     async def turn(self, angle: float) -> Dict[str, Any]:
         return await self._observed("turn", {"angle": angle}, self.bridge.move_turn(angle))
 
+    async def explore_map(self, radius: float = 3.0) -> Dict[str, Any]:
+        """Explore and map the surroundings (#36): Pepper drives by itself for minutes. Only an operator starts it."""
+        return await self._observed("explore", {"radius": radius}, self.bridge.map_explore(radius))
+
+    async def go_to_map_point(
+        self, x: float, y: float, theta: Optional[float] = None, place: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Drive to a point of the loaded map, around obstacles (#36)."""
+        asked: Dict[str, Any] = {"x": x, "y": y, "theta": theta}
+        if place:
+            asked["place"] = place
+        return await self._observed("navigate", asked, self.bridge.map_go(x, y, theta))
+
     async def _observed(self, kind: str, asked: Dict[str, Any], call: Awaitable[Dict[str, Any]]) -> Dict[str, Any]:
         """Run a base move and tell working memory what was asked and what happened (dead reckoning, #27).
 

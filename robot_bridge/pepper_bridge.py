@@ -29,6 +29,7 @@ import io
 import json
 import logging
 import math
+import os
 import signal
 import sys
 import threading
@@ -164,6 +165,25 @@ SPEECH_STOP_TIMEOUT = 3.0  # /speak/stop keeps stopping for at most this long
 REST_ATTEMPTS = 4  # emergency stop: rest() calls before reporting that the motors are still on
 REST_RETRY_DELAY = 0.3  # seconds between them
 AWARENESS_RESUME_AFTER = 8.0  # seconds a /move/head holds before people tracking takes the head back
+# Maps (#36): ALNavigation's exploration and localization, Pepper only and "experimental" in NAOqi 2.5
+EXPLORE_RADIUS = (1.0, 8.0)  # metres around the start point; one exploration makes one map
+MAP_GO_MAX = 15.0  # metres from where Pepper is: one /map/go never leaves the mapped rooms
+MAP_REACHED = 0.4  # metres: a navigation that ends this close to its target has arrived
+MAP_TURN_TOLERANCE_DEG = 10.0  # navigateToInMap ignores the heading; turn afterwards when further off than this
+EXPLORER_DIR = "/home/nao/.local/share/Explorer"  # where saveExploration() writes .explo files (to check on the robot)
+NAV_CODES = {0: "ok", 1: "failed", 2: "cancelled", 3: "target_reached", 4: "target_not_reached", 5: "target_out_of_map"}
+MAP_METHODS = (
+    "explore",
+    "stopExploration",
+    "saveExploration",
+    "loadExploration",
+    "relocalizeInMap",
+    "startLocalization",
+    "stopLocalization",
+    "getRobotPositionInMap",
+    "navigateToInMap",
+    "getMetricalMap",
+)
 # Head moves are non-blocking in NAOqi (setAngles); photos taken while the head still turns are blurry.
 HEAD_SETTLE_TIMEOUT = 3.0  # seconds /move/head waits for the head to arrive and stop
 HEAD_ON_TARGET_DEG = 3.0  # "arrived": measured angles within this of the target
@@ -453,6 +473,11 @@ class Robot(object):
         self._speech = set()  # qi futures of say() calls in progress, so /speak/stop can end them
         self._speech_lock = threading.Lock()
         self._speech_cancelled_at = 0.0
+        self.map_path = None  # the .explo file loaded in ALNavigation by this bridge
+        self.localizing = False
+        self.exploring = False
+        self._nav_future = None  # explore() or navigateToInMap() in progress, so /stop can cancel it
+        self._nav_cancelled = False
         session.on_connect.append(self.subscribe_extractors)
 
     # -- extractors --------------------------------------------------------
@@ -901,6 +926,7 @@ class Robot(object):
         """Stop base motion and any running animation (animations are behaviours)."""
         motion = self.svc("ALMotion")
         self._try(lambda: self.svc("ALBehaviorManager").stopAllBehaviors())
+        self._cancel_navigation()
         self._try(motion.stopMove)
         self._try(motion.killMove)
         return {}
@@ -909,6 +935,7 @@ class Robot(object):
         """Stop everything that moves or talks, without changing stiffness (used on shutdown)."""
         self._try(lambda: self.svc("ALBehaviorManager").stopAllBehaviors())
         self._try(lambda: self.svc("ALTextToSpeech").stopAll())
+        self._cancel_navigation()
         motion = self.svc("ALMotion")
         self._try(motion.stopMove)
         self._try(motion.killMove)
@@ -926,6 +953,7 @@ class Robot(object):
         motion = self.svc("ALMotion")
         self._try(lambda: self.svc("ALBehaviorManager").stopAllBehaviors())
         self._try(lambda: self.svc("ALTextToSpeech").stopAll())
+        self._cancel_navigation()
         self._try(motion.killMove)
         self._try(motion.killAll)
         # On the robot (NAOqi 2.5.10, Pepper 1.8A) rest() issued right after killAll() returns at
@@ -945,6 +973,181 @@ class Robot(object):
                 "emergency stop: motion killed but the robot is still awake after %d rest() calls", REST_ATTEMPTS
             )
         return {"resting": resting, "awake": not resting, "halted": True}
+
+    # -- maps (#36): ALNavigation exploration and localization ------------------------------------------------
+
+    def _cancel_navigation(self):
+        """Part of every stop: cancel an exploration or a navigation in progress. stopExploration() also ends
+        localization (NAOqi 2.5 docs), so it is called only while exploring; a navigation is cancelled through its
+        future, and ALMotion's own stop (called next by every stop) halts the base."""
+        future = self._nav_future
+        if future is None:
+            return
+        self._nav_cancelled = True
+        self._try(future.cancel)
+        if self.exploring:
+            self._try(lambda: self.svc("ALNavigation").stopExploration())
+
+    def _run_navigation(self, start):
+        """Run explore() or navigateToInMap() as a qi future that /stop can cancel; its error code, 2 if cancelled."""
+        self._nav_cancelled = False
+        future = start()
+        self._nav_future = future
+        try:
+            future.wait()
+        finally:
+            self._nav_future = None
+        if future.hasError():
+            if self._nav_cancelled:
+                return 2
+            raise RuntimeError(future.error())
+        value = future.value()
+        if self._nav_cancelled and value in (None, 0):
+            return 2
+        return 0 if value is None else int(value)  # fakes and old APIs answer None
+
+    def _map_position(self, nav=None):
+        """Where Pepper is in the loaded map: x, y (metres), theta (degrees, left positive) and the uncertainty
+        ellipse's radii (metres); None when not localized."""
+        try:
+            nav = nav or self.svc("ALNavigation")
+            located = nav.getRobotPositionInMap()
+            pose, ellipse = located[0], located[1]
+            return {
+                "x": round(float(pose[0]), 3),
+                "y": round(float(pose[1]), 3),
+                "theta": round(math.degrees(float(pose[2])), 1),
+                "uncertainty": [round(float(v), 3) for v in list(ellipse)[:2]],
+            }
+        except Exception as exc:
+            LOGGER.debug("no position in the map: %s", exc)
+            return None
+
+    def _saved_maps(self):
+        try:
+            names = sorted(n for n in os.listdir(EXPLORER_DIR) if n.endswith(".explo"))
+        except OSError:
+            return []
+        return [os.path.join(EXPLORER_DIR, n) for n in names]
+
+    def map_status(self):
+        nav = self._try(lambda: self.svc("ALNavigation"))
+        available = nav is not None and all(hasattr(nav, m) for m in MAP_METHODS)
+        out = {
+            "available": available,
+            "loaded": self.map_path,
+            "localizing": self.localizing,
+            "exploring": self.exploring,
+            "maps": self._saved_maps(),
+        }
+        if available and self.localizing and not self.exploring:
+            out["position"] = self._map_position(nav)
+        return out
+
+    def map_explore(self, radius):
+        """Explore around Pepper (it drives by itself, blocking for minutes), save the map, start localizing in it.
+        Only an operator starts this (the host never offers it to the model); /stop ends it."""
+        radius = clamp(as_float(radius, 3.0), EXPLORE_RADIUS[0], EXPLORE_RADIUS[1])
+        motion = self.svc("ALMotion")
+        self._ensure_awake(motion)
+        if self.exploring:
+            raise RuntimeError("already exploring")
+        nav = self.svc("ALNavigation")
+        self.localizing = False
+        self.exploring = True
+        started = time.time()
+        try:
+            code = self._run_navigation(lambda: nav.explore(radius, _async=True))
+        finally:
+            self.exploring = False
+        out = {
+            "radius": radius,
+            "code": code,
+            "status": NAV_CODES.get(code, "unknown"),
+            "seconds": round(time.time() - started, 1),
+            "completed": code == 0,
+        }
+        if code == 0:
+            self.map_path = str(nav.saveExploration())
+            nav.startLocalization()
+            self.localizing = True
+            out["path"] = self.map_path
+            out["position"] = self._map_position(nav)
+        out["pose"] = self.pose()
+        return out
+
+    def map_load(self, path):
+        path = str(path or "")
+        if not path.endswith(".explo"):
+            raise ValueError("expected the path of a .explo file")
+        nav = self.svc("ALNavigation")
+        self._try(nav.stopLocalization)
+        self.localizing = False
+        loaded = nav.loadExploration(path)
+        loaded = True if loaded is None else bool(loaded)
+        if loaded:
+            self.map_path = path
+        return {"loaded": loaded, "path": path}
+
+    def map_localize(self, enabled=True, guess=None):
+        """Start (or stop) localizing in the loaded map, optionally around a guess [x, y, theta in degrees] in the
+        map frame (relocalizeInMap, then startLocalization, as in NAOqi's own sample)."""
+        nav = self.svc("ALNavigation")
+        if not enabled:
+            self._try(nav.stopLocalization)
+            self.localizing = False
+            return {"localizing": False}
+        if not self.map_path:
+            raise RuntimeError("no map loaded; POST /map/load or /map/explore first")
+        if guess is not None:
+            values = list(guess) + [0.0, 0.0, 0.0]
+            x, y, theta = as_float(values[0], 0), as_float(values[1], 0), as_float(values[2], 0)
+            nav.relocalizeInMap([x, y, math.radians(theta)])
+        if not self.localizing:
+            nav.startLocalization()
+            self.localizing = True
+        return {"localizing": True, "position": self._map_position(nav)}
+
+    def map_go(self, x, y, theta=None):
+        """Drive to a point of the map, around obstacles (navigateToInMap), then turn to ``theta`` (degrees) if
+        given. ``completed`` comes from where Pepper ended up, not only from NAOqi's error code."""
+        motion = self.svc("ALMotion")
+        self._ensure_awake(motion)
+        if not self.localizing:
+            raise RuntimeError("not localized in a map; POST /map/localize first")
+        nav = self.svc("ALNavigation")
+        x, y = as_float(x, 0), as_float(y, 0)
+        here = self._map_position(nav)
+        if here is not None and math.hypot(x - here["x"], y - here["y"]) > MAP_GO_MAX:
+            raise ValueError("not going: the target is more than %.0f m away" % MAP_GO_MAX)
+        code = self._run_navigation(lambda: nav.navigateToInMap([x, y, 0.0], _async=True))
+        there = self._map_position(nav)
+        distance = None if there is None else round(math.hypot(x - there["x"], y - there["y"]), 2)
+        reached = distance <= MAP_REACHED if distance is not None else code in (0, 3)
+        out = {"x": x, "y": y, "code": code, "status": NAV_CODES.get(code, "unknown"), "distance": distance}
+        if reached and code != 2 and theta is not None and there is not None and not self.halted:
+            turn = (as_float(theta, 0) - there["theta"] + 180.0) % 360.0 - 180.0
+            if abs(turn) > MAP_TURN_TOLERANCE_DEG:
+                motion.moveTo(0.0, 0.0, math.radians(turn))
+                out["turned"] = round(turn, 1)
+                there = self._map_position(nav)
+        out.update(completed=bool(reached) and code != 2, position=there, pose=self.pose())
+        return out
+
+    def map_image(self):
+        """The loaded map as an occupancy grid: one byte per pixel, 0 occupied to 100 free (getMetricalMap's
+        values, rounded), row after row of ``width`` pixels starting at pixel (0, 0), which sits at ``origin``
+        (metres, map frame). The host draws it."""
+        grid = self.svc("ALNavigation").getMetricalMap()
+        resolution, width, height, origin, values = grid[0], int(grid[1]), int(grid[2]), grid[3], grid[4]
+        data = bytearray(int(clamp(round(as_float(v, 0)), 0, 100)) for v in values)
+        return {
+            "resolution": float(resolution),
+            "width": width,
+            "height": height,
+            "origin": [float(origin[0]), float(origin[1])],
+            "data": base64.b64encode(bytes(data)).decode("ascii"),
+        }
 
     def set_posture(self, posture, speed):
         posture = str(posture or "Stand")
@@ -2067,6 +2270,42 @@ class MoveToHandler(JSONHandler):
         )
 
 
+class MapHandler(JSONHandler):
+    @async_handler
+    def get(self):
+        return self.run_in_thread(ROBOT.map_status)
+
+
+class MapExploreHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(ROBOT.map_explore, self.arg("radius", 3.0))
+
+
+class MapLoadHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(ROBOT.map_load, self.arg("path"))
+
+
+class MapLocalizeHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(ROBOT.map_localize, as_bool(self.arg("enabled"), True), self.arg("guess"))
+
+
+class MapGoHandler(JSONHandler):
+    @async_handler
+    def post(self):
+        return self.run_in_thread(ROBOT.map_go, self.arg("x", 0), self.arg("y", 0), self.arg("theta"))
+
+
+class MapImageHandler(JSONHandler):
+    @async_handler
+    def get(self):
+        return self.run_in_thread(ROBOT.map_image)
+
+
 class StopHandler(JSONHandler):
     @async_handler
     def post(self):
@@ -2713,6 +2952,12 @@ def make_app():
             (r"/move/turn", MoveTurnHandler),
             (r"/move/head", MoveHeadHandler),
             (r"/move/to", MoveToHandler),
+            (r"/map", MapHandler),
+            (r"/map/explore", MapExploreHandler),
+            (r"/map/load", MapLoadHandler),
+            (r"/map/localize", MapLocalizeHandler),
+            (r"/map/go", MapGoHandler),
+            (r"/map/image", MapImageHandler),
             (r"/stop", StopHandler),
             (r"/emergency_stop", EmergencyStopHandler),
             (r"/posture", PostureHandler),

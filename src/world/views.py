@@ -47,6 +47,14 @@ def describe_event(event: Any, now: float) -> str:
     if kind in ("turn", "drive", "move"):
         verb = {"turn": "turned", "drive": "drove", "move": "moved"}[kind]
         return f"{when}: you {verb} {data.get('description', '')}".rstrip()
+    if kind == "navigate":
+        return f"{when}: you drove {data.get('description', '')}".rstrip()
+    if kind == "explore":
+        return f"{when}: you explored {data.get('description', '')}".rstrip()
+    if kind == "at_place":
+        return f"{when}: you arrived at {data.get('place')}"
+    if kind == "left_place":
+        return f"{when}: you left {data.get('place')}" + (" (lost your place on the map)" if data.get("lost") else "")
     if kind == "moved_unexpectedly":
         return f"{when}: you were moved (about {data.get('degrees')}°, {data.get('metres')} m) without a command"
     if kind == "camera_event":

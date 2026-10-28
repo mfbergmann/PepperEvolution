@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 from loguru import logger
 
 from .frames import Pose, pose_from
-from .observations import CAMERA, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
+from .observations import CAMERA, MAP, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
 from .timeline import Timeline
 from .tracks import Tracker
 
@@ -131,6 +131,9 @@ class WorldModel:
         self.sounds: Deque[Tuple[float, float, float]] = deque(maxlen=SOUNDS_KEPT)  # (time, heading, confidence)
         self.scene: Optional[Tuple[float, Dict[str, Any]]] = None  # the latest scene note (#11): (time, data)
         self.most_people = 0  # the most people in view at once since start-up (session episode)
+        # where Pepper is on its saved map (#36): (time, {x, y, theta, uncertainty, place}), in the map frame. Kept
+        # apart from ``pose`` (odometry): the two frames differ and only the map's survives a restart
+        self.map_position: Optional[Tuple[float, Dict[str, Any]]] = None
         self._sinks: List[Callable[[Observation], None]] = []
         self.logger = logger.bind(module="WorldModel")
 
@@ -162,6 +165,8 @@ class WorldModel:
                 self.sounds.append((obs.at, self.pose.heading_of(float(obs.data["azimuth"])), confidence))
         elif obs.source == MOTION:
             self._apply_motion(obs, measured)
+        elif obs.source == MAP:
+            self._apply_map(obs)
         elif obs.source == CAMERA and obs.kind == "judgement":
             self.update_seen(obs.data.get("p") or {}, at=obs.at)
         elif obs.source == CAMERA and obs.kind == "person_seen" and obs.data.get("bearing") is not None:
@@ -234,6 +239,8 @@ class WorldModel:
             moved = self.pose.driven(float(data.get("x") or 0.0), float(data.get("y") or 0.0), at=obs.at)
             self.pose = moved.turned(float(data.get("theta") or 0.0), obs.at, uncertain=not completed)
         what = {
+            "navigate": f"to {data.get('place') or 'a point on your map'}",
+            "explore": f"around you, {data.get('radius')} m, to make a map",
             "turn": f"{float(data.get('angle') or 0):+.0f} degrees",
             "drive": f"{float(data.get('distance') or 0):+.2f} m",
             "move": f"to x {data.get('x')}, y {data.get('y')}, turning {data.get('theta')} degrees",
@@ -245,6 +252,23 @@ class WorldModel:
             completed=completed,
             source=MOTION,
         )
+
+    def _apply_map(self, obs: Observation):
+        """A position on the map, with the named place it falls in (the navigator works that out). Arriving at and
+        leaving a place go into the timeline; a lost localization (no position) keeps the last place unknown."""
+        before = self.map_position[1].get("place") if self.map_position is not None else None
+        if obs.kind != "position" or obs.data.get("x") is None:
+            self.map_position = None
+            if before:
+                self.timeline.add("left_place", obs.at, place=before, lost=True)
+            return
+        self.map_position = (obs.at, dict(obs.data))
+        now = obs.data.get("place")
+        if now != before:
+            if before:
+                self.timeline.add("left_place", obs.at, place=before)
+            if now:
+                self.timeline.add("at_place", obs.at, place=now)
 
     def _update_tracks(self, people: List[Dict[str, Any]], at: float, placed: bool):
         """People into tracks. While a move runs and the report carries no pose of its own, directions are not

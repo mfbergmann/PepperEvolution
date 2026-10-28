@@ -4,7 +4,7 @@ Written 2026-09-13. Updated 2026-09-22 after the first session with the physical
 
 ## State of the code
 
-*Updated 2026-10-22.* `main` is 0.8.0, unreleased (CHANGELOG "0.8.0 (unreleased)"): 0.7.0 (tag `v0.7.0`), the fixes from the 2026-10-20 and 2026-10-22 sessions, and, built offline on 2026-10-22, beamforming over the four head microphones, a steady camera stream and glances towards voices. The robot still runs bridge 0.7.0, deployed with its watchdog and autostart package; it starts by itself at boot. **Deploy 0.8.0 with `python robot_bridge/deploy.py --install-autostart`** (the version changed).
+*Updated 2026-10-22.* `main` is 0.8.0, unreleased (CHANGELOG "0.8.0 (unreleased)"): 0.7.0 (tag `v0.7.0`), the fixes from the 2026-10-20 and 2026-10-22 sessions, and, built offline on 2026-10-22, beamforming over the four head microphones, a steady camera stream and glances towards voices; on 2026-10-28, a host microphone input (`LOCAL_MICROPHONE`) and a map with remembered places (`MAP`, #36). The robot still runs bridge 0.7.0, deployed with its watchdog and autostart package; it starts by itself at boot. **Deploy 0.8.0 with `python robot_bridge/deploy.py --install-autostart`** (the version changed).
 
 - **Host** (`src/`, Python 3.12+):
   - FastAPI on one port (REST, `/ws`, web UI with hold-to-talk).
@@ -226,15 +226,24 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 
 ## Before the next robot session
 
-1. **Deploy bridge 0.8.0 with `--install-autostart`.** In `.env`, turn on `BEAMFORM` and `RECORD_MICROPHONES`; also `WATCH_ROOM` and `VOICE_GLANCES` once the tester has decided about the camera running while nobody is in view.
-2. **Beamforming A/B, in the open space:** the same phrases with `BEAMFORM` off and on, from 1.5 m in front, beside and behind. `RECORD_MICROPHONES` keeps the four channels, so the comparison can be re-run offline. Also check the robot's CPU and Wi-Fi with four channels and the steady camera stream together.
-3. **Glances:** speak from ±90° and from behind while out of view. The head should turn once, and face tracking should take over.
-4. Check whether 1.2 s of end-of-turn silence feels right.
-5. **In the open space:** "come to me" from out of view, so the camera fallback runs during a drive (#24); voice direction behind Pepper and with the head turned (#31).
-6. **With a second person,** once a side-talk fix is chosen and built (#25).
-7. **Serial console (#34, #35),** read-only, so we know: plug the head's micro-USB socket into the desktop and watch a full cold boot at 115200 baud with a terminal program. That shows whether the bootloader appears there and why the bridge sometimes does not autostart. Start at 115200 and stay there, since `agetty` changes speed on garbled input. Then, over SSH, one `su` attempt with the documented NAO root password to learn whether this image has root. Nothing is changed either way.
-8. **When the clip-on microphone arrives (#34):** plug the receiver into the desktop and find its name with `pactl list short sources`; desk-test it first with `PEPPER_FAKE_BRIDGE=true`. On the robot, set `LOCAL_MICROPHONE`, `BEAMFORM` and `RECORD_MICROPHONES` and repeat item 2's phrases: the session then holds the head microphones and the clip-on side by side. Check that nothing of Pepper's own voice gets transcribed (the mute), and try the microphone's noise cancelling off and on.
-9. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
+*Updated 2026-10-28.* Hearing and seeing first, then the map, with driving between rooms last.
+
+1. **Deploy bridge 0.8.0 with `--install-autostart`.** In `.env`, turn on `BEAMFORM` and `RECORD_MICROPHONES`; also `WATCH_ROOM` and `VOICE_GLANCES` once the tester has decided about the camera running while nobody is in view. `MAP` stays off until item 9 has passed.
+2. **Map check, before anything moves (#36):** `qicli call ALNavigation.metaObject` or `qicli info ALNavigation` over SSH should list `explore`, `saveExploration`, `loadExploration`, `relocalizeInMap`, `startLocalization`, `getRobotPositionInMap`, `navigateToInMap` and `getMetricalMap`, and `GET /map` on the bridge should say `"available": true`. If not, the map waits.
+3. **Beamforming A/B, in the open space:** the same phrases with `BEAMFORM` off and on, from 1.5 m in front, beside and behind. `RECORD_MICROPHONES` keeps the four channels, so the comparison can be re-run offline. Also check the robot's CPU and Wi-Fi with four channels and the steady camera stream together.
+4. **Glances:** speak from ±90° and from behind while out of view. The head should turn once, and face tracking should take over.
+5. Check whether 1.2 s of end-of-turn silence feels right.
+6. **In the open space:** "come to me" from out of view, so the camera fallback runs during a drive (#24); voice direction behind Pepper and with the head turned (#31).
+7. **With a second person,** once a side-talk fix is chosen and built (#25).
+8. **When the clip-on microphone arrives (#34):** plug the receiver into the desktop and find its name with `pactl list short sources`; desk-test it first with `PEPPER_FAKE_BRIDGE=true`. On the robot, set `LOCAL_MICROPHONE`, `BEAMFORM` and `RECORD_MICROPHONES` and repeat item 3's phrases: the session then holds the head microphones and the clip-on side by side. Check that nothing of Pepper's own voice gets transcribed (the mute), and try the microphone's noise cancelling off and on.
+9. **Make the map (#36), with the tester beside Pepper the whole time.** `MAP=true` (with `MEMORY_DIR`), restart the host. Clear cables and bags off the floor in both rooms and keep the emergency stop at hand (the web UI's button, or "emergency stop"). Stand Pepper in the office doorway, facing into the open space, and press **Explore** in the map panel with a radius that covers both rooms (start with 4 m). One exploration is one map; maps don't merge, so the doorway is the start that covers both. Note how long it takes and whether it stays clear of people and furniture. Then check:
+   - The map image looks like the rooms, and Pepper's red dot is where Pepper is. If the picture is mirrored or turned, the grid's row order is not what the docs suggest (`Navigator.image_png`).
+   - Drive Pepper a metre with the Move controls: the dot follows, in the right direction.
+   - `/stop` during a short exploration (a second one, radius 1-2 m, if time allows) ends it.
+10. **Name places (#36).** Drive Pepper (Move controls) into the office, say "this is the office"; into the open space, "this is the open space"; also the doorway. Check that the "Where you are" line and the panel name the place. Then restart the host (not the robot): Pepper should relocalize where it was, at the right place.
+11. **Go between places (#36), last.** "Go to the open space" and back, with someone walking beside Pepper. The doorway is the likely failure: note whether it plans through it, how close it comes to the frame, and how long it takes. Try "stop" halfway. Then turn the robot off and on, and see whether relocalizing at the last position still works after a reboot; if it is wrong, "you're in the office" should fix it.
+12. **Serial console (#34, #35),** read-only, so we know: plug the head's micro-USB socket into the desktop and watch a full cold boot at 115200 baud with a terminal program. That shows whether the bootloader appears there and why the bridge sometimes does not autostart. Start at 115200 and stay there, since `agetty` changes speed on garbled input. Then, over SSH, one `su` attempt with the documented NAO root password to learn whether this image has root. Nothing is changed either way.
+13. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
 
 ## Robot session 2026-10-08: results (system one in the loop)
 

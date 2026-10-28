@@ -1492,3 +1492,32 @@ class TestPointing:
         robot.session.service("ALMotion").awake = False
         with pytest.raises(RuntimeError, match="resting"):
             robot.point(10, 0)
+
+
+class TestMapStops:
+    """#36: every stop also ends an exploration or a navigation in progress."""
+
+    def test_stop_cancels_a_navigation_but_keeps_localizing(self, robot):
+        future = FakeFuture(finished=False)
+        robot._nav_future, robot.localizing = future, True
+        robot.stop()
+        assert future.cancelled and robot._nav_cancelled
+        assert not any(c[0] == "stopExploration" for c in calls(robot, "ALNavigation"))  # it would end localizing
+        assert robot.localizing is True
+
+    def test_stop_ends_an_exploration(self, robot):
+        future = FakeFuture(finished=False)
+        robot._nav_future, robot.exploring = future, True
+        robot.stop()
+        assert future.cancelled and ("stopExploration", ()) in calls(robot, "ALNavigation")
+
+    def test_emergency_stop_and_halt_cancel_too(self, robot):
+        for stop in (robot.emergency_stop, robot.halt):
+            future = FakeFuture(finished=False)
+            robot._nav_future = future
+            stop()
+            assert future.cancelled
+
+    def test_nothing_to_cancel(self, robot):
+        robot.stop()
+        assert calls(robot, "ALNavigation") == []

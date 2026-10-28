@@ -312,3 +312,49 @@ class TestBridgeEndToEnd:
         assert result["tracking_mode"] == "Head" and result["stimuli"] == ["People", "Sound"]
         with pytest.raises(BridgeError):
             await client.set_awareness(True, tracking_mode="Spin")
+
+
+class TestMaps:
+    """ALNavigation through the real bridge (#36), against the shapes in NAOqi 2.5's exploration docs."""
+
+    async def test_explore_localize_and_go(self, client):
+        await client.prepare(autonomous_life="disabled", wake_up=True, awareness=False)
+        status = await client.map_status()
+        assert status["available"] is True and status["localizing"] is False
+        explored = await client.map_explore(radius=50)
+        assert explored["radius"] == 8.0  # clamped
+        assert explored["completed"] is True and explored["status"] == "ok"
+        assert explored["path"].endswith(".explo")
+        assert explored["position"] == {"x": 0.0, "y": 0.0, "theta": 0.0, "uncertainty": [0.12, 0.08]}
+
+        went = await client.map_go(1.0, 0.5, theta=90)
+        assert went["completed"] is True and went["status"] == "target_reached" and went["distance"] == 0.0
+        assert went["turned"] == 90.0 and went["position"]["theta"] == 90.0  # the heading, by a turn afterwards
+
+        image = await client.map_image()
+        assert (image["width"], image["height"], image["resolution"]) == (20, 10, 0.1)
+        assert image["origin"] == [-1.0, -0.5]
+        import base64
+
+        pixels = base64.b64decode(image["data"])
+        assert len(pixels) == 200 and pixels[0] == 0 and pixels[21] == 100  # an occupied edge, free inside
+
+        off = await client.map_go(5.0, 4.0)  # off the fake's map
+        assert off["status"] == "target_out_of_map" and off["completed"] is False
+        with pytest.raises(BridgeError, match="more than 15 m"):
+            await client.map_go(40.0, 0.0)
+
+    async def test_reload_and_relocalize(self, client):
+        await client.prepare(autonomous_life="disabled", wake_up=True, awareness=False)
+        path = (await client.map_explore(radius=2))["path"]
+        assert (await client.map_localize(enabled=False)) == {"ok": True, "localizing": False}
+        with pytest.raises(BridgeError, match="not localized"):
+            await client.map_go(0.5, 0.0)
+        with pytest.raises(BridgeError, match=".explo"):
+            await client.map_load("/etc/passwd")
+        assert (await client.map_load(path))["loaded"] is True
+        located = await client.map_localize(guess=[2.0, -1.0, 45.0])
+        assert located["localizing"] is True
+        assert located["position"]["x"] == 2.0 and located["position"]["y"] == -1.0
+        assert located["position"]["theta"] == 45.0
+        assert (await client.map_status())["position"]["x"] == 2.0

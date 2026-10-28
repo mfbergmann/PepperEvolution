@@ -49,6 +49,14 @@ class CommandParams(BaseModel):
     params: Dict[str, Any] = {}
 
 
+class MapRequest(BaseModel):
+    """The map panel (#36): a place's name, an exploration radius, or a map to use."""
+
+    name: str = ""
+    radius: float = 3.0
+    map_id: Optional[int] = None
+
+
 class WebSocketHub:
     """Tracks browser WebSocket clients and fans out events to them."""
 
@@ -182,7 +190,11 @@ async def execute_command(robot: PepperRobot, cmd: str, params: Dict[str, Any]) 
 
 
 def create_app(
-    ai_manager: AIManager, robot: PepperRobot, web_dir: Optional[Path] = None, voice: Optional[VoiceInput] = None
+    ai_manager: AIManager,
+    robot: PepperRobot,
+    web_dir: Optional[Path] = None,
+    voice: Optional[VoiceInput] = None,
+    navigator: Optional[Any] = None,
 ) -> FastAPI:
     web_dir = web_dir or DEFAULT_WEB_DIR
     hub = WebSocketHub()
@@ -239,6 +251,66 @@ def create_app(
     @app.post("/command/{cmd}")
     async def command(cmd: str, body: Optional[CommandParams] = None):
         return await execute_command(robot, cmd, body.params if body else {})
+
+    # -- the map (#36): status, picture, and what an operator can do ----------------------------------------------
+
+    def _navigator():
+        if navigator is None:
+            raise HTTPException(status_code=404, detail="no map here (MAP is off)")
+        return navigator
+
+    async def _driving(call):
+        """Moves started from the map panel count as direct commands (sensor reactions wait meanwhile)."""
+        robot.direct_commands_running += 1
+        try:
+            return await call
+        finally:
+            robot.direct_commands_running -= 1
+
+    @app.get("/map")
+    async def map_status():
+        if navigator is None:
+            return {"enabled": False}
+        return {"enabled": True, **navigator.status()}
+
+    @app.get("/map.png")
+    async def map_picture():
+        try:
+            png = await _navigator().image_png()
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - no map loaded, not localized, bridge away
+            raise HTTPException(status_code=409, detail=str(exc))
+        return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @app.post("/map/explore")
+    async def map_explore(body: MapRequest):
+        """Pepper drives around by itself to make a map: only from here, with someone watching."""
+        return await _driving(_navigator().explore(body.radius))
+
+    @app.post("/map/place")
+    async def map_place(body: MapRequest):
+        return _navigator().remember_place(body.name)
+
+    @app.delete("/map/place/{name}")
+    async def map_forget(name: str):
+        return _navigator().forget_place(name)
+
+    @app.post("/map/go")
+    async def map_go(body: MapRequest):
+        return await _driving(_navigator().go_to(body.name))
+
+    @app.post("/map/here")
+    async def map_here(body: MapRequest):
+        return await _navigator().i_am_at(body.name)
+
+    @app.post("/map/use")
+    async def map_use(body: MapRequest):
+        nav = _navigator()
+        record = nav.store.activate_map(int(body.map_id or 0))
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such map")
+        return await nav.use_map(record)
 
     @app.get("/tools")
     async def list_tools():
@@ -382,13 +454,14 @@ class APIServer:
         robot: PepperRobot,
         web_dir: Optional[Path] = None,
         voice: Optional[VoiceInput] = None,
+        navigator: Optional[Any] = None,
     ):
         self.host = host
         self.port = port
         self.ai_manager = ai_manager
         self.robot = robot
         self.logger = logger.bind(module="APIServer")
-        self.app = create_app(ai_manager, robot, web_dir, voice=voice)
+        self.app = create_app(ai_manager, robot, web_dir, voice=voice, navigator=navigator)
         self.server: Optional[uvicorn.Server] = None
 
     @property

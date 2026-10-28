@@ -210,6 +210,7 @@ Goal: Pepper knows what is around it between turns, notices when someone arrives
 - **Built in 0.7.0, on the robot since 2026-10-20:** the camera fallback for people the detector has lost (#24), and a first slice of the reflection loop. Initiative (off by default) fired three times and felt natural to the tester; an unanswered question may be followed up 90 s after the last initiative.
 - **Found on the robot:** voice direction is wrong behind Pepper (#31), and a monitor was seen as a person for minutes (#32).
 - **Built in 0.8.0, not yet on the robot (#33):** a steady camera stream that keeps looking while nobody is in view and looks closer when the view changes (`WATCH_ROOM`), and glances towards voices from where nobody is seen (`VOICE_GLANCES`).
+- **Built in 0.8.0, not yet on the robot (#36):** a map made with NAOqi's own exploration, named places on it kept across restarts, "where you are" on every turn, and driving to a named place (`MAP`).
 - **Still open:** expect, then check (#30: what each action should change, compared with what Pepper perceives), more of the reflection loop, and identity (Milestone 5).
 
 Two layers feeding one host-side world model:

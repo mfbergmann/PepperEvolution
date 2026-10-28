@@ -192,6 +192,38 @@ class BridgeClient:
             body["speed"] = speed
         return await self._post("/move/to", json=body, timeout=self.action_timeout)
 
+    # ------------------------------------------------------------------
+    # Maps (#36, bridge 0.8): ALNavigation's exploration and localization
+    # ------------------------------------------------------------------
+
+    EXPLORE_TIMEOUT = 1200.0  # an exploration drives by itself for minutes
+
+    async def map_status(self) -> Dict[str, Any]:
+        """``available``, the ``loaded`` map, ``localizing``, ``exploring``, saved ``maps`` and the ``position``."""
+        return await self._get("/map")
+
+    async def map_explore(self, radius: float = 3.0) -> Dict[str, Any]:
+        return await self._post("/map/explore", json={"radius": radius}, timeout=self.EXPLORE_TIMEOUT)
+
+    async def map_load(self, path: str) -> Dict[str, Any]:
+        return await self._post("/map/load", json={"path": path}, timeout=self.action_timeout)
+
+    async def map_localize(self, enabled: bool = True, guess: Optional[List[float]] = None) -> Dict[str, Any]:
+        """``guess``: [x, y, theta in degrees] in the map frame."""
+        body: Dict[str, Any] = {"enabled": enabled}
+        if guess is not None:
+            body["guess"] = list(guess)
+        return await self._post("/map/localize", json=body, timeout=self.action_timeout)
+
+    async def map_go(self, x: float, y: float, theta: Optional[float] = None) -> Dict[str, Any]:
+        body: Dict[str, Any] = {"x": x, "y": y}
+        if theta is not None:
+            body["theta"] = theta
+        return await self._post("/map/go", json=body, timeout=self.action_timeout)
+
+    async def map_image(self) -> Dict[str, Any]:
+        return await self._get("/map/image", timeout=self.action_timeout)
+
     async def stop(self) -> Dict[str, Any]:
         return await self._post("/stop")
 

@@ -24,10 +24,10 @@ from .glance import glance_target, people_yaws
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import HEARD, MIND, SAID
 from ..world.views import addressee_context
-from .models import CLOSING, ERROR_TEXT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
+from .models import CLOSING, ERROR_TEXT, MAP_PROMPT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
-from .tools import MEMORY_TOOLS, TOOLS
+from .tools import MAP_TOOLS, MEMORY_TOOLS, TOOLS
 
 ResponseCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 PartialCallback = Callable[[str], Awaitable[None]]
@@ -123,6 +123,7 @@ class AIManager:
         # memory's instructions go before the closing line, which must stay last (models.CLOSING)
         self.system_prompt = SYSTEM_PROMPT.replace(CLOSING, (MEMORY_PROMPT if memory is not None else "") + CLOSING)
         self.stats: Dict[str, int] = {"turns": 0, "greetings": 0}  # for the session episode (long-term memory)
+        self.navigator: Optional[Any] = None  # set by use_navigator() with a map (MAP; #36)
         self.logger = logger.bind(module="AIManager")
 
         self.speak_responses = speak_responses
@@ -602,6 +603,14 @@ class AIManager:
         """The reflection loop noticed something (src/ai/reflection.py): the mind says one short thing or nothing."""
         self._event("initiative", rule=rule)
         await self._react(prompt, self._clock(), kind="initiative")
+
+    def use_navigator(self, navigator: Any):
+        """A map (MAP; #36): the place tools, their instructions, and the "Where you are" line on every turn. Called
+        once at start-up, before the first turn, so the cached prompt never changes mid-session."""
+        self.navigator = navigator
+        self.executor.navigator = navigator
+        self.tools = self.tools + MAP_TOOLS
+        self.system_prompt = self.system_prompt.replace(CLOSING, MAP_PROMPT + CLOSING)
 
     def in_conversation(self, within: float = 60.0) -> bool:
         """Someone talked with Pepper in the last ``within`` seconds (the camera stays open to find them, #24)."""
@@ -1234,6 +1243,9 @@ class AIManager:
         known = self.memory.here_line() if self.memory is not None else ""
         if known:
             dynamic += f"\n{known}"
+        where = self.navigator.place_line() if self.navigator is not None else ""
+        if where:
+            dynamic += f"\n{where}"
         return [
             {"type": "text", "text": self.system_prompt, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": dynamic},

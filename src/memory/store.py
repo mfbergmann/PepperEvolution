@@ -10,6 +10,8 @@ One SQLite file on the host (``MEMORY_DIR``, git-ignored). Rules, enforced here 
   at start-up.
 - Search is plain text (FTS5 when the SQLite build has it, else LIKE); the text is kept, so an embedding index can
   be added later without migrating anything.
+- Maps and places (#36) are lab data, not personal data: the robot's saved explorations, the named places in each
+  (map coordinates) and Pepper's last position in the active map. They are kept until deleted and do not expire.
 
 All calls are synchronous and take well under a millisecond at this size; the store is used from the event loop
 thread only.
@@ -20,13 +22,13 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from loguru import logger
 
 RETENTION_DAYS = 90  # people and personal facts, unless renewed (docs/MEMORY.md)
 EPISODE_RETENTION_DAYS = 365  # session episodes hold no words, only who (by id), when and counts
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: maps and places (#36); tables are created if missing, so older files just gain them
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS people (
@@ -63,6 +65,30 @@ CREATE TABLE IF NOT EXISTS episode_people (
     episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
     person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     PRIMARY KEY (episode_id, person_id)
+);
+CREATE TABLE IF NOT EXISTS maps (
+    id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    radius REAL,
+    created_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    last_x REAL,
+    last_y REAL,
+    last_theta REAL,
+    last_at TEXT
+);
+CREATE TABLE IF NOT EXISTS places (
+    id INTEGER PRIMARY KEY,
+    map_id INTEGER NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    theta REAL,
+    radius REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (map_id, name_key)
 );
 """
 
@@ -113,6 +139,32 @@ class Episode:
     ended_at: str
     summary: str
     stats: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MapRecord:
+    """A map Pepper made by exploring: the .explo file on the robot, and where Pepper last was in it."""
+
+    id: int
+    path: str
+    radius: Optional[float]
+    created_at: str
+    active: bool
+    last_pose: Optional[Tuple[float, float, float]]  # x, y (metres), theta (degrees) in the map
+    last_at: Optional[str]
+
+
+@dataclass(frozen=True)
+class Place:
+    """A named point on a map (map frame): Pepper is "at" it within ``radius`` metres."""
+
+    id: int
+    map_id: int
+    name: str
+    x: float
+    y: float
+    theta: Optional[float]  # degrees: the way to face on arriving, if any
+    radius: float
 
 
 class ConsentRequired(ValueError):
@@ -329,8 +381,93 @@ class MemoryStore:
     def counts(self) -> Dict[str, int]:
         return {
             table: int(self._db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-            for table in ("people", "facts", "episodes")
+            for table in ("people", "facts", "episodes", "maps", "places")
         }
+
+    # -- maps and places (#36) -------------------------------------------------------------------------------------
+
+    def add_map(self, path: str, radius: Optional[float] = None) -> MapRecord:
+        """A new exploration: it becomes the active map (the one loaded at start-up)."""
+        with self._db:
+            self._db.execute("UPDATE maps SET active = 0")
+            self._db.execute(
+                "INSERT INTO maps (path, radius, created_at, active) VALUES (?, ?, ?, 1) "
+                "ON CONFLICT(path) DO UPDATE SET active = 1",
+                (path, radius, _iso(self._now())),
+            )
+        return self._map(self._db.execute("SELECT * FROM maps WHERE path = ?", (path,)).fetchone())
+
+    def maps(self) -> List[MapRecord]:
+        return [self._map(r) for r in self._db.execute("SELECT * FROM maps ORDER BY id")]
+
+    def active_map(self) -> Optional[MapRecord]:
+        row = self._db.execute("SELECT * FROM maps WHERE active = 1 ORDER BY id DESC LIMIT 1").fetchone()
+        return self._map(row) if row else None
+
+    def activate_map(self, map_id: int) -> Optional[MapRecord]:
+        with self._db:
+            if not self._db.execute("SELECT 1 FROM maps WHERE id = ?", (map_id,)).fetchone():
+                return None
+            self._db.execute("UPDATE maps SET active = (id = ?)", (map_id,))
+        return self.active_map()
+
+    def save_map_pose(self, map_id: int, x: float, y: float, theta: float):
+        """Where Pepper is in the map now: the guess for relocalizing at the next start."""
+        with self._db:
+            self._db.execute(
+                "UPDATE maps SET last_x = ?, last_y = ?, last_theta = ?, last_at = ? WHERE id = ?",
+                (x, y, theta, _iso(self._now()), map_id),
+            )
+
+    def set_place(
+        self, map_id: int, name: str, x: float, y: float, theta: Optional[float] = None, radius: float = 1.5
+    ) -> Place:
+        """Name a point of the map; naming it again moves it."""
+        name = " ".join(name.split())
+        if not name:
+            raise ValueError("a place needs a name")
+        now = _iso(self._now())
+        with self._db:
+            self._db.execute(
+                "INSERT INTO places (map_id, name, name_key, x, y, theta, radius, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(map_id, name_key) DO UPDATE SET "
+                "name = excluded.name, x = excluded.x, y = excluded.y, theta = excluded.theta, "
+                "radius = excluded.radius, updated_at = excluded.updated_at",
+                (map_id, name, name_key(name), x, y, theta, radius, now, now),
+            )
+        place = self.find_place(map_id, name)
+        assert place is not None
+        return place
+
+    def places(self, map_id: int) -> List[Place]:
+        rows = self._db.execute("SELECT * FROM places WHERE map_id = ? ORDER BY name_key", (map_id,))
+        return [self._place(r) for r in rows]
+
+    def find_place(self, map_id: int, name: str) -> Optional[Place]:
+        row = self._db.execute(
+            "SELECT * FROM places WHERE map_id = ? AND name_key = ?", (map_id, name_key(name))
+        ).fetchone()
+        return self._place(row) if row else None
+
+    def delete_place(self, map_id: int, name: str) -> bool:
+        with self._db:
+            return (
+                self._db.execute(
+                    "DELETE FROM places WHERE map_id = ? AND name_key = ?", (map_id, name_key(name))
+                ).rowcount
+                > 0
+            )
+
+    @staticmethod
+    def _map(row: sqlite3.Row) -> MapRecord:
+        last = None if row["last_x"] is None else (row["last_x"], row["last_y"], row["last_theta"] or 0.0)
+        return MapRecord(
+            row["id"], row["path"], row["radius"], row["created_at"], bool(row["active"]), last, row["last_at"]
+        )
+
+    @staticmethod
+    def _place(row: sqlite3.Row) -> Place:
+        return Place(row["id"], row["map_id"], row["name"], row["x"], row["y"], row["theta"], row["radius"])
 
     def _expiry(self, now: datetime) -> str:
         return _iso(now + timedelta(days=RETENTION_DAYS))

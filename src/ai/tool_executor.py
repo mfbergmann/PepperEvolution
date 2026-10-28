@@ -17,7 +17,7 @@ from loguru import logger
 
 from ..perception.geometry import CHEST_BELOW_EYES, photo_direction
 from ..pepper.robot import PepperRobot, Photo
-from .tools import EYE_COLORS, KNOWN_ANIMATIONS, MEMORY_TOOL_NAMES, POSTURES
+from .tools import EYE_COLORS, KNOWN_ANIMATIONS, MAP_TOOL_NAMES, MEMORY_TOOL_NAMES, POSTURES
 
 
 @dataclass
@@ -86,6 +86,7 @@ class ToolExecutor:
         self.robot = robot
         self.memory = memory  # src/memory Memory, when long-term memory is on (MEMORY_DIR)
         self.world = world  # WorldModel: where the person is, for point_at
+        self.navigator: Optional[Any] = None  # src/navigation Navigator, with a map (MAP; #36)
         self.logger = logger.bind(module="ToolExecutor")
         self._already: Optional[Any] = None  # (tool name, task) started by the command router this turn
 
@@ -230,9 +231,30 @@ class ToolExecutor:
             return ToolOutcome.failure(str(result.pop("error", "failed")), **result)
         return ToolOutcome(True, result)
 
+    async def _map_tool(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:
+        """go_to_place, remember_place, forget_place, i_am_at_place (src/navigation/navigator.py)."""
+        if self.navigator is None:
+            return ToolOutcome.failure("You have no map here.")
+        place = str(inp.get("name", "")).strip()
+        if name == "go_to_place":
+            result = await self.navigator.go_to(place)
+        elif name == "remember_place":
+            result = self.navigator.remember_place(place)
+        elif name == "forget_place":
+            result = self.navigator.forget_place(place)
+        else:
+            result = await self.navigator.i_am_at(place)
+        result = dict(result)
+        if not result.pop("ok", False):
+            return ToolOutcome.failure(str(result.pop("error", "failed")), **result)
+        return ToolOutcome(True, result)
+
     async def _dispatch(self, name: str, inp: Dict[str, Any]) -> ToolOutcome:
         if name in MEMORY_TOOL_NAMES:
             return self._memory_tool(name, inp)
+
+        if name in MAP_TOOL_NAMES:
+            return await self._map_tool(name, inp)
 
         if name == "look_at":
             return await self._look_at(inp)
