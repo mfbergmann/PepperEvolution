@@ -148,7 +148,8 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `SCENE_NOTES` / `SCENE_MODEL` | `false` / `qwen3.5:4b` | With `DECIDE_URL`: every 20 s while someone is in view, who is where and a short note on the place |
 | `WAIT_FOR_UNFINISHED` | `true` | Voice: when an utterance clearly stops mid-sentence ("How do you feel about"), wait up to 2.5 s for the rest and answer the whole sentence |
 | `BEAMFORM` | `false` | With bridge 0.8: stream all four head microphones and beamform them into one channel before speech recognition, against Pepper's fan noise ([#34](https://github.com/mfbergmann/PepperEvolution/issues/34)) |
-| `RECORD_MICROPHONES` | `false` | With `BEAMFORM` and `SESSION_DIR`: keep the four microphones as `microphones.wav` in the session folder, for tuning offline |
+| `RECORD_MICROPHONES` | `false` | With `BEAMFORM` and `SESSION_DIR`: keep the four microphones as `microphones.wav` in the session folder, for tuning offline. With `LOCAL_MICROPHONE`: also `local_microphone.wav` |
+| `LOCAL_MICROPHONE` | *(empty)* | With `VOICE_INPUT`: listen to a microphone on the host instead of Pepper's head (`default`, or a source from `pactl list short sources`), muted while Pepper speaks. Needs `parecord` (PipeWire or PulseAudio) ([#34](https://github.com/mfbergmann/PepperEvolution/issues/34)) |
 | `WATCH_ROOM` | `false` | Keep the camera streaming slowly (0.5 fps) while nobody is in view, and look closer when the view changes ([#33](https://github.com/mfbergmann/PepperEvolution/issues/33)) |
 | `VOICE_GLANCES` | `false` | With `SOUND_DIRECTION` and `WATCH_ROOM`: turn the head towards a voice from where nobody is seen, so the camera can find the speaker |
 | `INITIATIVE` | `false` | Pepper may speak unprompted: to someone lingering quietly nearby, or once more after an unanswered question (at most every 3 minutes; 90 s for a follow-up question) |

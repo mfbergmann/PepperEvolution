@@ -38,6 +38,7 @@ RawCallback = Callable[[bytes, int], None]  # interleaved PCM, channels
 class AudioStream:
     """Connects to the bridge microphone WebSocket and hands PCM frames to callbacks."""
 
+    name = "robot"
     RECONNECT_DELAY = 3.0
 
     def __init__(self, ws_url: str, api_key: str = "", beamform: bool = False):
@@ -48,6 +49,7 @@ class AudioStream:
         self._downsampler: Any = None
         self._raw_callbacks: List[RawCallback] = []
         self._last_frame_at: Optional[float] = None
+        self.last_frame_at: Optional[float] = None  # monotonic: frames stop while the bridge mutes (Pepper speaks)
         self.logger = logger.bind(module="AudioStream")
         self.sample_rate = 16000
         self.channels = 1
@@ -223,6 +225,7 @@ class AudioStream:
 
     async def _dispatch(self, pcm: bytes):
         self.frames += 1
+        self.last_frame_at = time.monotonic()
         self.bytes_received += len(pcm)
         if self.channels == 4:
             if self.beamformer is None:

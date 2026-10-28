@@ -8,7 +8,7 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 
 Built offline after the 2026-10-22 robot session; nothing below has run on the robot yet. The bridge version changed,
 so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All four new switches are off by
-default.
+default (`LOCAL_MICROPHONE` is empty by default).
 
 - **Beamforming over the four head microphones (#34, `BEAMFORM`).** The bridge streams all four microphones on request
   (`/ws/audio?channels=4`, resampled to 16 kHz on the robot), and the host beamforms them into one channel before
@@ -19,6 +19,14 @@ default.
   Neural denoisers were tried first and made recognition worse (18 % to 33 % word errors), so there is none.
 - **`RECORD_MICROPHONES`** keeps the four microphones of a session (`microphones.wav` in the session folder, 16 kHz),
   so the beamformer can be tuned again offline.
+- **A microphone on the host (#34, `LOCAL_MICROPHONE`).** Speech recognition can listen to a microphone plugged into
+  the desktop instead of Pepper's head, for example a wireless clip-on worn on Pepper's chest, away from the fans. It
+  records through `parecord` (PipeWire or PulseAudio; `default` or a source name from `pactl list short sources`) as
+  16 kHz mono. It is muted while Pepper speaks: while a `/speak` the host sent is under way (and 0.5 s after), and
+  while the bridge stops sending the head microphones, which it does for speech from any source. The robot's stream
+  stays connected for that. With `RECORD_MICROPHONES` the session keeps `local_microphone.wav` (everything, also
+  while muted); with `BEAMFORM` as well, the head microphones are recorded alongside, for comparing all three offline.
+  It also works with the fake bridge, for trying a microphone at the desk.
 - **A steady camera stream (#33, `WATCH_ROOM`).** While nobody is in view the camera keeps streaming at 0.5 fps. A
   cheap change check on every frame decides when to look closer: a changed view asks where the nearest person is and
   brings the next scene note forward. Nothing wakes the mind; what is found goes into working memory.

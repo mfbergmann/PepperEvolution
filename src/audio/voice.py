@@ -106,7 +106,7 @@ class VoiceInput:
         if self.source is not None:
             self.source.on_audio(self._on_audio)
             await self.source.start()
-            self.logger.info("Listening to the robot microphone")
+            self.logger.info(f"Listening to the {getattr(self.source, 'name', 'robot')} microphone")
         self.started = True
 
     async def stop(self):
@@ -124,7 +124,8 @@ class VoiceInput:
             "backend": self.transcriber.name,
             "streaming": self.transcriber.streaming,
             "started": self.started,
-            "robot_microphone": self.source is not None,
+            "robot_microphone": self.source is not None and getattr(self.source, "name", "robot") == "robot",
+            "microphone": getattr(self.source, "name", "robot") if self.source is not None else None,
             "source_connected": bool(self.source is not None and getattr(self.source, "connected", False)),
             "listening": self._listening,
             "utterances": self.utterances,

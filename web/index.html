@@ -314,7 +314,7 @@ async function initVoice(){
   try{
     const v=await api('/voice/status');
     if(!v.enabled){ micBtn.disabled=true; micBtn.title='Voice is off on the host: set STT_BACKEND (see docs/GETTING_STARTED.md, Voice input)'; }
-    else micBtn.title='Hold to talk ('+v.backend+(v.robot_microphone?', robot microphone also on':'')+')';
+    else micBtn.title='Hold to talk ('+v.backend+(v.microphone?', '+v.microphone+' microphone also on':'')+')';
   }catch(err){ /* host unreachable right now; the button reports the error when used */ }
 }
 

@@ -10,14 +10,39 @@ the bridge until the robot has finished, so they use a longer ``action_timeout``
 than quick status reads.
 """
 
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
 from loguru import logger
 
+SPEECH_TAIL = 0.5  # seconds after speech that still count as Pepper speaking (the bridge mutes its microphones 0.4 s)
+SECONDS_PER_WORD = 0.45  # for speech not waited for: about 130 words a minute
+
 
 class BridgeError(Exception):
     """Raised when the bridge is unreachable or returns a non-OK response."""
+
+
+class SpeechClock:
+    """Whether Pepper is speaking, as far as the host asked it to: every /speak passes through here (LOCAL_MICROPHONE
+    is muted meanwhile, as the bridge mutes the head microphones). Speech from elsewhere on the robot is not seen."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.speaking = 0
+        self.ends = 0.0
+
+    def begin(self):
+        self.speaking += 1
+
+    def end(self, text: str = "", waited: bool = True):
+        self.speaking = max(0, self.speaking - 1)
+        still = 0.0 if waited else SECONDS_PER_WORD * len(text.split())
+        self.ends = max(self.ends, self.clock() + still + SPEECH_TAIL)
+
+    def active(self) -> bool:
+        return self.speaking > 0 or self.clock() < self.ends
 
 
 class BridgeClient:
@@ -29,6 +54,7 @@ class BridgeClient:
         self.timeout = timeout
         self.action_timeout = action_timeout
         self._client: Optional[httpx.AsyncClient] = None
+        self.speech = SpeechClock()
         self.logger = logger.bind(module="BridgeClient")
 
     async def connect(self):
@@ -117,7 +143,11 @@ class BridgeClient:
         body: Dict[str, Any] = {"text": text, "animated": animated, "wait": wait, "body_language": body_language}
         if language:
             body["language"] = language
-        return await self._post("/speak", json=body, timeout=self.action_timeout if wait else None)
+        self.speech.begin()
+        try:
+            return await self._post("/speak", json=body, timeout=self.action_timeout if wait else None)
+        finally:
+            self.speech.end(text, waited=wait)
 
     async def stop_speaking(self) -> Dict[str, Any]:
         return await self._post("/speak/stop")

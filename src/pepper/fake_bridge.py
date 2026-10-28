@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from .bridge_client import BridgeError
+from .bridge_client import BridgeError, SpeechClock
 
 try:
     from PIL import Image, ImageDraw
@@ -73,6 +73,7 @@ class FakeBridgeClient:
             "tablet": "",
         }
         self.speech_delay = SIMULATED_SPEECH_SECONDS_PER_WORD
+        self.speech = SpeechClock()
         self.fail_next: Optional[str] = None
 
     # -- plumbing -----------------------------------------------------------
@@ -123,8 +124,12 @@ class FakeBridgeClient:
         body_language: str = "contextual",
     ) -> Dict[str, Any]:
         result = self._record("speak", text=text, animated=animated, language=language)
-        if wait and self.speech_delay:
-            await asyncio.sleep(min(6.0, self.speech_delay * max(1, len(text.split()))))
+        self.speech.begin()
+        try:
+            if wait and self.speech_delay:
+                await asyncio.sleep(min(6.0, self.speech_delay * max(1, len(text.split()))))
+        finally:
+            self.speech.end(text, waited=wait)
         return result
 
     async def stop_speaking(self) -> Dict[str, Any]:

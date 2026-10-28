@@ -13,6 +13,7 @@ import asyncio
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -33,6 +34,7 @@ from src.ai import (  # noqa: E402
     OpenAIProvider,
 )
 from src.audio import VoiceInput, make_transcriber  # noqa: E402
+from src.audio.local_mic import LocalMicrophone  # noqa: E402
 from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
 from src.decide import DecisionClient  # noqa: E402
@@ -108,6 +110,7 @@ class Settings:
     record_microphones: bool = False
     watch_room: bool = False
     voice_glances: bool = False
+    local_microphone: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -168,6 +171,7 @@ class Settings:
             record_microphones=env_bool("RECORD_MICROPHONES", False),
             watch_room=env_bool("WATCH_ROOM", False),
             voice_glances=env_bool("VOICE_GLANCES", False),
+            local_microphone=os.getenv("LOCAL_MICROPHONE", "").strip() or None,
         )
 
 
@@ -214,6 +218,10 @@ class PepperEvolution:
         self.robot: Optional[PepperRobot] = None
         self.ai_manager: Optional[AIManager] = None
         self.microphones: Optional[WavWriter] = None  # RECORD_MICROPHONES
+        self.local_recording: Optional[WavWriter] = None  # RECORD_MICROPHONES with LOCAL_MICROPHONE
+        # the bridge's microphone stream: what speech recognition hears, or with LOCAL_MICROPHONE, whether Pepper is
+        # speaking (the bridge stops sending while it does) and the head microphones for a recording
+        self.robot_microphone: Optional[AudioStream] = None
         self.api_server: Optional[APIServer] = None
         self.voice: Optional[VoiceInput] = None
         self.world = WorldModel()
@@ -323,9 +331,8 @@ class PepperEvolution:
             )
             self.vision.start()  # streams while someone is in view (and with WATCH_ROOM, slowly at all times)
             self.ai_manager.head_angles = lambda: self.vision.head_now() if self.vision is not None else None
-            source = getattr(self.voice, "source", None)
-            if isinstance(source, AudioStream) and source.beamform:
-                self.vision.head_moved.append(source.viewpoint_changed)
+            if self.robot_microphone is not None and self.robot_microphone.beamform:
+                self.vision.head_moved.append(self.robot_microphone.viewpoint_changed)
         # glances need voice directions, and the head's angle from a stream that stays open (or they repeat)
         self.ai_manager.voice_glances = s.voice_glances and s.sound_direction and s.watch_room
         if self.decider is not None:
@@ -355,7 +362,9 @@ class PepperEvolution:
             self.ai_manager.look_at_the_room()  # nobody here at start-up: head (and tracking) as for an empty room
         self.robot.start_state_loop(interval=10.0)
         if self.voice is not None:
-            await self.voice.start()  # streams the robot microphone if VOICE_INPUT
+            await self.voice.start()  # streams the robot microphone if VOICE_INPUT (or the local one)
+        if self.robot_microphone is not None and self.robot_microphone is not getattr(self.voice, "source", None):
+            await self.robot_microphone.start()  # LOCAL_MICROPHONE: Pepper's speaking, the head microphones' recording
         self.logger.success(
             f"PepperEvolution ready - web UI at http://localhost:{s.api_port}/  "
             f"(robot {self.robot.state.robot_name}, battery {self.robot.state.battery_level:.0f}%)"
@@ -367,18 +376,34 @@ class PepperEvolution:
         transcriber = make_transcriber(s.stt_backend, model=s.stt_model, language=s.stt_language)
         if transcriber is None:
             return None
-        source = None
+        source: Any = None
+        self.robot_microphone = None
         if s.voice_input:
-            if s.fake_bridge:
+            if s.fake_bridge and not s.local_microphone:
                 self.logger.warning("VOICE_INPUT ignored with the fake bridge (push-to-talk in the UI still works)")
             else:
-                source = AudioStream(config.audio_ws_url, api_key=config.api_key, beamform=s.beamform)
-                if s.beamform and s.record_microphones and self.recorder is not None:
-                    self.microphones = WavWriter(self.recorder.path("microphones.wav"), channels=4, rate=16000)
-                    source.on_raw(lambda pcm, _channels: self.microphones.write(pcm))
+                if not s.fake_bridge:
+                    self.robot_microphone = AudioStream(
+                        config.audio_ws_url, api_key=config.api_key, beamform=s.beamform
+                    )
+                    if s.beamform and s.record_microphones and self.recorder is not None:
+                        self.microphones = WavWriter(self.recorder.path("microphones.wav"), channels=4, rate=16000)
+                        self.robot_microphone.on_raw(lambda pcm, _channels: self.microphones.write(pcm))
+                source = self.robot_microphone
+                if s.local_microphone:
+                    # #34: a microphone on the desktop (a clip-on on Pepper's chest), muted while Pepper speaks; the
+                    # robot's stream keeps running for that, and for recording the head microphones alongside
+                    source = LocalMicrophone(s.local_microphone, muted=self._pepper_speaking)
+                    if s.record_microphones and self.recorder is not None:
+                        self.local_recording = WavWriter(
+                            self.recorder.path("local_microphone.wav"), channels=1, rate=16000
+                        )
+                        source.on_raw(self.local_recording.write)
+        heard = getattr(source, "name", None)
         self.logger.info(
-            f"Voice input: backend={transcriber.name} robot_microphone={'on' if source else 'off'} "
-            f"beamforming={'on' if source is not None and s.beamform else 'off'} push_to_talk=on"
+            f"Voice input: backend={transcriber.name} microphone={heard or 'off'} "
+            f"beamforming={'on' if self.robot_microphone is not None and s.beamform else 'off'}"
+            f"{' (recorded only)' if heard == 'local' and s.beamform else ''} push_to_talk=on"
         )
         return VoiceInput(
             self.ai_manager,
@@ -401,6 +426,21 @@ class PepperEvolution:
                 task = asyncio.current_task()
                 if task is not None and hasattr(task, "uncancel"):
                     task.uncancel()
+
+    SPEECH_GAP = 0.3  # seconds without frames from the robot's microphones (85 ms apart) that mean Pepper speaks
+    SPEECH_STALE = 30.0  # without frames this long, the stream itself is stuck: stop muting the local microphone
+
+    def _pepper_speaking(self) -> bool:
+        """LOCAL_MICROPHONE's mute: Pepper says something the host asked for, or the bridge stopped sending the head
+        microphones, which it does while Pepper speaks for any reason (and 0.4 s after)."""
+        bridge = getattr(self.robot, "bridge", None)
+        speech = getattr(bridge, "speech", None)
+        if speech is not None and speech.active():
+            return True
+        stream = self.robot_microphone
+        if stream is None or not stream.connected or stream.last_frame_at is None:
+            return False
+        return self.SPEECH_GAP < time.monotonic() - stream.last_frame_at < self.SPEECH_STALE
 
     async def _record_robot_event(self, event_type: str, data: Dict[str, Any]):
         if self.recorder is not None and event_type in ("people", "touch", "bumper"):
@@ -472,8 +512,11 @@ class PepperEvolution:
             await self.decider.close()
         if self.voice:
             await self.voice.stop()
-        if self.microphones is not None:
-            self.microphones.close()
+        if self.robot_microphone is not None:
+            await self.robot_microphone.stop()  # stopped twice when it was the voice's source: harmless
+        for recording in (self.microphones, self.local_recording):
+            if recording is not None:
+                recording.close()
         if self.api_server:
             await self.api_server.stop()
         if self.robot:
