@@ -7,8 +7,8 @@ PepperEvolution is pre-1.0: versions are `0.MINOR.PATCH`, with a new minor versi
 ## 0.8.0 (unreleased): beamforming, a steady camera stream, glances towards voices
 
 Built offline after the 2026-10-22 robot session; nothing below has run on the robot yet. The bridge version changed,
-so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All four new switches are off by
-default (`LOCAL_MICROPHONE` is empty by default).
+so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All the new switches are off by
+default.
 
 - **Beamforming over the four head microphones (#34, `BEAMFORM`).** The bridge streams all four microphones on request
   (`/ws/audio?channels=4`, resampled to 16 kHz on the robot), and the host beamforms them into one channel before
