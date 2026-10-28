@@ -221,6 +221,7 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 - **Neural denoisers** (GTCRN, DPDFNet) in front of Nemotron made recognition worse (18 % to 33 % word errors), so none is used. The **beamformer** (0.8.0) helps instead; offline numbers are in CHANGELOG.
 - **The 3D camera's stereo microphone** (ALSA card 1) is on but hears nothing: it is not fitted, or sealed in.
 - **Under the clip-on cover at the back of the head:** an RJ45 port and a micro-USB socket, next to two 50 mm 5 V fans (SEPA MFB50E-05). With a cable in the RJ45 port Pepper got 10.0.100.236 by DHCP at 1 Gbit/s, and Wi-Fi switched itself off until the cable was out. Whether the micro-USB socket is a host or a device port is still to test with an adapter (a USB microphone on a cable to the chest would avoid the fans).
+- **The micro-USB socket** (2026-10-27) is the head's serial console: an FTDI FT231X USB UART to `ttyS0`, where `agetty` runs at 115200, 38400 or 9600 baud with the banner "This is Pepper.". It is not a USB host; a webcam on an OTG adapter was not seen. It is useful for boot logs and as a way in without the network. Root on Pepper depends on the system image (the default consumer image restricts sudo to shutdown; "with-root" images exist); nothing planned needs root.
 - **External microphone options** (for the tester to choose): a wireless clip-on kit into the host, or a microphone array on a small board streaming over Wi-Fi (ReSpeaker XVF3800 class).
 
 ## Before the next robot session
@@ -231,7 +232,8 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 4. Check whether 1.2 s of end-of-turn silence feels right.
 5. **In the open space:** "come to me" from out of view, so the camera fallback runs during a drive (#24); voice direction behind Pepper and with the head turned (#31).
 6. **With a second person,** once a side-talk fix is chosen and built (#25).
-7. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
+7. **Serial console (#34, #35),** read-only, so we know: plug the head's micro-USB socket into the desktop and watch a full cold boot at 115200 baud with a terminal program. That shows whether the bootloader appears there and why the bridge sometimes does not autostart. Start at 115200 and stay there, since `agetty` changes speed on garbled input. Then, over SSH, one `su` attempt with the documented NAO root password to learn whether this image has root. Nothing is changed either way.
+8. **Alien3:** `nvidia-smi` fails with a driver/library mismatch. The libraries were updated on 2026-10-09 without a reboot. Inference still runs on the GPU, but a restart of our Ollama may lose the GPU. Don't restart it; a reboot needs the Hub admins.
 
 ## Robot session 2026-10-08: results (system one in the loop)
 
