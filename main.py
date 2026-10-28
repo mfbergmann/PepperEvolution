@@ -320,6 +320,8 @@ class PepperEvolution:
         self.robot.on_event(self.ai_manager.handle_event)
         if self.navigator is not None:
             await self.navigator.start()  # load the active map and relocalize where Pepper last was
+            if not s.fake_bridge:
+                self.robot.connection.events.on_reconnect(self.navigator.reload)  # a restarted bridge forgets it
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
         self.vision: Optional[FrameWatcher] = None
         self.scene: Optional[ScenePass] = None

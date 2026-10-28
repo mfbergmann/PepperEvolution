@@ -40,6 +40,7 @@ class Navigator:
         self.localizing = False
         self.exploring = False
         self.last_error: Optional[str] = None
+        self.loaded: Optional[str] = None  # the map the bridge says it has loaded
         self._saved: Optional[Dict[str, float]] = None  # the last position written to the store
         self._task: Optional[asyncio.Task] = None
         self.logger = logger.bind(module="Navigator")
@@ -78,6 +79,20 @@ class Navigator:
         else:
             await self.use_map(record)
         self._task = asyncio.ensure_future(self._poll_loop())
+
+    async def reload(self):
+        """After the bridge restarted (watchdog, deploy): it has forgotten the map, so load it and localize again."""
+        record = self.map
+        if not self.available or record is None:
+            return
+        try:
+            status = await self.bridge.map_status()
+            if status.get("loaded") == record.path and status.get("localizing"):
+                return
+            await self.use_map(record)
+        except Exception as exc:  # noqa: BLE001 - go_to tries again when it is needed
+            self.last_error = str(exc)
+            self.logger.warning(f"Map: could not reload after the bridge reconnected: {exc}")
 
     async def stop(self):
         if self._task is not None:
@@ -127,6 +142,7 @@ class Navigator:
         """Read where Pepper is on the map and tell the world model."""
         status = await self.bridge.map_status()
         self.exploring = bool(status.get("exploring"))
+        self.loaded = status.get("loaded")
         record = self.map
         localized = bool(status.get("localizing")) and record is not None and status.get("loaded") == record.path
         if not localized:
@@ -236,8 +252,11 @@ class Navigator:
         if self.exploring:
             return {"ok": False, "error": "You are exploring; wait until it is done."}
         await self.refresh()
-        if not self.localizing and record.last_pose is not None:
-            await self._localize(list(record.last_pose))  # e.g. after an emergency stop ended localization
+        if not self.localizing:
+            if self.loaded != record.path:
+                await self.use_map(record)  # the bridge restarted and forgot the map
+            elif record.last_pose is not None:
+                await self._localize(list(record.last_pose))  # e.g. after an emergency stop ended localization
         position = self.position()
         if position is None:
             return {"ok": False, "error": "You do not know where you are on your map; ask where you are."}

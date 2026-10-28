@@ -179,6 +179,24 @@ class TestNavigator:
         went = await nav.go_to("home")  # relocalizes around the last saved position, then goes
         assert went["ok"] and fake_robot.bridge.map_localizing
 
+    async def test_a_restarted_bridge_gets_the_map_again(self, nav, fake_robot):
+        await nav.explore()
+        nav.remember_place("home")
+        fake_robot.bridge.map_pose = [2.0, 0.0, 0.0]
+        await nav.refresh()
+        fake_robot.bridge.map_loaded, fake_robot.bridge.map_localizing = None, False  # the watchdog restarted it
+        went = await nav.go_to("home")
+        assert went["ok"] and fake_robot.bridge.calls[-3]["action"] == "map_load"
+        fake_robot.bridge.map_loaded, fake_robot.bridge.map_localizing = None, False
+        await nav.reload()  # what main.py runs when the event stream reconnects
+        assert fake_robot.bridge.map_localizing and fake_robot.bridge.map_loaded == nav.map.path
+
+    async def test_no_tools_without_the_exploration_api(self, nav, fake_robot):
+        executor = ToolExecutor(fake_robot)
+        executor.navigator = nav
+        nav.available = False
+        assert "cannot use a map" in (await executor.execute("go_to_place", {"name": "x"})).data["error"]
+
     async def test_too_unsure_to_drive(self, nav, fake_robot, monkeypatch):
         await nav.explore()
         nav.remember_place("home")

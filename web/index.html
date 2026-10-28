@@ -350,8 +350,8 @@ async function refreshMap(){
   document.getElementById('map-state').textContent=state;
   if(m.map && m.localizing){ img.src='/map.png?t='+Date.now(); img.style.display=''; } else img.style.display='none';
   document.getElementById('places').innerHTML=(m.places||[]).map(pl=>
-    '<div class="place"><span>'+esc(pl.name)+'</span><button class="secondary" data-go="'+esc(pl.name)+'">Go</button>'
-    +'<button class="secondary" data-forget="'+esc(pl.name)+'">Forget</button></div>').join('');
+    '<div class="place"><span>'+esc(pl.name)+'</span><button class="secondary" data-go="'+encodeURIComponent(pl.name)+'">Go</button>'
+    +'<button class="secondary" data-forget="'+encodeURIComponent(pl.name)+'">Forget</button></div>').join('');
 }
 async function mapCall(label, path, method, body){
   try{
@@ -365,7 +365,8 @@ const placeName=()=>document.getElementById('place-name').value.trim();
 document.getElementById('place-save').onclick=()=>{ if(placeName()) mapCall('Save place "'+placeName()+'"','/map/place','POST',{name:placeName()}); };
 document.getElementById('place-here').onclick=()=>{ if(placeName()) mapCall('Pepper is at "'+placeName()+'"','/map/here','POST',{name:placeName()}); };
 document.getElementById('places').onclick=(e)=>{
-  const go=e.target.getAttribute('data-go'), forget=e.target.getAttribute('data-forget');
+  const raw=(k)=>{ const v=e.target.getAttribute(k); return v==null?null:decodeURIComponent(v); };
+  const go=raw('data-go'), forget=raw('data-forget');
   if(go) mapCall('Go to "'+go+'"','/map/go','POST',{name:go});
   if(forget && confirm('Forget the place "'+forget+'"?')) mapCall('Forget "'+forget+'"','/map/place/'+encodeURIComponent(forget),'DELETE');
 };

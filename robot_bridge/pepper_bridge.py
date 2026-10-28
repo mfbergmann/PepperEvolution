@@ -170,6 +170,7 @@ EXPLORE_RADIUS = (1.0, 8.0)  # metres around the start point; one exploration ma
 MAP_GO_MAX = 15.0  # metres from where Pepper is: one /map/go never leaves the mapped rooms
 MAP_REACHED = 0.4  # metres: a navigation that ends this close to its target has arrived
 MAP_TURN_TOLERANCE_DEG = 10.0  # navigateToInMap ignores the heading; turn afterwards when further off than this
+MAP_TRACKING_HOLD = 3600.0  # face tracking stays off while exploring or navigating (they look around with the head)
 EXPLORER_DIR = "/home/nao/.local/share/Explorer"  # where saveExploration() writes .explo files (to check on the robot)
 NAV_CODES = {0: "ok", 1: "failed", 2: "cancelled", 3: "target_reached", 4: "target_not_reached", 5: "target_out_of_map"}
 MAP_METHODS = (
@@ -1001,10 +1002,25 @@ class Robot(object):
             if self._nav_cancelled:
                 return 2
             raise RuntimeError(future.error())
-        value = future.value()
+        try:
+            value = future.value()
+        except Exception:  # libqi raises from value() on a cancelled future
+            if self._nav_cancelled:
+                return 2
+            raise
         if self._nav_cancelled and value in (None, 0):
             return 2
         return 0 if value is None else int(value)  # fakes and old APIs answer None
+
+    def _navigating(self, run):
+        """Exploring and navigating look around with the head (NAOqi 2.5 docs: nothing else may use it meanwhile),
+        so face tracking is held off until shortly after."""
+        held = self._hold_tracking(MAP_TRACKING_HOLD)
+        try:
+            return run()
+        finally:
+            if held:
+                self._schedule_awareness_resume(1.0)
 
     def _map_position(self, nav=None):
         """Where Pepper is in the loaded map: x, y (metres), theta (degrees, left positive) and the uncertainty
@@ -1057,7 +1073,7 @@ class Robot(object):
         self.exploring = True
         started = time.time()
         try:
-            code = self._run_navigation(lambda: nav.explore(radius, _async=True))
+            code = self._navigating(lambda: self._run_navigation(lambda: nav.explore(radius, _async=True)))
         finally:
             self.exploring = False
         out = {
@@ -1120,7 +1136,7 @@ class Robot(object):
         here = self._map_position(nav)
         if here is not None and math.hypot(x - here["x"], y - here["y"]) > MAP_GO_MAX:
             raise ValueError("not going: the target is more than %.0f m away" % MAP_GO_MAX)
-        code = self._run_navigation(lambda: nav.navigateToInMap([x, y, 0.0], _async=True))
+        code = self._navigating(lambda: self._run_navigation(lambda: nav.navigateToInMap([x, y, 0.0], _async=True)))
         there = self._map_position(nav)
         distance = None if there is None else round(math.hypot(x - there["x"], y - there["y"]), 2)
         reached = distance <= MAP_REACHED if distance is not None else code in (0, 3)

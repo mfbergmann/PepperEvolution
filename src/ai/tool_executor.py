@@ -235,6 +235,8 @@ class ToolExecutor:
         """go_to_place, remember_place, forget_place, i_am_at_place (src/navigation/navigator.py)."""
         if self.navigator is None:
             return ToolOutcome.failure("You have no map here.")
+        if self.navigator.available is False:
+            return ToolOutcome.failure("This robot cannot use a map (its software has no exploration).")
         place = str(inp.get("name", "")).strip()
         if name == "go_to_place":
             result = await self.navigator.go_to(place)

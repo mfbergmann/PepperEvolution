@@ -1521,3 +1521,46 @@ class TestMapStops:
     def test_nothing_to_cancel(self, robot):
         robot.stop()
         assert calls(robot, "ALNavigation") == []
+
+
+class TestMapFutures:
+    def test_a_stop_while_navigating_reads_as_cancelled(self, robot):
+        """libqi raises from value() on a cancelled future: that is "cancelled", not an error."""
+
+        class Navigation:
+            def wait(self):
+                robot.stop()  # "stop" arrives while Pepper drives
+
+            def hasError(self):
+                return False
+
+            def value(self):
+                raise RuntimeError("Future canceled")
+
+            def cancel(self):
+                self.cancelled = True
+
+        future = Navigation()
+        assert robot._run_navigation(lambda: future) == 2 and future.cancelled
+
+    def test_other_failures_still_raise(self, robot):
+        class Broken:
+            def wait(self):
+                pass
+
+            def hasError(self):
+                return False
+
+            def value(self):
+                raise RuntimeError("ALNavigation exploded")
+
+        with pytest.raises(RuntimeError, match="exploded"):
+            robot._run_navigation(lambda: Broken())
+
+    def test_face_tracking_is_held_off_while_navigating(self, robot):
+        awareness = robot.svc("ALBasicAwareness")
+        awareness.isEnabled = lambda: True
+        seen = []
+        robot._navigating(lambda: seen.append(robot._tracking_held))
+        assert seen == [True] and ("setEnabled", (False,)) in awareness.calls
+        robot._cancel_awareness_resume()
