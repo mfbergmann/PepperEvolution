@@ -19,6 +19,9 @@ default.
   Neural denoisers were tried first and made recognition worse (18 % to 33 % word errors), so there is none.
 - **`RECORD_MICROPHONES`** keeps the four microphones of a session (`microphones.wav` in the session folder, 16 kHz),
   so the beamformer can be tuned again offline.
+- **`RECORD_CAMERA`** keeps every frame the camera streams (`camera/` in the session folder, with the head's angles
+  and the people count in `camera/frames.jsonl`); with `WATCH_ROOM` the camera is recorded for the whole session. The
+  review script counts the frames.
 - **A map and remembered places (#36, `MAP`, needs `MEMORY_DIR`).** The bridge exposes NAOqi's own exploration and
   localization (`/map`, `/map/explore`, `/map/load`, `/map/localize`, `/map/go`, `/map/image`); `/stop` and the
   emergency stop also end an exploration or a navigation. An operator explores from the web UI's new map panel (radius

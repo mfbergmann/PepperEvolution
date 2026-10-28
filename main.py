@@ -109,6 +109,7 @@ class Settings:
     initiative: bool = False
     beamform: bool = False
     record_microphones: bool = False
+    record_camera: bool = False
     watch_room: bool = False
     voice_glances: bool = False
     local_microphone: Optional[str] = None
@@ -171,6 +172,7 @@ class Settings:
             initiative=env_bool("INITIATIVE", False),
             beamform=env_bool("BEAMFORM", False),
             record_microphones=env_bool("RECORD_MICROPHONES", False),
+            record_camera=env_bool("RECORD_CAMERA", False),
             watch_room=env_bool("WATCH_ROOM", False),
             voice_glances=env_bool("VOICE_GLANCES", False),
             local_microphone=os.getenv("LOCAL_MICROPHONE", "").strip() or None,
@@ -343,6 +345,8 @@ class PepperEvolution:
                 # then the camera looks for them (#24)
                 wanted=lambda: bool(self.world.count) or self.ai_manager.in_conversation(),
                 watch=s.watch_room,  # and slowly while nobody is, looking for changes (#33)
+                # RECORD_CAMERA: keep every frame in the session folder (with WATCH_ROOM, the whole session)
+                frame_dir=self.recorder.path("camera") if s.record_camera and self.recorder is not None else None,
             )
             self.vision.start()  # streams while someone is in view (and with WATCH_ROOM, slowly at all times)
             self.ai_manager.head_angles = lambda: self.vision.head_now() if self.vision is not None else None

@@ -10,7 +10,9 @@ memory, where the "Around you" line and recall see it.
 Only questions with fixed answers, no descriptions: is someone waving, holding something up to show Pepper, facing
 the camera? A judgement that holds for two frames in a row becomes an event ("[Sensor event] Someone is waving at
 you."), with a cooldown, so Claude is only woken when something happens. Frames stay in memory; with
-PHOTO_RECORD_DIR set, only the frame that triggered an event is kept, for review.
+PHOTO_RECORD_DIR set, the frame that triggered an event is kept, for review. With ``frame_dir`` (RECORD_CAMERA) every
+frame is kept, with the head's angles and the people count in ``frames.jsonl``: with WATCH_ROOM, the camera's whole
+session.
 """
 
 import asyncio
@@ -74,7 +76,11 @@ class FrameWatcher:
         wanted: Optional[Callable[[], bool]] = None,
         watch: bool = False,
         idle_fps: float = IDLE_FPS,
+        frame_dir: Optional[str] = None,
     ):
+        self.frame_dir = frame_dir  # RECORD_CAMERA: keep every frame here (inside the session folder)
+        self.kept = 0
+        self._keeping_failed = False
         self.watch = watch  # keep a slow stream open while nobody is in view, looking for changes (#33)
         self.head_moved: List[Callable[[], None]] = []  # called when the head turned between frames (the beamformer)
         self.idle_fps = idle_fps
@@ -175,6 +181,7 @@ class FrameWatcher:
         """A new frame: judge it unless the previous judgement is still running (then drop it). While only watching
         an empty room, a frame is looked into only when the view changed."""
         self.frames += 1
+        self._record_frame(jpeg)
         head_yaw = self.head[0] if self.head else None
         changed = self._changed(jpeg, head_yaw)
         active = self._wanted()
@@ -308,9 +315,30 @@ class FrameWatcher:
         except OSError as exc:
             self.logger.debug(f"Could not keep the frame: {exc}")
 
+    def _record_frame(self, jpeg: bytes):
+        """RECORD_CAMERA: keep every frame, and one line about it (head angles, people seen) for the review."""
+        if not self.frame_dir:
+            return
+        try:
+            os.makedirs(self.frame_dir, exist_ok=True)
+            now = datetime.now()
+            name = now.strftime("frame_%Y%m%d_%H%M%S_%f")[:-3] + ".jpg"
+            with open(os.path.join(self.frame_dir, name), "wb") as fh:
+                fh.write(jpeg)
+            line = {"at": now.isoformat(timespec="milliseconds"), "file": name, "head": self.head}
+            line["people"] = self.world.count
+            with open(os.path.join(self.frame_dir, "frames.jsonl"), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(line) + "\n")
+            self.kept += 1
+        except Exception as exc:  # noqa: BLE001 - a lost frame must never stop the judgements
+            if not self._keeping_failed:
+                self._keeping_failed = True  # once: a full disk would say so every second
+                self.logger.warning(f"Could not keep camera frames: {exc}")
+
     def status(self) -> Dict[str, Any]:
         return {
             "frames": self.frames,
+            "kept": self.kept,
             "judged": self.judged,
             "dropped": self.dropped,
             "last_seconds": self.last_seconds,

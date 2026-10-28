@@ -187,9 +187,12 @@ def review(folder: str) -> str:
         "after hearing (add the recogniser's end-of-speech silence for 'after you stopped speaking')",
         f"- camera judgements: {len(camera)}, median {median(camera)}; camera events: "
         f"{sum(1 for e in events if e.get('kind') == 'camera_event')}",
-        "",
-        "## Flags",
     ]
+    frames = load(os.path.join(folder, "camera", "frames.jsonl"))  # RECORD_CAMERA
+    if frames:
+        span = f"{frames[0].get('at', '')[11:19]} to {frames[-1].get('at', '')[11:19]}"
+        out.append(f"- camera frames kept: {len(frames)} in camera/, {span}")
+    out += ["", "## Flags"]
     out += [f"- {f}" for f in flags] or ["- none"]
     return "\n".join(out) + "\n"
 

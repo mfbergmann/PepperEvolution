@@ -110,3 +110,11 @@ def test_a_turn_heard_mid_turn_says_it_waited(tmp_path):
     (tmp_path / "turns.jsonl").write_text("\n".join(json.dumps(t) for t in turns) + "\n")
     text = load_review().review(str(tmp_path))
     assert "slow first word (16.5 s; 14.6 s of it waiting for the previous turn to finish): 'Looking'" in text
+
+
+def test_kept_camera_frames_are_counted(tmp_path):
+    (tmp_path / "camera").mkdir()
+    rows = [{"at": "2026-10-28T14:00:01.000", "file": "a.jpg"}, {"at": "2026-10-28T14:20:05.000", "file": "b.jpg"}]
+    (tmp_path / "camera" / "frames.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    text = load_review().review(str(tmp_path))
+    assert "- camera frames kept: 2 in camera/, 14:00:01 to 14:20:05" in text

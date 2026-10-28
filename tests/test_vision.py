@@ -3,6 +3,7 @@ Tests for camera judgements (src/perception/vision.py) and how they reach the wo
 """
 
 import asyncio
+import json
 from unittest.mock import AsyncMock
 
 from src.ai.manager import AIManager
@@ -198,3 +199,32 @@ class TestCameraFallback:
         assert len(world.tracker.tracks) == 1 and "camera" in track.sources
         assert track.bearing(world.pose) == __import__("pytest").approx(19.6, abs=0.1)
         assert track.distance_from(world.pose) == __import__("pytest").approx(2.0)
+
+
+class TestKeepingFrames:
+    """RECORD_CAMERA: every frame into the session folder, with a line about it."""
+
+    async def test_every_frame_is_kept_with_head_and_people(self, tmp_path):
+        clock = [100.0]
+        w, _, _ = watcher([{}, {}], clock)
+        w.frame_dir = str(tmp_path / "camera")
+        w._text(json.dumps({"type": "frame", "head": [12.5, -3.0]}))
+        await feed(w, 2)
+        lines = [json.loads(line) for line in (tmp_path / "camera" / "frames.jsonl").read_text().splitlines()]
+        assert w.kept == 2 and len(lines) == 2 and lines[0]["head"] == [12.5, -3.0]
+        assert (tmp_path / "camera" / lines[1]["file"]).read_bytes() == b"\xff\xd8jpeg"
+
+    async def test_off_by_default(self, tmp_path):
+        clock = [100.0]
+        w, _, _ = watcher([{}], clock)
+        await feed(w)
+        assert w.kept == 0 and w.status()["kept"] == 0
+
+    async def test_a_disk_error_does_not_stop_the_judgements(self, tmp_path):
+        clock = [100.0]
+        blocked = tmp_path / "file"
+        blocked.write_text("not a folder")
+        w, events, _ = watcher([{"waving": 0.9}, {"waving": 0.9}], clock)
+        w.frame_dir = str(blocked / "camera")
+        await feed(w, 2)
+        assert w.kept == 0 and events == [{"what": "waving", "p": 0.9}]
