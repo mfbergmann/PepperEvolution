@@ -39,6 +39,7 @@ TranscriptCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
 RECORD_WINDOW_SECONDS = 30.0  # streaming path: how much recent microphone audio is kept for saving
 RECORD_PRE_ROLL_SECONDS = 1.5  # saved before the recogniser's first word, so onsets are not clipped
+REFINE_TIMEOUT = 3.0  # seconds the second pass may take before the streaming recogniser's text is used instead
 
 
 class VoiceInput:
@@ -53,7 +54,11 @@ class VoiceInput:
         record_dir: Optional[str] = None,
         min_chars: int = 2,
         continuation: bool = True,
+        refiner: Optional[Any] = None,
     ):
+        self.refiner = refiner  # STT_SECOND_PASS: re-reads each streaming final's audio for the final text
+        self.refined = 0  # finals whose text the second pass changed
+        self._refining = asyncio.Lock()  # finals stay in order while they wait for the second pass
         self.manager = manager
         self.transcriber = transcriber
         self.source = source
@@ -93,6 +98,8 @@ class VoiceInput:
             return
         started = time.monotonic()
         await self.transcriber.start()
+        if self.refiner is not None and self.transcriber.streaming:
+            await self.refiner.start()
         self.logger.info(
             f"Speech recognition ready: {self.transcriber.name} "
             f"({'streaming' if self.transcriber.streaming else 'per utterance'}) in {time.monotonic() - started:.1f}s"
@@ -117,12 +124,16 @@ class VoiceInput:
             task.cancel()
         self._tasks.clear()
         await self.transcriber.close()
+        if self.refiner is not None:
+            await self.refiner.close()
 
     def status(self) -> Dict[str, Any]:
         return {
             "enabled": True,
             "backend": self.transcriber.name,
             "streaming": self.transcriber.streaming,
+            "second_pass": getattr(self.refiner, "name", None),
+            "refined": self.refined,
             "started": self.started,
             "robot_microphone": self.source is not None and getattr(self.source, "name", "robot") == "robot",
             "microphone": getattr(self.source, "name", "robot") if self.source is not None else None,
@@ -142,12 +153,15 @@ class VoiceInput:
     async def _on_audio(self, pcm: bytes):
         try:
             if self.transcriber.streaming:
-                if self.record_dir:
+                if self.record_dir or self.refiner is not None:
                     self._keep_recent(pcm)
                 for transcript in await self.transcriber.process(pcm):
                     if transcript.final:
                         self.utterances += 1
                         transcript.at = time.monotonic()
+                        if self.refiner is not None:
+                            self._spawn(self._refine(transcript, self._take_recent(transcript)))
+                            continue
                         if self.record_dir:
                             self._spawn(self._record_streamed(transcript))
                         self._final(transcript)
@@ -324,12 +338,41 @@ class VoiceInput:
         if len(self._recent_audio) > limit:
             del self._recent_audio[: len(self._recent_audio) - limit]
 
-    async def _record_streamed(self, transcript: Transcript):
-        """Save the audio a streaming final came from: its duration plus a pre-roll, from the rolling window."""
+    def _take_recent(self, transcript: Transcript) -> bytes:
+        """The audio a streaming final came from: its duration plus a pre-roll, from the rolling window."""
         seconds = (transcript.duration or RECORD_WINDOW_SECONDS) + RECORD_PRE_ROLL_SECONDS
         take = int(seconds * self.transcriber.sample_rate) * BYTES_PER_SAMPLE
         pcm = bytes(self._recent_audio[-take:])
         self._recent_audio.clear()  # the next utterance starts after this one
+        return pcm
+
+    async def _refine(self, transcript: Transcript, pcm: bytes):
+        """STT_SECOND_PASS: the second pass's text replaces the streaming recogniser's, unless it is empty, fails or
+        is late. Then on as usual (joining, holding, delivery); the recording keeps both texts."""
+        async with self._refining:
+            first = transcript.text
+            started = time.monotonic()
+            try:
+                text = await asyncio.wait_for(self.refiner.refine(pcm), REFINE_TIMEOUT) if pcm else ""
+            except Exception as exc:  # noqa: BLE001 - the streaming text is still good
+                text = ""
+                self.logger.warning(f"Second pass failed ({type(exc).__name__}: {exc}); using the first pass")
+            spent = time.monotonic() - started
+            if text and text != first:
+                self.refined += 1
+                transcript.text = text
+                self.logger.info(f"[voice] second pass ({spent:.2f}s): {first!r} -> {text!r}")
+            else:
+                self.logger.debug(f"[voice] second pass ({spent:.2f}s) kept {first!r}")
+            transcript.latency += spent
+            if self.record_dir and pcm:
+                hyp = transcript.text if transcript.text == first else f"{transcript.text}\nfirst pass: {first}"
+                self._spawn(asyncio.to_thread(self._save, pcm, hyp))
+            self._final(transcript)
+
+    async def _record_streamed(self, transcript: Transcript):
+        """Save the audio a streaming final came from."""
+        pcm = self._take_recent(transcript)
         if pcm:
             await asyncio.to_thread(self._save, pcm, transcript.text)
 

@@ -33,7 +33,7 @@ from src.ai import (  # noqa: E402
     OllamaProvider,
     OpenAIProvider,
 )
-from src.audio import VoiceInput, make_transcriber  # noqa: E402
+from src.audio import CohereRefiner, VoiceInput, make_transcriber  # noqa: E402
 from src.audio.local_mic import LocalMicrophone  # noqa: E402
 from src.communication import APIServer  # noqa: E402
 from src.pepper import AudioStream, ConnectionConfig, FakeBridgeClient, PepperRobot, PrepareOptions  # noqa: E402
@@ -90,6 +90,7 @@ class Settings:
     stt_backend: str
     stt_model: str
     stt_language: str
+    stt_second_pass: str
     voice_input: bool
     voice_record_dir: Optional[str]
     photo_record_dir: Optional[str]
@@ -153,6 +154,7 @@ class Settings:
             stt_backend=(os.getenv("STT_BACKEND", "none").strip().lower() or "none"),
             stt_model=os.getenv("STT_MODEL", "").strip(),
             stt_language=(os.getenv("STT_LANGUAGE", "en").strip() or "en"),
+            stt_second_pass=os.getenv("STT_SECOND_PASS", "").strip(),
             voice_input=env_bool("VOICE_INPUT", False),
             voice_record_dir=os.getenv("VOICE_RECORD_DIR") or None,
             photo_record_dir=os.getenv("PHOTO_RECORD_DIR") or None,
@@ -430,6 +432,8 @@ class PepperEvolution:
             source=source,
             record_dir=s.voice_record_dir,
             continuation=s.wait_for_unfinished,
+            # STT_SECOND_PASS: Cohere Transcribe re-reads each utterance the streaming recogniser finished
+            refiner=CohereRefiner(s.stt_second_pass, language=s.stt_language) if s.stt_second_pass else None,
         )
 
     async def run(self):

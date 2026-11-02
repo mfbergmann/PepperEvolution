@@ -19,6 +19,14 @@ default.
   Neural denoisers were tried first and made recognition worse (18 % to 33 % word errors), so there is none.
 - **`RECORD_MICROPHONES`** keeps the four microphones of a session (`microphones.wav` in the session folder, 16 kHz),
   so the beamformer can be tuned again offline.
+- **A second pass over each utterance (`STT_SECOND_PASS`).** Nemotron keeps listening live (partials, end of speech,
+  barge-in); when it finishes an utterance, Cohere Transcribe (open, Apache 2.0, int8 through sherpa-onnx, on the
+  desktop's CPU) reads the same audio again and its text is answered. Offline on 2026-11-01: read speech mixed with
+  Pepper's own fan noise at the session median of 11 dB, 3.4 % word errors for Nemotron and 1.5 % for Cohere; on the
+  232 recorded session utterances Whisper sided with Cohere 56 times and with Nemotron 11 times where they differed.
+  It costs about 0.65 s after the end of speech (1.1 s for long utterances). Fan noise alone makes it write fillers,
+  so it only reads what Nemotron already found words in; empty, failed or late (3 s) results keep Nemotron's text, and
+  recordings keep both.
 - **`RECORD_CAMERA`** keeps every frame the camera streams (`camera/` in the session folder, with the head's angles
   and the people count in `camera/frames.jsonl`); with `WATCH_ROOM` the camera is recorded for the whole session. The
   review script counts the frames.

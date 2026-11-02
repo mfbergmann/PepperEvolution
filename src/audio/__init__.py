@@ -7,6 +7,7 @@ from .endpointer import EnergyVAD, Endpointer, Utterance
 from .pcm import duration, resample, rms, silence, tone, wav_bytes
 from .stt import (
     BACKENDS,
+    CohereRefiner,
     FakeTranscriber,
     SherpaTranscriber,
     Transcriber,
@@ -19,6 +20,7 @@ from .voice import VoiceInput
 
 __all__ = [
     "BACKENDS",
+    "CohereRefiner",
     "EnergyVAD",
     "Endpointer",
     "FakeTranscriber",

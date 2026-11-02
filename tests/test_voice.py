@@ -333,3 +333,87 @@ class TestUnfinishedRule:
         ]
         assert [t for t in cut if not unfinished(t)] == []
         assert [t for t in whole if unfinished(t)] == []
+
+
+class FakeRefiner:
+    """A second pass (STT_SECOND_PASS) that answers from a script, or raises, or takes too long."""
+
+    name = "cohere"
+
+    def __init__(self, texts=(), error=None, delay=0.0):
+        self.texts = list(texts)
+        self.error = error
+        self.delay = delay
+        self.heard = []
+        self.started = False
+
+    async def start(self):
+        self.started = True
+
+    async def refine(self, pcm):
+        self.heard.append(len(pcm))
+        await asyncio.sleep(self.delay)
+        if self.error:
+            raise self.error
+        return self.texts.pop(0) if self.texts else ""
+
+    async def close(self):
+        pass
+
+
+class TestSecondPass:
+    async def test_the_second_pass_text_is_answered(self, tmp_path):
+        manager, source, payloads = fake_manager(), FakeSource(), []
+        refiner = FakeRefiner(["Look at me, Pepper."])
+        rec = tmp_path / "rec"
+        voice = VoiceInput(
+            manager,
+            FakeTranscriber(["look at me"], streaming=True, endpoint_after=1.0),
+            source=source,
+            record_dir=str(rec),
+            refiner=refiner,
+        )
+        voice.on_transcript(collector(payloads))
+        await voice.start()
+        await source.push(silence(2.0) + tone(1.2))
+        await settle(voice, manager)
+        assert refiner.started and refiner.heard and refiner.heard[0] < 16000 * 2 * 3.5  # the utterance, not 3.2 s
+        assert manager.process_user_input.await_args.args == ("Look at me, Pepper.",)
+        assert voice.status()["second_pass"] == "cohere" and voice.status()["refined"] == 1
+        hyp = sorted(rec.glob("utterance_*.hyp.txt"))[0].read_text()
+        assert hyp.splitlines() == ["Look at me, Pepper.", "first pass: look at me"]
+
+    async def test_empty_failed_or_late_keeps_the_first_pass(self, monkeypatch):
+        import src.audio.voice as voice_module
+
+        monkeypatch.setattr(voice_module, "REFINE_TIMEOUT", 0.05)
+        for refiner in (FakeRefiner([""]), FakeRefiner(error=RuntimeError("no")), FakeRefiner(["late"], delay=0.2)):
+            manager, source = fake_manager(), FakeSource()
+            voice = VoiceInput(
+                manager,
+                FakeTranscriber(["look at me"], streaming=True, endpoint_after=1.0),
+                source=source,
+                refiner=refiner,
+            )
+            await voice.start()
+            await source.push(tone(1.2))
+            await asyncio.sleep(0.3)
+            await settle(voice, manager)
+            assert manager.process_user_input.await_args.args == ("look at me",)
+            assert voice.refined == 0
+
+    async def test_finals_stay_in_order(self):
+        manager, source = fake_manager(), FakeSource()
+        refiner = FakeRefiner(["Hi.", "Again."], delay=0.02)
+        voice = VoiceInput(
+            manager,
+            FakeTranscriber(["hi", "again"], streaming=True, endpoint_after=1.0),
+            source=source,
+            refiner=refiner,
+            continuation=False,
+        )
+        await voice.start()
+        await source.push(tone(2.4))
+        await asyncio.sleep(0.2)
+        await settle(voice, manager)
+        assert [c.args[0] for c in manager.process_user_input.await_args_list] == ["Hi.", "Again."]

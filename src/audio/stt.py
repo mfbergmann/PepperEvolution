@@ -364,6 +364,65 @@ class SherpaTranscriber(Transcriber):
         self._utterance_started = None
 
 
+class CohereRefiner:
+    """A second pass (STT_SECOND_PASS): Cohere Transcribe (sherpa-onnx int8 package) re-reads each utterance the
+    streaming recogniser finished, for the final text. Offline on the robot's microphone audio with Pepper's fans
+    (2026-11-01): about half Nemotron's word errors, ~0.65 s on 4 desktop CPU threads for a 3 s utterance. It writes
+    fillers ("uh", "mm") for fan noise alone, so it only reads what the streaming recogniser already found words in."""
+
+    name = "cohere"
+    sample_rate = SAMPLE_RATE
+
+    def __init__(self, model_dir: str, language: str = "en", num_threads: int = 4):
+        self.model_dir = os.path.expanduser(model_dir or "")
+        self.language = language
+        self.num_threads = num_threads
+        self._recognizer: Any = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cohere")
+        self.logger = logger.bind(module="Cohere")
+
+    async def start(self):
+        try:
+            import sherpa_onnx
+        except ImportError as exc:  # pragma: no cover - depends on the environment
+            raise TranscriberUnavailable("STT_SECOND_PASS needs sherpa-onnx: pip install sherpa-onnx") from exc
+        files = [os.path.join(self.model_dir, f) for f in ("encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt")]
+        missing = [f for f in files if not os.path.exists(f)]
+        if missing:
+            raise TranscriberUnavailable(
+                f"STT_SECOND_PASS must point at sherpa-onnx-cohere-transcribe-14-lang-int8-* (missing {missing[0]}), "
+                "from https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models"
+            )
+        started = time.monotonic()
+
+        def load():
+            return sherpa_onnx.OfflineRecognizer.from_cohere_transcribe(
+                encoder=files[0],
+                decoder=files[1],
+                tokens=files[2],
+                num_threads=self.num_threads,
+                language=self.language,
+            )
+
+        self._recognizer = await asyncio.get_running_loop().run_in_executor(self._executor, load)
+        self.logger.info(f"Second pass (Cohere Transcribe) ready in {time.monotonic() - started:.1f}s")
+
+    async def refine(self, pcm: bytes) -> str:
+        if self._recognizer is None:
+            await self.start()
+
+        def run() -> str:
+            stream = self._recognizer.create_stream()
+            stream.accept_waveform(self.sample_rate, to_float32(pcm))
+            self._recognizer.decode_stream(stream)
+            return " ".join(stream.result.text.split())
+
+        return await asyncio.get_running_loop().run_in_executor(self._executor, run)
+
+    async def close(self):
+        self._executor.shutdown(wait=False)
+
+
 BACKENDS = ("none", "fake", "whisper", "sherpa")
 
 
