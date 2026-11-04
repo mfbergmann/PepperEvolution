@@ -423,6 +423,92 @@ class CohereRefiner:
         self._executor.shutdown(wait=False)
 
 
+class RemoteRefiner:
+    """The same second pass on another machine in the lab (``scripts/stt_server.py``, e.g. Alien3's GPU):
+    STT_SECOND_PASS=http://alien3:11436. The utterance's audio goes there and only the text comes back."""
+
+    name = "cohere (remote)"
+
+    def __init__(self, url: str, language: str = "en", timeout: float = 3.0):
+        self.url = url.rstrip("/")
+        self.language = language
+        self.timeout = timeout
+        self._client: Any = None
+        self.logger = logger.bind(module="Cohere")
+
+    async def start(self):
+        import httpx
+
+        self._client = httpx.AsyncClient(timeout=self.timeout)
+        try:
+            health = (await self._client.get(f"{self.url}/health")).json()
+            self.logger.info(f"Second pass at {self.url}: {health}")
+        except Exception as exc:  # noqa: BLE001 - it may come up later; each utterance falls back until then
+            self.logger.warning(
+                f"Second pass at {self.url} not answering yet ({exc}); using the first pass until it does"
+            )
+
+    async def refine(self, pcm: bytes) -> str:
+        if self._client is None:
+            await self.start()
+        response = await self._client.post(
+            f"{self.url}/transcribe",
+            params={"language": self.language},
+            content=pcm,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        response.raise_for_status()
+        return " ".join(str(response.json().get("text", "")).split())
+
+    async def close(self):
+        if self._client is not None:
+            await self._client.aclose()
+
+
+class FallbackRefiner:
+    """Several second passes in order (STT_SECOND_PASS=http://alien3:11436,<local folder>): the first that answers
+    with text wins, so the desktop's own copy covers for the GPU machine being down."""
+
+    def __init__(self, refiners: List[Any]):
+        self.refiners = refiners
+        self.name = " / ".join(r.name for r in refiners)
+        self.logger = logger.bind(module="Cohere")
+
+    async def start(self):
+        for r in self.refiners:
+            await r.start()
+
+    async def refine(self, pcm: bytes) -> str:
+        for r in self.refiners:
+            try:
+                text = await r.refine(pcm)
+            except Exception as exc:  # noqa: BLE001 - try the next one
+                self.logger.debug(f"{r.name} failed ({type(exc).__name__}: {exc}); trying the next")
+                continue
+            if text:
+                return text
+        return ""
+
+    async def close(self):
+        for r in self.refiners:
+            await r.close()
+
+
+def make_refiner(spec: str, language: str = "en") -> Optional[Any]:
+    """STT_SECOND_PASS: a server address (``http://...``), a local model folder, or several of them separated by
+    commas (tried in order); empty for none."""
+    refiners: List[Any] = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if part.startswith(("http://", "https://")):
+            refiners.append(RemoteRefiner(part, language=language, timeout=1.5 if refiners == [] else 3.0))
+        elif part:
+            refiners.append(CohereRefiner(part, language=language))
+    if not refiners:
+        return None
+    return refiners[0] if len(refiners) == 1 else FallbackRefiner(refiners)
+
+
 BACKENDS = ("none", "fake", "whisper", "sherpa")
 
 

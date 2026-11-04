@@ -26,7 +26,9 @@ default.
   232 recorded session utterances Whisper sided with Cohere 56 times and with Nemotron 11 times where they differed.
   It costs about 0.65 s after the end of speech (1.1 s for long utterances). Fan noise alone makes it write fillers,
   so it only reads what Nemotron already found words in; empty, failed or late (3 s) results keep Nemotron's text, and
-  recordings keep both.
+  recordings keep both. `scripts/stt_server.py` serves the same model from a GPU machine in the lab
+  (Alien3: about 0.3 s for 6 s of speech); `STT_SECOND_PASS=http://alien3:11436,<local folder>` tries Alien3 first
+  and the desktop's copy when Alien3 does not answer.
 - **`RECORD_CAMERA`** keeps every frame the camera streams (`camera/` in the session folder, with the head's angles
   and the people count in `camera/frames.jsonl`); with `WATCH_ROOM` the camera is recorded for the whole session. The
   review script counts the frames.

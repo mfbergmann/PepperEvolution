@@ -417,3 +417,53 @@ class TestSecondPass:
         await asyncio.sleep(0.2)
         await settle(voice, manager)
         assert [c.args[0] for c in manager.process_user_input.await_args_list] == ["Hi.", "Again."]
+
+
+class TestRemoteSecondPass:
+    def test_an_address_is_a_server_and_a_folder_is_local(self):
+        from src.audio import CohereRefiner, RemoteRefiner, make_refiner
+
+        assert make_refiner("") is None
+        assert isinstance(make_refiner("http://alien3:11436/"), RemoteRefiner)
+        assert make_refiner("http://alien3:11436/").url == "http://alien3:11436"
+        assert isinstance(make_refiner("~/models/cohere"), CohereRefiner)
+        both = make_refiner("http://alien3:11436, ~/models/cohere")
+        assert [type(r) for r in both.refiners] == [RemoteRefiner, CohereRefiner]
+
+    async def test_the_next_one_covers_for_a_failed_one(self):
+        from src.audio import FallbackRefiner
+
+        class Down:
+            name = "down"
+
+            async def refine(self, pcm):
+                raise ConnectionError("no route")
+
+        class Up:
+            name = "up"
+
+            async def refine(self, pcm):
+                return "Hello."
+
+        assert await FallbackRefiner([Down(), Up()]).refine(b"\x00\x00") == "Hello."
+
+    async def test_the_audio_goes_and_only_text_comes_back(self):
+        import httpx
+
+        from src.audio import RemoteRefiner
+
+        seen = {}
+
+        def answer(request):
+            seen["path"], seen["body"], seen["language"] = (
+                request.url.path,
+                request.content,
+                request.url.params["language"],
+            )
+            return httpx.Response(200, json={"text": "  Look at   me. ", "seconds": 0.1})
+
+        r = RemoteRefiner("http://alien3:11436")
+        r._client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+        assert await r.refine(b"\x01\x00" * 100) == "Look at me."
+        assert seen == {"path": "/transcribe", "body": b"\x01\x00" * 100, "language": "en"}
+        await r.close()
