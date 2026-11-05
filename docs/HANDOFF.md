@@ -238,7 +238,7 @@ First, without moving the base (about 30 minutes, in the open area):
 
 Then, with the base moving and the tester beside Pepper: **"come to me" from out of view** (#24), then **the map** (items 9-11 below). Clear the floor first.
 
-Two people (#25): the camera does not solve this (two people in 4 of 95 frames of a conversation, as usually only one is in shot), and neither does a lower threshold. Voice may: label the 22 clips with `results/sessions/2026-11-05_160237/audio/label_voices.html` (local only, in a browser), then score the speaker models (`results/system-one/voices/voices.py`). CAM++ looks better than the ResNet34, but neither separates voices cleanly yet. A voice signal must stay in memory for the session unless the consent flow covers it. That session's recordings stay local: never quote them or put them in GitHub or Basecamp.
+Two people (#25): the camera does not solve this (two people in 4 of 95 frames of a conversation, as usually only one is in shot), and neither does a lower threshold. Voice may, with a voice learned beforehand: on the tester's labels (22 clips, one tester, one colleague), ERes2Net Large from 3D-Speaker separated the single-speaker clips completely, and a gate simulation (threshold tuned on the same session) answered 6 of 22 conversation utterances instead of 22, and 11 of 12 solo ones. Learning the voice during the session failed, because the first addressed clip already held both voices. So it needs a stored voiceprint, which needs the consent flow and the tester's decision; not built. That session's recordings stay local: never quote them or put them in GitHub or Basecamp.
 
 Also open: one sentence from behind missed live (item 8), and a live record of the beamformer's state would settle why.
 
