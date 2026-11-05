@@ -1,21 +1,25 @@
 """
 Whose voice is this? (#14, #25) Compares each utterance with the voices enrolled in the long-term store.
 
-Runs on the host's CPU, one comparison at a time on its own thread, so the audio loop never waits for it. The audio and
-the embeddings made from it live only for the length of a call: nothing is written anywhere, and someone who is not
-enrolled leaves no trace. What comes out is a :class:`VoiceReading`, made of numbers and, when confident, a name.
+One comparison at a time on its own thread, so the audio loop never waits for it. The embeddings come from the host's
+CPU, or with VOICE_ID_URL from the same model on a GPU machine in the lab (``scripts/stt_server.py``, stateless: it gets
+audio and returns vectors, and knows nobody), falling back to the CPU when that fails. The comparing is always here. The
+audio and the embeddings made from it live only for the length of a call: nothing is written anywhere, and someone who
+is not enrolled leaves no trace. What comes out is a :class:`VoiceReading`, made of numbers and, when confident, a name.
 
 How the numbers are used, thresholds included, is in docs/MEMORY.md ("Identity"), with what they were measured on.
 """
 
 import asyncio
+import base64
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+from loguru import logger
 
 from .compare import Enrolled, best_match, closest_score, load_enrolled, unit
 
@@ -36,6 +40,10 @@ SECOND_VOICE_SCORE = 0.15  # a clip's low score under this: part of it is not th
 PRESENT_SCORE = 0.40  # a window this close: the enrolled voice is in the clip, so another one is a second voice
 ENROLLED_RECENT = 300.0  # seconds after the enrolled voice was last heard in which a voice unlike it is a second voice
 SECOND_VOICE_WINDOW = 60.0  # seconds a second voice keeps the conversation bypass of the addressee gate off
+REMOTE_TIMEOUT = 0.4  # seconds for the GPU machine (about 0.09 s on the tailnet); then the CPU reads this clip
+REMOTE_BACKOFF = (
+    30.0  # seconds the CPU reads every clip after the GPU machine failed, so a dead one costs no one a wait
+)
 
 
 def samples_from(pcm: bytes) -> np.ndarray:
@@ -51,6 +59,12 @@ def window_starts(length: int, rate: int = SAMPLE_RATE) -> List[int]:
     return [starts[round(i * (len(starts) - 1) / (MAX_WINDOWS - 1))] for i in range(MAX_WINDOWS)]
 
 
+def clip_spans(length: int, rate: int = SAMPLE_RATE) -> List[Tuple[int, int]]:
+    """What is embedded for one clip of ``length`` samples: the whole of it, then its windows."""
+    span = int(WINDOW_SECONDS * rate)
+    return [(0, length)] + [(i, min(length, i + span)) for i in window_starts(length, rate)]
+
+
 @dataclass(frozen=True)
 class VoiceReading:
     """What one utterance's voice was like. ``score``, ``low`` and ``high`` are ``None`` with nobody to compare with
@@ -64,7 +78,8 @@ class VoiceReading:
     person_id: Optional[int] = None  # the closest enrolled person, when ``name`` is set
     name: Optional[str] = None  # set only when confident: the whole clip is close and no part of it is far
     second_voice: bool = False  # the low score says part of this clip is not an enrolled voice
-    spent: float = 0.0  # seconds of CPU thread time
+    spent: float = 0.0  # seconds on the worker thread
+    via: Optional[str] = None  # where the embeddings were made: "remote" (VOICE_ID_URL) or "local"
 
     def record(self) -> Dict[str, Any]:
         """For the session record (turns.jsonl): numbers and, if confident, the name. Never an embedding."""
@@ -81,15 +96,18 @@ def read_voice(
     confident: float = CONFIDENT_SCORE,
     second_voice: float = SECOND_VOICE_SCORE,
     rate: int = SAMPLE_RATE,
+    embed_spans: Optional[Callable[[np.ndarray, List[Tuple[int, int]]], Sequence[np.ndarray]]] = None,
 ) -> VoiceReading:
-    """Compare one clip with the enrolled voices. ``embed`` turns samples into a unit vector."""
+    """Compare one clip with the enrolled voices. ``embed`` turns samples into a unit vector; ``embed_spans``, if
+    given, makes all of a clip's vectors in one go instead (whole clip first, then the windows)."""
     seconds = len(samples) / rate
     if not enrolled or seconds < MIN_CLIP_SECONDS:
         return VoiceReading(seconds)
-    whole = best_match(embed(samples), enrolled)
+    spans = clip_spans(len(samples), rate)
+    vectors = embed_spans(samples, spans) if embed_spans is not None else [embed(samples[a:b]) for a, b in spans]
+    whole = best_match(vectors[0], enrolled)
     assert whole is not None
-    span = int(WINDOW_SECONDS * rate)
-    scores = sorted(closest_score(embed(samples[i : i + span]), enrolled) for i in window_starts(len(samples), rate))
+    scores = sorted(closest_score(vector, enrolled) for vector in vectors[1:])
     low = float(np.mean(scores[:LOWEST_WINDOWS]))
     mixed = low < second_voice
     known = whole.score >= confident and not mixed
@@ -124,6 +142,7 @@ def merge_readings(readings: Sequence[VoiceReading]) -> VoiceReading:
         name=next((r.name for r in told), None) if only is not None else None,
         second_voice=mixed,
         spent=sum(r.spent for r in readings),
+        via=next((r.via for r in readings if r.via == "local"), next((r.via for r in readings if r.via), None)),
     )
 
 
@@ -189,9 +208,51 @@ def model_name(path: str) -> str:
     return os.path.splitext(os.path.basename(path))[0]
 
 
+class RemoteSpeakerModel:
+    """The same speaker model on a GPU machine (``scripts/stt_server.py``, ``POST /embed``). One request per clip. Sends
+    audio and gets vectors; who is enrolled never leaves this host. Anything unexpected raises: vectors from another
+    model must not be compared with what is enrolled."""
+
+    def __init__(self, url: str, name: str, timeout: float = REMOTE_TIMEOUT, transport: Optional[Any] = None):
+        import httpx
+
+        self.url = url.rstrip("/")
+        self.name = name
+        # the connection stays open: a new one costs more than the model does
+        limits = httpx.Limits(keepalive_expiry=600.0)
+        self._client = httpx.Client(timeout=timeout, limits=limits, transport=transport)
+
+    def check(self) -> None:
+        """Raises unless the server is up and has this model."""
+        response = self._client.get(f"{self.url}/health")
+        response.raise_for_status()
+        served = response.json().get("voice_model")
+        if served != self.name:
+            raise ValueError(f"the server has speaker model {served!r}")
+
+    def embed_spans(self, samples: np.ndarray, spans: List[Tuple[int, int]]) -> List[np.ndarray]:
+        pcm = np.round(samples * 32768.0).astype("<i2").tobytes()
+        response = self._client.post(
+            f"{self.url}/embed", params={"spans": ",".join(f"{a}-{b}" for a, b in spans)}, content=pcm
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("model") != self.name:
+            raise ValueError(f"the server used speaker model {data.get('model')!r}")
+        vectors = np.frombuffer(base64.b64decode(data["embeddings"]), dtype="<f4").reshape(len(spans), int(data["dim"]))
+        return [unit(v) for v in vectors]
+
+    def close(self) -> None:
+        self._client.close()
+
+
 class VoiceIdentifier:
     """Reads voices on one worker thread. The enrolled voices are read from the store for each clip, on the caller's
-    (event loop) thread, so "forget me" holds from the next word on."""
+    (event loop) thread, so "forget me" holds from the next word on.
+
+    With ``url`` (VOICE_ID_URL) the embeddings come from the GPU machine. If it fails or takes over REMOTE_TIMEOUT, the
+    local model reads that clip, and every clip for the next REMOTE_BACKOFF seconds: a turn is never broken by it, only
+    later to hear the name."""
 
     def __init__(
         self,
@@ -201,7 +262,14 @@ class VoiceIdentifier:
         second_voice: float = SECOND_VOICE_SCORE,
         threads: int = 4,  # faster than 2 (0.15 s a window against 0.19) and 8 (0.35 s) on the desktop, with other work
         model: Optional[Any] = None,
+        url: str = "",
+        remote: Optional[Any] = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
+        self.url = url
+        self.remote = remote
+        self._clock = clock
+        self._remote_off_until = 0.0
         self.store = store
         self.model_path = model_path
         self.confident = confident
@@ -211,10 +279,26 @@ class VoiceIdentifier:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-id")
 
     async def start(self) -> None:
-        """Load the model (about a second; may fail: no file, no sherpa-onnx). The caller decides what failing means."""
+        """Load the model (about a second; may fail: no file, no sherpa-onnx). The caller decides what failing means.
+        The local model loads with a server too: it is the fallback, and the name of what is enrolled."""
+        loop = asyncio.get_running_loop()
         if self.model is None:
-            loop = asyncio.get_running_loop()
             self.model = await loop.run_in_executor(self._pool, SpeakerModel, self.model_path, self.threads)
+        if self.url and self.remote is None:
+            self.remote = RemoteSpeakerModel(self.url, self.model.name)
+            await loop.run_in_executor(self._pool, self._check_remote)
+
+    def _check_remote(self) -> None:
+        try:
+            self.remote.check()
+            logger.info(f"Voice embeddings from {self.url}, with this CPU as the fallback")
+        except Exception as exc:  # noqa: BLE001 - the CPU reads until the server answers
+            self._remote_failed(exc)
+
+    def _remote_failed(self, exc: Exception) -> None:
+        if self._clock() >= self._remote_off_until:  # once per outage: never the audio, only what went wrong
+            logger.warning(f"Voice embeddings: {type(exc).__name__} from {self.url}; on this CPU for now")
+        self._remote_off_until = self._clock() + REMOTE_BACKOFF
 
     def enrolled(self) -> List[Enrolled]:
         return load_enrolled(self.store, KIND, self.model.name)
@@ -225,8 +309,25 @@ class VoiceIdentifier:
 
     def _read(self, pcm: bytes, enrolled: List[Enrolled]) -> VoiceReading:
         started = time.monotonic()
-        reading = read_voice(self.model.embed, samples_from(pcm), enrolled, self.confident, self.second_voice)
-        return VoiceReading(**{**reading.__dict__, "spent": time.monotonic() - started})
+        via = []
+
+        def embed_spans(samples: np.ndarray, spans: List[Tuple[int, int]]) -> Sequence[np.ndarray]:
+            if self.remote is not None and self._clock() >= self._remote_off_until:
+                try:
+                    vectors = self.remote.embed_spans(samples, spans)
+                    via.append("remote")
+                    return vectors
+                except Exception as exc:  # noqa: BLE001 - this clip on the CPU, then
+                    self._remote_failed(exc)
+            via.append("local")
+            return [self.model.embed(samples[a:b]) for a, b in spans]
+
+        reading = read_voice(
+            self.model.embed, samples_from(pcm), enrolled, self.confident, self.second_voice, embed_spans=embed_spans
+        )
+        return VoiceReading(**{**reading.__dict__, "spent": time.monotonic() - started, "via": via[0] if via else None})
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
+        if self.remote is not None and hasattr(self.remote, "close"):
+            self.remote.close()

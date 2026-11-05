@@ -124,6 +124,7 @@ class Settings:
     voice_id: bool = False
     second_voice: bool = False
     voice_id_model: str = ""
+    voice_id_url: str = ""
     voice_id_threshold: float = 0.0
     second_voice_threshold: float = 0.0
 
@@ -193,6 +194,7 @@ class Settings:
             voice_id=env_bool("VOICE_ID", False),
             second_voice=env_bool("SECOND_VOICE", False),
             voice_id_model=os.getenv("VOICE_ID_MODEL") or DEFAULT_VOICE_MODEL,
+            voice_id_url=os.getenv("VOICE_ID_URL", "").strip(),
             voice_id_threshold=float(os.getenv("VOICE_ID_THRESHOLD") or CONFIDENT_SCORE),
             second_voice_threshold=float(os.getenv("SECOND_VOICE_THRESHOLD") or SECOND_VOICE_SCORE),
         )
@@ -465,6 +467,7 @@ class PepperEvolution:
         return VoiceIdentifier(
             self.memory.store,
             model_path=s.voice_id_model,
+            url=s.voice_id_url,
             confident=s.voice_id_threshold,
             second_voice=s.second_voice_threshold,
         )

@@ -357,7 +357,10 @@ class AIManager:
     async def _wait_for_voice_reading(self, reading: Optional["asyncio.Future"], rec: Dict[str, Any], wait: float):
         """Give the reading a moment, never longer. Without it this turn goes on as if there were none, and the
         reading still counts for the turns after it."""
-        if reading is None or reading.done():
+        if reading is None:
+            return
+        if reading.done():
+            await asyncio.sleep(0)  # its callback has its turn first: it may have finished a moment ago
             return
         await asyncio.wait({reading}, timeout=wait)
         if not reading.done():

@@ -101,7 +101,8 @@ def voice_line(identity: Dict[str, Any]) -> str:
     second = "; a part unlike any enrolled voice" if identity.get("second_voice") else ""
     second += "; SECOND VOICE signalled" if identity.get("second_voice_signal") else ""
     late = "; came too late for this turn" if identity.get("late") else ""
-    return f"{who} ({numbers}; {identity.get('windows')} windows in {identity.get('spent')} s){second}{late}"
+    via = f" {identity['via']}" if identity.get("via") else ""
+    return f"{who} ({numbers}; {identity.get('windows')} windows in {identity.get('spent')} s{via}){second}{late}"
 
 
 def event_line(event: Dict[str, Any]) -> str:
