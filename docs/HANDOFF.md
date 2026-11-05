@@ -224,6 +224,24 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 - **The micro-USB socket** (2026-10-27) is the head's serial console: an FTDI FT231X USB UART to `ttyS0`, where `agetty` runs at 115200, 38400 or 9600 baud with the banner "This is Pepper.". It is not a USB host; a webcam on an OTG adapter was not seen. It is useful for boot logs and as a way in without the network. Root on Pepper depends on the system image (the default consumer image restricts sudo to shutdown; "with-root" images exist); nothing planned needs root.
 - **External microphone options** (for the tester to choose): a wireless clip-on kit into the host, or a microphone array on a small board streaming over Wi-Fi (ReSpeaker XVF3800 class). Recommended on 2026-10-28: one DJI Mic Mini 2 transmitter on Pepper's chest, its USB-C receiver in the desktop, its own noise cancelling off at first. Ordered on 2026-10-28. The host side is built (`LOCAL_MICROPHONE`).
 
+## Next robot session: seeing and the map (set 2026-11-05)
+
+Pepper is shut down; bridge 0.8.0 is on it. `.env` has beamforming live, the Cohere second pass, `WATCH_ROOM`, `VOICE_GLANCES`, `RECORD_CAMERA` and `RECORD_MICROPHONES` on; `MAP` off. The DJI was tried and is not used: on Pepper's chest it heard less than the beamformed head. The full `ALNavigation` method list is present on the robot; nothing has been run with it.
+
+First, without moving the base (about 30 minutes, in the open area):
+
+1. **Glances (#33):** out of view at each side and behind; the head turns once, then face tracking takes over.
+2. **Voice direction (#31):** speak from known spots, also behind and with the head turned, and note where you stood. Pepper should no longer turn its body unasked (436d2c8): check it.
+3. **Noticing changes (#33):** walk through the empty area, leave a bag; ask what changed. The view-change check looked right in the 2026-11-05 frames: people moving and the base turning, not noise.
+4. **Things seen as people (#32), and people missed:** stand still, walk away, show a monitor or a poster. On 2026-11-05 NAOqi reported nobody on about 70 % of the office frames and 35 % of the open-area frames; in a sample of those frames the camera model saw one person in 27-37 %.
+5. **Waving:** wave from 2 m and 4 m, hold up an object, talk with your hands without waving. Both waving events on 2026-11-05 were someone gesturing while talking.
+
+Then, with the base moving and the tester beside Pepper: **"come to me" from out of view** (#24), then **the map** (items 9-11 below). Clear the floor first.
+
+Two people (#25): the camera does not solve this (two people in 4 of 95 frames of a conversation, as usually only one is in shot), and neither does a lower threshold. Voice may: label the 22 clips with `results/sessions/2026-11-05_160237/audio/label_voices.html` (local only, in a browser), then score the speaker models (`results/system-one/voices/voices.py`). CAM++ looks better than the ResNet34, but neither separates voices cleanly yet. A voice signal must stay in memory for the session unless the consent flow covers it. That session's recordings stay local: never quote them or put them in GitHub or Basecamp.
+
+Also open: one sentence from behind missed live (item 8), and a live record of the beamformer's state would settle why.
+
 ## Before the next robot session
 
 *Updated 2026-10-28.* Hearing and seeing first, then the map, with driving between rooms last.
