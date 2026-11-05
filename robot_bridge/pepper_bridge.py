@@ -1866,6 +1866,7 @@ class CameraStream(object):
         self.frames = 0
         self.last_error = None
         self._running = False
+        self._generation = 0  # which loop is the current one
         self._thread = None
         self._clock = clock
         self._sleep = sleep
@@ -1882,14 +1883,19 @@ class CameraStream(object):
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._loop)
+        self._generation += 1
+        # The previous loop may still be asleep (a client reconnecting at a new rate, as the host does when someone
+        # comes into view): it sees it is no longer current and ends, so there are never two (2026-11-05: frames at
+        # twice the asked rate, 254 of 715 byte-identical to the one before)
+        self._thread = threading.Thread(target=self._loop, args=(self._generation,))
         self._thread.daemon = True
         self._thread.start()
 
     def stop(self):
         self._running = False
 
-    def _loop(self):
+    def _loop(self, generation=None):
+        generation = self._generation if generation is None else generation
         video = self.session.service("ALVideoDevice")
         handle = None
         try:
@@ -1897,7 +1903,7 @@ class CameraStream(object):
             if not handle:
                 raise RuntimeError("ALVideoDevice refused the stream subscription")
             LOGGER.info("camera stream started (%.1f fps)", self.fps)
-            while self._running:
+            while self._running and generation == self._generation:
                 started = self._clock()
                 image = video.getImageRemote(handle)
                 if image:
@@ -1915,7 +1921,8 @@ class CameraStream(object):
             LOGGER.warning("camera stream stopped: %s", exc)
             main_ioloop().add_callback(CameraWebSocket.close_all, self.last_error)
         finally:
-            self._running = False
+            if generation == self._generation:
+                self._running = False
             if handle:
                 try:
                     video.unsubscribe(handle)

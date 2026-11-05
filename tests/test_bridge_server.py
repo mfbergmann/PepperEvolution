@@ -11,6 +11,8 @@ import math
 import importlib.util
 import struct
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -1317,6 +1319,37 @@ class TestCameraStream:
         names = [c[0] for c in video.calls]
         assert names[0] == "subscribeCamera" and video.calls[0][1][0] == "pepper_bridge_stream"
         assert names[-1] == "unsubscribe" and names.count("releaseImage") == 3
+
+    def test_a_quick_reconnect_leaves_one_loop(self, bridge, robot, monkeypatch):
+        """A client reconnecting at a new rate while the loop sleeps (2026-11-05): the old loop must end, not go on."""
+        stream, video, _, _, _ = self.make(bridge, robot, monkeypatch, frames=10**9)
+        loops, parked, second, release = [], threading.Event(), threading.Event(), threading.Event()
+
+        def sleep(seconds):
+            me = threading.current_thread()
+            if me not in loops:
+                loops.append(me)
+            if me is loops[0]:
+                parked.set()
+                release.wait(5)
+            else:
+                second.set()
+                time.sleep(0.001)
+
+        stream._sleep = sleep
+        stream.start(0.5)
+        assert parked.wait(5)
+        stream.stop()
+        stream.start(1.0)
+        assert second.wait(5)
+        release.set()
+        loops[0].join(5)
+        assert not loops[0].is_alive()
+        assert stream._running and loops[1].is_alive()  # and the old loop's ending did not stop the new one
+        stream.stop()
+        loops[1].join(5)
+        assert not loops[1].is_alive()
+        assert [c[0] for c in video.calls].count("unsubscribe") == 2
 
     def test_fps_is_capped(self, bridge, robot):
         stream = bridge.CameraStream(robot.session)
