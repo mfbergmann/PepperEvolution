@@ -2,9 +2,9 @@
 Comparing identity embeddings: the part voice and face share (docs/MEMORY.md, "Identity").
 
 An embedding is a unit vector from one model. Two are comparable only when the same model made them, and their cosine
-is the score. Everything here is pure: no model, no store writes, nothing kept. A new identifier (a face one, say)
-makes unit vectors with its own model, reads what is enrolled with ``load_enrolled(store, kind, model)`` and compares
-with ``best_match``.
+is the score. Everything here is pure: no model, no store writes, nothing kept. An identifier makes unit vectors with
+its own model, reads what is enrolled with ``load_enrolled(store, kind, model)`` and compares with ``best_match``. The
+face side keeps a gallery rather than one vector, so it has its own loader and score (``face.py``).
 """
 
 from dataclasses import dataclass

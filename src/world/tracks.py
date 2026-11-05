@@ -27,6 +27,7 @@ MATCH_METRES = 0.7
 VOICE_MATCH_DEGREES = 25.0  # sound direction is about 10 degrees accurate on Pepper (NAOqi docs)
 SPOKE_RECENTLY = 15.0  # seconds: a voice recognised this soon after a direction was heard belongs to that person
 CAMERA_MATCH_DEGREES = 30.0  # the camera fallback only says which third of the frame (about 19 degrees apart)
+FACE_MATCH_DEGREES = 20.0  # a face box gives a direction to a degree or two; the people detector's is rougher
 
 
 @dataclass
@@ -43,7 +44,7 @@ class PersonTrack:
     pitch: Optional[float] = None
     lost_at: Optional[float] = None
     sources: List[str] = field(default_factory=lambda: ["people"])
-    person_id: Optional[int] = None  # long-term memory, when known (opt-in identity, later)
+    person_id: Optional[int] = None  # long-term memory, when known (opt-in identity)
     spoke_at: Optional[float] = None  # when a voice came from their direction
 
     @property
@@ -177,6 +178,21 @@ class Tracker:
         if track is not None:
             track.person_id = person_id
         return track
+
+    def face(self, person_id: int, heading: float, pose: Pose, now: float) -> PersonTrack:
+        """An enrolled face was recognised in direction ``heading`` (absolute, radians): it belongs to the person there,
+        or to a new track known from the camera. One person is on one track, so any other track of theirs lets go."""
+        track = self.camera(heading, pose, now, within=FACE_MATCH_DEGREES)
+        for other in self.tracks:
+            if other is not track and other.person_id == person_id:
+                other.person_id = None
+        track.person_id = person_id
+        return track
+
+    def forget_person(self, person_id: int):
+        for track in self.tracks:
+            if track.person_id == person_id:
+                track.person_id = None
 
     def camera(self, heading: float, pose: Pose, now: float, within: float = CAMERA_MATCH_DEGREES) -> PersonTrack:
         """The camera saw someone in direction ``heading`` (absolute, radians) while the detector saw nobody (#24):

@@ -43,6 +43,11 @@ from src.perception import FrameWatcher  # noqa: E402
 from src.perception.scene import ScenePass  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
 from src.ai.reflection import Reflection  # noqa: E402
+from src.identity.face import DEFAULT_DETECTOR as DEFAULT_FACE_DETECTOR  # noqa: E402
+from src.identity.face import DEFAULT_MODEL as DEFAULT_FACE_MODEL  # noqa: E402
+from src.identity.face import THRESHOLD as FACE_THRESHOLD  # noqa: E402
+from src.identity.face import THREADS as FACE_THREADS  # noqa: E402
+from src.identity.face import FaceIdentifier  # noqa: E402
 from src.identity.voice import (  # noqa: E402
     CONFIDENT_SCORE,
     DEFAULT_MODEL as DEFAULT_VOICE_MODEL,
@@ -127,6 +132,11 @@ class Settings:
     voice_id_url: str = ""
     voice_id_threshold: float = 0.0
     second_voice_threshold: float = 0.0
+    face_id: bool = False
+    face_id_detector: str = ""
+    face_id_model: str = ""
+    face_id_threshold: float = 0.0
+    face_id_threads: int = 2
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -197,6 +207,11 @@ class Settings:
             voice_id_url=os.getenv("VOICE_ID_URL", "").strip(),
             voice_id_threshold=float(os.getenv("VOICE_ID_THRESHOLD") or CONFIDENT_SCORE),
             second_voice_threshold=float(os.getenv("SECOND_VOICE_THRESHOLD") or SECOND_VOICE_SCORE),
+            face_id=env_bool("FACE_ID", False),
+            face_id_detector=os.getenv("FACE_ID_DETECTOR") or DEFAULT_FACE_DETECTOR,
+            face_id_model=os.getenv("FACE_ID_MODEL") or DEFAULT_FACE_MODEL,
+            face_id_threshold=float(os.getenv("FACE_ID_THRESHOLD") or FACE_THRESHOLD),
+            face_id_threads=int(os.getenv("FACE_ID_THREADS") or FACE_THREADS),
         )
 
 
@@ -346,6 +361,7 @@ class PepperEvolution:
                 self.robot.connection.events.on_reconnect(self.navigator.reload)  # a restarted bridge forgets it
         self.world.on_arrival(self.ai_manager.handle_arrival)  # greet someone who walks up (GREET_NEWCOMERS)
         self.vision: Optional[FrameWatcher] = None
+        self.faces: Optional[FaceIdentifier] = None
         self.scene: Optional[ScenePass] = None
         if self.decider is not None and s.vision_stream and not s.fake_bridge:
             if s.scene_notes:
@@ -368,10 +384,14 @@ class PepperEvolution:
                 # RECORD_CAMERA: keep every frame in the session folder (with WATCH_ROOM, the whole session)
                 frame_dir=self.recorder.path("camera") if s.record_camera and self.recorder is not None else None,
             )
+            self.faces = await self.build_face_identifier()
+            self.vision.faces = self.faces
             self.vision.start()  # streams while someone is in view (and with WATCH_ROOM, slowly at all times)
             self.ai_manager.head_angles = lambda: self.vision.head_now() if self.vision is not None else None
             if self.robot_microphone is not None and self.robot_microphone.beamform:
                 self.vision.head_moved.append(self.robot_microphone.viewpoint_changed)
+        if s.face_id and self.vision is None:
+            self.logger.warning("FACE_ID reads the camera stream (VISION_STREAM, DECIDE_URL): off")
         # glances need voice directions, and the head's angle from a stream that stays open (or they repeat)
         self.ai_manager.voice_glances = s.voice_glances and s.sound_direction and s.watch_room
         if self.decider is not None:
@@ -472,6 +492,34 @@ class PepperEvolution:
             second_voice=s.second_voice_threshold,
         )
 
+    async def build_face_identifier(self) -> Optional[FaceIdentifier]:
+        """FACE_ID: compares the camera stream's faces with those enrolled in the long-term store. If it cannot load,
+        everything else runs without it."""
+        s = self.settings
+        if not s.face_id:
+            return None
+        if self.memory is None:
+            self.logger.warning("FACE_ID needs MEMORY_DIR (faces are enrolled there): off")
+            return None
+        faces = FaceIdentifier(
+            self.memory.store,
+            world=self.world,
+            memory=self.memory,
+            recorder=self.recorder,
+            detector_path=s.face_id_detector,
+            model_path=s.face_id_model,
+            threshold=s.face_id_threshold,
+            threads=s.face_id_threads,
+        )
+        try:
+            await faces.start()
+        except Exception as exc:  # noqa: BLE001 - no file, no OpenCV
+            self.logger.warning(f"Face identification off: {type(exc).__name__}: {exc}")
+            faces.close()
+            return None
+        self.logger.info(f"Face identification on: {len(faces.galleries())} enrolled")
+        return faces
+
     async def run(self):
         try:
             await self.api_server.start()  # returns on SIGINT/SIGTERM
@@ -562,6 +610,8 @@ class PepperEvolution:
         self.logger.info("Shutting down components...")
         if getattr(self, "vision", None) is not None:
             await self.vision.stop()
+        if getattr(self, "faces", None) is not None:
+            self.faces.close()
         if getattr(self, "scene", None) is not None:
             await self.scene.close()
         if getattr(self, "reflection", None) is not None:

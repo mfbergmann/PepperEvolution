@@ -25,6 +25,7 @@ pydantic>=2.9.0
 paramiko>=3.5.0
 
 # Voice input (optional): see requirements-voice.txt (sherpa-onnx or faster-whisper + numpy)
+# Face identification (optional, FACE_ID): see requirements-face.txt (opencv-python-headless + onnxruntime)
 
 # Testing
 pytest>=8.3.0

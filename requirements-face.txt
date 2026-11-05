@@ -1,0 +1,11 @@
+# Optional: face identification on the host (FACE_ID=true, docs/MEMORY.md "Identity").
+#   pip install -r requirements-face.txt
+# Runs on the CPU. The models are downloaded separately and are not in this repository, into
+# ~/.local/share/pepper-models/ (or FACE_ID_DETECTOR, FACE_ID_MODEL):
+#   face_yunet.onnx: face_detection_yunet_2023mar.onnx, huggingface.co/opencv/face_detection_yunet (MIT)
+#   face_w600k_r50.onnx: w600k_r50.onnx from buffalo_l.zip, github.com/deepinsight/insightface releases v0.7
+#     (InsightFace's pretrained weights are for non-commercial research only)
+
+numpy>=1.26
+opencv-python-headless>=5.0
+onnxruntime>=1.20

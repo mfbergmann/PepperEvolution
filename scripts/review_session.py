@@ -222,6 +222,16 @@ def review(folder: str) -> str:
             f"second voice signalled {sum(1 for r in read if r.get('second_voice_signal'))}, "
             f"late {sum(1 for r in read if r.get('late'))}, failed {sum(1 for r in read if r.get('error'))}"
         )
+    faces = [e for e in events if e.get("kind") == "face_stats"]  # FACE_ID
+    if faces:
+        f = faces[-1]
+        told = [e for e in events if e.get("obs") == "recognised" and e.get("via") == "face"]
+        out.append(
+            f"- faces: {f.get('read')} of {f.get('offered')} frames read ({f.get('dropped')} dropped while busy, "
+            f"{f.get('repeats')} repeated frames, {f.get('failed')} failed), median {f.get('median_ms')} ms, "
+            f"max {f.get('max_ms')} ms; a face in {f.get('with_face')}, someone enrolled in {f.get('matched')}; "
+            f"working memory told {len(told)} times"
+        )
     frames = load(os.path.join(folder, "camera", "frames.jsonl"))  # RECORD_CAMERA
     if frames:
         span = f"{frames[0].get('at', '')[11:19]} to {frames[-1].get('at', '')[11:19]}"

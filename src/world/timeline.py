@@ -46,6 +46,11 @@ class Timeline:
             out.append(event)
         return out
 
+    def remove(self, kind: str, **data: Any) -> None:
+        """Drop the entries of ``kind`` whose data has these values ("forget me")."""
+        kept = [e for e in self._events if e.kind != kind or any(e.data.get(k) != v for k, v in data.items())]
+        self._events = deque(kept, maxlen=self._events.maxlen)
+
     def last(self, kind: str) -> Optional[Event]:
         for event in reversed(self._events):
             if event.kind == kind:

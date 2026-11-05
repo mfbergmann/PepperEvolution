@@ -158,6 +158,7 @@ class Memory:
         self._here.pop(person.id, None)
         self.met.pop(person.id, None)
         if self.world is not None:
+            self.world.forget_known(person.id)
             self.world.note(MIND, "forgot_person")
         return {"ok": True, "forgotten": True, "note": f"Everything you had stored about {person.name} is deleted."}
 

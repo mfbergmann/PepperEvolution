@@ -184,6 +184,7 @@ class AIManager:
         self._rec: Optional[Dict[str, Any]] = None  # the record of the turn being run
         self._voice_line = ""  # where the voice of the turn being run came from (sound direction)
         self._who_line = ""  # whose voice it sounded like (VOICE_ID)
+        self._who_id: Optional[int] = None  # and the person's id
         self.voice_id = False
         self.second_voice_gate = False
         self.second_voice = SecondVoiceWatch()
@@ -321,6 +322,7 @@ class AIManager:
                 return result
             self._rec = rec
             self._voice_line = voice_line
+            self._who_id = rec.get("_who_id")
             self._who_line = self._voice_hint(rec)
             self.executor.clear_already_started()  # never carry an absorption over from another turn
             pending = rec.pop("_absorb", None)
@@ -332,6 +334,7 @@ class AIManager:
                 self._rec = None
                 self._voice_line = ""
                 self._who_line = ""
+                self._who_id = None
                 self.executor.clear_already_started()
         self._finish_record(rec, result)
         if source in ("user", "voice"):
@@ -378,9 +381,15 @@ class AIManager:
                 **({"second_voice_signal": True} if signal else {}),
                 **({"late": True} if late else {}),
             }
-            if self.voice_id and reading.name:
+            forgotten = (
+                reading.person_id is not None
+                and self.memory is not None
+                and self.memory.store.person(reading.person_id) is None
+            )  # while this clip was being read
+            if self.voice_id and reading.name and not forgotten:
                 if not late:
                     rec["_who"] = reading.name
+                    rec["_who_id"] = reading.person_id
                 if self.world is not None:
                     self.world.note(
                         IDENTITY,
@@ -401,6 +410,7 @@ class AIManager:
     @staticmethod
     def _voice_hint(rec: Dict[str, Any]) -> str:
         who = rec.pop("_who", None)
+        rec.pop("_who_id", None)
         return f"The voice sounds like {who}." if who else ""
 
     # ------------------------------------------------------------------
@@ -1336,7 +1346,7 @@ class AIManager:
             f"motors {awake}; autonomous life {state.autonomous_life}; voice language {state.language}. "
             f"Local date and time: {now.strftime('%A %d %B %Y, %H:%M')}."
         )
-        around = self.world.summary() if self.world is not None else ""
+        around = self.world.summary(speaking=self._who_id) if self.world is not None else ""
         if around:
             dynamic += f"\n{around}"
         photo_line = self._last_photo_line()
@@ -1344,8 +1354,8 @@ class AIManager:
             dynamic += f"\n{photo_line}"
         if self._voice_line:
             dynamic += f"\n{self._voice_line}"
-        if self._who_line:
-            dynamic += f"\n{self._who_line}"
+        if self._who_line and not (self.world is not None and self.world.sees_known(self._who_id)):
+            dynamic += f"\n{self._who_line}"  # seen as well: the "Around you" line says it, once
         known = self.memory.here_line() if self.memory is not None else ""
         if known:
             dynamic += f"\n{known}"

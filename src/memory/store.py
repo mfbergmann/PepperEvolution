@@ -147,7 +147,7 @@ class Identity:
     name: str
     kind: str  # one of IDENTITY_KINDS
     model: str
-    embedding: bytes
+    embedding: bytes  # voice: one vector. face: a gallery of ``samples`` vectors, end to end (src/identity/face.py)
     samples: int
     consent_note: str
     created_at: str

@@ -34,6 +34,8 @@ MOVED_UNEXPECTEDLY_METRES = 0.3
 ARRIVAL_ABSENCE_SECONDS = 20.0  # someone "arrives" only after nobody was in view this long; shorter gaps are
 # the detector losing a person who looked away (seen on the robot), not a new arrival
 MAX_PEOPLE_DESCRIBED = 3
+KNOWN_HERE_FRESH = 30.0  # seconds after a recognition that an enrolled person counts as here (identity, opt-in)
+RECOGNISED_QUIET = 120.0  # seconds in which recognising someone the same way again is not news for the timeline
 CROWD_MIN_SECONDS = 5.0  # two or more in view this long make a crowd; a shorter blip (a monitor's glare, 4 s on
 # 2026-10-20) does not
 
@@ -59,6 +61,16 @@ class Person:
             yaw=data.get("yaw"),
             pitch=data.get("pitch"),
         )
+
+
+@dataclass
+class KnownPerson:
+    """Someone enrolled who was recognised lately, by either sense."""
+
+    name: str
+    seen_at: Optional[float] = None
+    heard_at: Optional[float] = None
+    in_timeline: Optional[Dict[str, float]] = None  # via -> when it last went into the timeline
 
 
 @dataclass
@@ -130,6 +142,7 @@ class WorldModel:
         self._moving = 0  # commanded moves in flight (no "moved unexpectedly" while they run)
         self.sounds: Deque[Tuple[float, float, float]] = deque(maxlen=SOUNDS_KEPT)  # (time, heading, confidence)
         self.scene: Optional[Tuple[float, Dict[str, Any]]] = None  # the latest scene note (#11): (time, data)
+        self.known: Dict[int, KnownPerson] = {}  # enrolled people recognised lately, by person id
         self.most_people = 0  # the most people in view at once since start-up (session episode)
         # where Pepper is on its saved map (#36): (time, {x, y, theta, uncertainty, place}), in the map frame. Kept
         # apart from ``pose`` (odometry): the two frames differ and only the map's survives a restart
@@ -168,9 +181,7 @@ class WorldModel:
         elif obs.source == MAP:
             self._apply_map(obs)
         elif obs.source == IDENTITY:
-            # who someone is, from an enrolled voice or face: onto the person who spoke just now, when there is one
-            track = self.tracker.identify(int(obs.data["person_id"]), obs.at)
-            self.timeline.add(obs.kind, obs.at, **obs.data, track=track.id if track else None, source=obs.source)
+            self._apply_identity(obs)
         elif obs.source == CAMERA and obs.kind == "judgement":
             self.update_seen(obs.data.get("p") or {}, at=obs.at)
         elif obs.source == CAMERA and obs.kind == "person_seen" and obs.data.get("bearing") is not None:
@@ -186,6 +197,58 @@ class WorldModel:
         return arrival
 
     # -- pose and tracks (#27) -----------------------------------------------------------------------------------------
+
+    def _apply_identity(self, obs: Observation):
+        """Who someone is, from an enrolled voice or face. A voice goes on the person who spoke just now, a face on the
+        person in its direction (not while the base turns: the dead-reckoned pose lags). Voice and face fill one record
+        per person, so they speak with one voice in the summary, and the timeline hears of each only now and then."""
+        data = obs.data
+        person_id, via = int(data["person_id"]), data.get("via")
+        track = None
+        if via != "face":
+            track = self.tracker.identify(person_id, obs.at)
+        elif data.get("bearing") is not None and not self._moving:
+            track = self.tracker.face(person_id, self.pose.heading_of(float(data["bearing"])), self.pose, obs.at)
+        known = self.known.setdefault(person_id, KnownPerson(str(data.get("name"))))
+        if via == "face":
+            known.seen_at = obs.at
+        else:
+            known.heard_at = obs.at
+        told = known.in_timeline = known.in_timeline or {}
+        if via not in told or obs.at - told[via] >= RECOGNISED_QUIET:
+            told[via] = obs.at
+            self.timeline.add(obs.kind, obs.at, **data, track=track.id if track else None, source=obs.source)
+
+    def forget_known(self, person_id: int):
+        """They asked to be forgotten: nothing in working memory names them from now on."""
+        self.known.pop(person_id, None)
+        self.tracker.forget_person(person_id)
+        self.timeline.remove("recognised", person_id=person_id)
+
+    def sees_known(self, person_id: Optional[int]) -> bool:
+        """Their face was recognised lately."""
+        known = self.known.get(person_id) if person_id is not None else None
+        return known is not None and known.seen_at is not None and self._clock() - known.seen_at <= KNOWN_HERE_FRESH
+
+    def known_line(self, speaking: Optional[int] = None) -> str:
+        """Who enrolled is here, one mention per person whichever senses found them, and no facts. ``speaking``: the
+        person whose voice this turn's reading named. Heard only, they are left to that reading's own line; seen as
+        well, this says both."""
+        now = self._clock()
+        alone, with_voice = [], []
+        for person_id, known in self.known.items():
+            seen = self.sees_known(person_id)
+            heard = known.heard_at is not None and now - known.heard_at <= KNOWN_HERE_FRESH
+            if person_id == speaking and seen:
+                with_voice.append(known.name)
+            elif person_id != speaking and (seen or heard):
+                alone.append(known.name)
+        parts = []
+        if with_voice:
+            parts.append(f"{with_voice[0]} is here and the voice you are answering sounds like them")
+        if alone:
+            parts.append(f"{' and '.join(alone)} {'is' if len(alone) == 1 else 'are'} here")
+        return f"{'; '.join(parts)} (you know them: say recall to look them up)." if parts else ""
 
     def _apply_pose(self, measured: Pose):
         """A pose measured by the bridge. The first one re-bases what was dead-reckoned; a jump with no move
@@ -456,8 +519,8 @@ class WorldModel:
         p, at = self.seen.get(what, (0.0, -1e9))
         return p >= threshold and self._clock() - at <= self.SEEN_FRESH
 
-    def summary(self) -> str:
-        """One sentence for the model's context; empty until the first report."""
+    def summary(self, speaking: Optional[int] = None) -> str:
+        """One sentence for the model's context; empty until the first report. ``speaking``: ``known_line``."""
         if self.count is None:
             return ""
         now = self._clock()
@@ -489,6 +552,9 @@ class WorldModel:
         note = self.scene_line()
         if note:
             text += f" {note}"
+        known = self.known_line(speaking)
+        if known:
+            text += f" {known}"
         return text
 
     def scene_line(self) -> str:

@@ -13,6 +13,9 @@ you."), with a cooldown, so Claude is only woken when something happens. Frames 
 PHOTO_RECORD_DIR set, the frame that triggered an event is kept, for review. With ``frame_dir`` (RECORD_CAMERA) every
 frame is kept, with the head's angles and the people count in ``frames.jsonl``: with WATCH_ROOM, the camera's whole
 session.
+
+With ``faces`` (FACE_ID) every frame is also offered to the face identifier (src/identity/face.py), which reads on a
+thread of its own and drops frames while busy. The judgements neither wait for it nor know about it.
 """
 
 import asyncio
@@ -77,7 +80,9 @@ class FrameWatcher:
         watch: bool = False,
         idle_fps: float = IDLE_FPS,
         frame_dir: Optional[str] = None,
+        faces: Optional[Any] = None,
     ):
+        self.faces = faces  # FACE_ID: src/identity/face.py FaceIdentifier
         self.frame_dir = frame_dir  # RECORD_CAMERA: keep every frame here (inside the session folder)
         self.kept = 0
         self._keeping_failed = False
@@ -187,6 +192,8 @@ class FrameWatcher:
         active = self._wanted()
         if self.scene is not None:
             self.scene.offer(jpeg, head_yaw=head_yaw, changed=changed)
+        if self.faces is not None:
+            self.faces.offer(jpeg, head_yaw)  # the detector misses faces, so also while it reports nobody
         if self.world.count == 0 and (active or changed):  # the detector reported nobody (None: no report yet)
             self._find_person(jpeg, head_yaw)
         if self.watch and not active:
@@ -342,4 +349,5 @@ class FrameWatcher:
             "judged": self.judged,
             "dropped": self.dropped,
             "last_seconds": self.last_seconds,
+            **({"faces": self.faces.status()} if self.faces is not None else {}),
         }
