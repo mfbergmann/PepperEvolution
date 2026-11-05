@@ -16,13 +16,14 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Sequen
 from loguru import logger
 
 from ..decide import addressed, judge_addressee
+from ..identity.voice import SecondVoiceWatch
 from ..decide.router import Routed
 from ..decide.router import choose as choose_action
 from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
 from .glance import MAX_SPREAD, MIN_SOUNDS, glance_target, people_yaws
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
-from ..world.observations import HEARD, MIND, SAID
+from ..world.observations import HEARD, IDENTITY, MIND, SAID
 from ..world.views import addressee_context
 from .models import CLOSING, ERROR_TEXT, MAP_PROMPT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
@@ -32,6 +33,9 @@ from .tools import MAP_TOOLS, MEMORY_TOOLS, TOOLS
 ResponseCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 PartialCallback = Callable[[str], Awaitable[None]]
 
+STOPPING = ("stop", "quiet")  # requests that are never held back by the addressee gate's second-voice rule
+VOICE_READING_WAIT = 0.5  # seconds a turn may wait for a voice reading that could change whether it is answered
+VOICE_HINT_WAIT = 0.25  # seconds a turn may wait for a voice reading only to tell the mind whose voice it was
 MAX_ROUNDS_TEXT = "I got a bit carried away there. What would you like next?"
 HALTED_TEXT = "Emergency stop pressed. I'm resting until someone wakes me up."
 ABORTED_TEXT = "Okay, stopping."
@@ -179,6 +183,10 @@ class AIManager:
         self.recorder: Optional[Any] = None  # SessionRecorder (src/session.py): turns.jsonl and events.jsonl
         self._rec: Optional[Dict[str, Any]] = None  # the record of the turn being run
         self._voice_line = ""  # where the voice of the turn being run came from (sound direction)
+        self._who_line = ""  # whose voice it sounded like (VOICE_ID)
+        self.voice_id = False
+        self.second_voice_gate = False
+        self.second_voice = SecondVoiceWatch()
         self.voice_glances = False  # VOICE_GLANCES: turn the head towards a voice from where nobody is seen (#33)
         self.head_angles: Optional[Callable[[], Optional[Sequence[float]]]] = None  # main.py: the camera's head angles
         self._last_glance: Optional[float] = None
@@ -211,12 +219,14 @@ class AIManager:
         spoke_for: Optional[float] = None,
         parts: int = 1,
         unfinished: bool = False,
+        voice_reading: Optional["asyncio.Future"] = None,
     ) -> Dict[str, Any]:
         """Process user input through the AI with tool calling.
 
         ``heard_at`` (``time.monotonic()``) is when voice input delivered the final transcript, for the session record.
         ``open_mic``: heard by the robot's microphone rather than typed or push-to-talk, so it may not be meant for
         Pepper (the addressee gate only judges these).
+        ``voice_reading``: a future of whose voice this was (src/identity), finished or about to be.
 
         Returns a dict with:
             - text: the AI's reply (animation tags stripped)
@@ -232,6 +242,8 @@ class AIManager:
         if unfinished:
             rec["unfinished"] = True  # a fragment answered after the hold: no action starts from it (2026-10-20)
         voice_line = self._voice_direction(source, heard_at, spoke_for, rec)
+        if voice_reading is not None:
+            voice_reading.add_done_callback(lambda done: self._take_voice_reading(done, rec))
         if source in ("user", "voice"):
             intent = match_intent(user_input)
             if intent is not None:
@@ -250,14 +262,24 @@ class AIManager:
             gate_on = open_mic and self.decider is not None and self.addressee_gate
             route_on = self.decider is not None and self.router and not unfinished
             # Both judgements run at once: ~0.05 s and ~0.15 s on the Creative AI Hub
-            gate_task = asyncio.create_task(self._meant_for_pepper(heard_before, user_input, rec)) if gate_on else None
+            gate_task = (
+                asyncio.create_task(self._meant_for_pepper(heard_before, user_input, rec, voice_reading))
+                if gate_on
+                else None
+            )
             previous = heard_before[-1] if heard_before else ""
             route_task = asyncio.create_task(self._choose_action(previous, user_input, rec)) if route_on else None
             meant = await gate_task if gate_task is not None else True
             routed = await route_task if route_task is not None else None
+            if not meant and rec["addressee"].get("second_voice_decided") and routed and routed.intent in STOPPING:
+                meant = True  # stopping is never held back because of a second voice
+                rec["addressee"]["addressed"] = True
             self._note_heard(user_input, source, addressed=meant)
             if not meant:
                 # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
+                await self._wait_for_voice_reading(
+                    voice_reading, rec, VOICE_READING_WAIT
+                )  # for the record: no one waits
                 self._glance_at_voice(rec)
                 result = self._bare_result("", source, client_id, "not_addressed")
                 self._finish_record(rec, result)
@@ -287,6 +309,8 @@ class AIManager:
                 )
             else:
                 self._glance_at_voice(rec)  # no action started: the head is free to look towards the voice
+            if self.voice_id:
+                await self._wait_for_voice_reading(voice_reading, rec, VOICE_HINT_WAIT)
         submitted = self._clock()
         async with self._lock:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
@@ -297,6 +321,7 @@ class AIManager:
                 return result
             self._rec = rec
             self._voice_line = voice_line
+            self._who_line = self._voice_hint(rec)
             self.executor.clear_already_started()  # never carry an absorption over from another turn
             pending = rec.pop("_absorb", None)
             if pending is not None:
@@ -306,6 +331,7 @@ class AIManager:
             finally:
                 self._rec = None
                 self._voice_line = ""
+                self._who_line = ""
                 self.executor.clear_already_started()
         self._finish_record(rec, result)
         if source in ("user", "voice"):
@@ -319,10 +345,68 @@ class AIManager:
         return result
 
     # ------------------------------------------------------------------
+    # Whose voice (src/identity; VOICE_ID, SECOND_VOICE). Never in the way: a late or failed reading changes nothing
+    # ------------------------------------------------------------------
+
+    def use_voice_identity(self, voice_id: bool, second_voice: bool, watch: Any = None):
+        self.voice_id = voice_id  # tell the mind who is speaking, and note it in working memory
+        self.second_voice_gate = second_voice  # a second voice turns the gate's conversation bypass off
+        if watch is not None:
+            self.second_voice = watch
+
+    async def _wait_for_voice_reading(self, reading: Optional["asyncio.Future"], rec: Dict[str, Any], wait: float):
+        """Give the reading a moment, never longer. Without it this turn goes on as if there were none, and the
+        reading still counts for the turns after it."""
+        if reading is None or reading.done():
+            return
+        await asyncio.wait({reading}, timeout=wait)
+        if not reading.done():
+            rec["identity"] = {"late": True}
+
+    def _take_voice_reading(self, done: "asyncio.Future", rec: Dict[str, Any]):
+        """A reading came in (a future's callback, so it must not raise): for the record, the second-voice watch and
+        working memory."""
+        try:
+            late = bool(rec.get("identity", {}).get("late"))
+            reading = done.result()
+            signal = self.second_voice.update(reading, self._clock())
+            rec["identity"] = {
+                **reading.record(),
+                **({"second_voice_signal": True} if signal else {}),
+                **({"late": True} if late else {}),
+            }
+            if self.voice_id and reading.name:
+                if not late:
+                    rec["_who"] = reading.name
+                if self.world is not None:
+                    self.world.note(
+                        IDENTITY,
+                        "recognised",
+                        via="voice",
+                        person_id=reading.person_id,
+                        name=reading.name,
+                        score=round(reading.score, 3),
+                    )
+                if self.memory is not None:
+                    self.memory.recognised(reading.person_id, reading.name)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            rec["identity"] = {"error": f"{type(exc).__name__}: {exc}"}
+            self.logger.warning(f"Voice reading failed ({type(exc).__name__}: {exc})")
+
+    @staticmethod
+    def _voice_hint(rec: Dict[str, Any]) -> str:
+        who = rec.pop("_who", None)
+        return f"The voice sounds like {who}." if who else ""
+
+    # ------------------------------------------------------------------
     # Situation judgements (src/decide)
     # ------------------------------------------------------------------
 
-    async def _meant_for_pepper(self, heard_before: List[str], text: str, rec: Dict[str, Any]) -> bool:
+    async def _meant_for_pepper(
+        self, heard_before: List[str], text: str, rec: Dict[str, Any], voice_reading: Optional["asyncio.Future"] = None
+    ) -> bool:
         started = self._clock()
         p = await judge_addressee(self.decider, heard_before, text)
         looking = bool(
@@ -346,6 +430,15 @@ class AIManager:
         # never sees what Pepper said). In a conversation with nobody else seen for a minute, answer.
         if not verdict and alone and (talking or answering):
             verdict = True
+        # SECOND_VOICE: two voices were heard a moment ago, so they have each other to talk to, whatever the people
+        # detector counts (#25). Being in a conversation with Pepper proves nothing now: the judgement alone decides.
+        without_second_voice = verdict
+        by_judgement = addressed(p, self.addressee_threshold, looking, self.addressee_looking_threshold)
+        if self.second_voice_gate and verdict != by_judgement:
+            await self._wait_for_voice_reading(voice_reading, rec, VOICE_READING_WAIT)  # only when it can change this
+        second_voice = self.second_voice_gate and self.second_voice.active(self._clock())
+        if second_voice:
+            verdict = by_judgement
         context = addressee_context(self.world) if self.world is not None else {}
         rec["addressee"] = {
             "pepper_said": context.get("pepper_said"),  # for re-benchmarking the judgement with it (#25)
@@ -355,6 +448,8 @@ class AIManager:
             "in_conversation": talking,
             "after_question": answering,
             "alone": alone,
+            "second_voice": second_voice,
+            "second_voice_decided": verdict != without_second_voice,  # it changed the answer: look at these in review
             "addressed": verdict,
             "seconds": round(self._clock() - started, 3),
         }
@@ -558,7 +653,7 @@ class AIManager:
             "tools": rec.get("tools", []),
             "around": rec.get("around", ""),
         }
-        for key in ("intent", "addressee", "router", "voice", "parts", "unfinished"):
+        for key in ("intent", "addressee", "router", "voice", "identity", "parts", "unfinished"):
             if key in rec:
                 out[key] = rec[key]
         self.recorder.record_turn(out)
@@ -1246,6 +1341,8 @@ class AIManager:
             dynamic += f"\n{photo_line}"
         if self._voice_line:
             dynamic += f"\n{self._voice_line}"
+        if self._who_line:
+            dynamic += f"\n{self._who_line}"
         known = self.memory.here_line() if self.memory is not None else ""
         if known:
             dynamic += f"\n{known}"

@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 from loguru import logger
 
 from .frames import Pose, pose_from
-from .observations import CAMERA, MAP, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
+from .observations import CAMERA, IDENTITY, MAP, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
 from .timeline import Timeline
 from .tracks import Tracker
 
@@ -167,6 +167,10 @@ class WorldModel:
             self._apply_motion(obs, measured)
         elif obs.source == MAP:
             self._apply_map(obs)
+        elif obs.source == IDENTITY:
+            # who someone is, from an enrolled voice or face: onto the person who spoke just now, when there is one
+            track = self.tracker.identify(int(obs.data["person_id"]), obs.at)
+            self.timeline.add(obs.kind, obs.at, **obs.data, track=track.id if track else None, source=obs.source)
         elif obs.source == CAMERA and obs.kind == "judgement":
             self.update_seen(obs.data.get("p") or {}, at=obs.at)
         elif obs.source == CAMERA and obs.kind == "person_seen" and obs.data.get("bearing") is not None:

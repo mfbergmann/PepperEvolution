@@ -3,6 +3,17 @@ Long-term memory: people who agreed to be remembered, facts and session episodes
 """
 
 from .service import Memory, says_yes
-from .store import ConsentRequired, Episode, Fact, MapRecord, MemoryStore, Person, Place
+from .store import ConsentRequired, Episode, Fact, Identity, MapRecord, MemoryStore, Person, Place
 
-__all__ = ["ConsentRequired", "Episode", "Fact", "MapRecord", "Memory", "MemoryStore", "Person", "Place", "says_yes"]
+__all__ = [
+    "ConsentRequired",
+    "Episode",
+    "Fact",
+    "Identity",
+    "MapRecord",
+    "Memory",
+    "MemoryStore",
+    "Person",
+    "Place",
+    "says_yes",
+]

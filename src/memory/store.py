@@ -7,7 +7,10 @@ One SQLite file on the host (``MEMORY_DIR``, git-ignored). Rules, enforced here 
 - Facts about a person hang off that person and go when they go; facts about the lab have no person.
 - ``forget()`` deletes a person, their facts and their place in session episodes in one transaction.
 - People and their facts expire (``RETENTION_DAYS``) unless renewed; ``sweep()`` deletes what has expired and runs
-  at start-up.
+  at start-up. The one exception is a person whose written consent to being kept is on record (``keep_written``):
+  they and their identity stay until forgotten. Their facts still follow the 90-day rule.
+- An identity (a voice or face embedding, never audio or an image) hangs off a person and goes when they go, with its
+  own note of consent. Someone who is not stored has no identity, so an unknown voice leaves nothing here.
 - Search is plain text (FTS5 when the SQLite build has it, else LIKE); the text is kept, so an embedding index can
   be added later without migrating anything.
 - Maps and places (#36) are lab data, not personal data: the robot's saved explorations, the named places in each
@@ -28,7 +31,9 @@ from loguru import logger
 
 RETENTION_DAYS = 90  # people and personal facts, unless renewed (docs/MEMORY.md)
 EPISODE_RETENTION_DAYS = 365  # session episodes hold no words, only who (by id), when and counts
-SCHEMA_VERSION = 2  # 2: maps and places (#36); tables are created if missing, so older files just gain them
+# 2: maps and places (#36); 3: identity and people.written_consent. Missing tables are created, so older files gain them
+SCHEMA_VERSION = 3
+IDENTITY_KINDS = ("voice", "face")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS people (
@@ -39,7 +44,8 @@ CREATE TABLE IF NOT EXISTS people (
     consent_note TEXT NOT NULL,
     created_at TEXT NOT NULL,
     last_seen_at TEXT,
-    expires_at TEXT NOT NULL
+    expires_at TEXT NOT NULL,
+    written_consent TEXT
 );
 CREATE INDEX IF NOT EXISTS people_name ON people(name_key);
 CREATE TABLE IF NOT EXISTS facts (
@@ -52,6 +58,16 @@ CREATE TABLE IF NOT EXISTS facts (
     expires_at TEXT
 );
 CREATE INDEX IF NOT EXISTS facts_person ON facts(person_id);
+CREATE TABLE IF NOT EXISTS identity (
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('voice', 'face')),
+    model TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    samples INTEGER NOT NULL,
+    consent_note TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (person_id, kind, model)
+);
 CREATE TABLE IF NOT EXISTS episodes (
     id INTEGER PRIMARY KEY,
     session TEXT NOT NULL,
@@ -119,7 +135,22 @@ class Person:
     consent_note: str
     created_at: str
     last_seen_at: Optional[str]
-    expires_at: str
+    expires_at: str  # ignored by the sweep while written_consent is set
+    written_consent: Optional[str] = None  # the written note that keeps them until forgotten; None = the 90-day rule
+
+
+@dataclass(frozen=True)
+class Identity:
+    """An enrolled embedding: comparable only with embeddings from the same model (src/identity/compare.py)."""
+
+    person_id: int
+    name: str
+    kind: str  # one of IDENTITY_KINDS
+    model: str
+    embedding: bytes
+    samples: int
+    consent_note: str
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -180,9 +211,12 @@ class MemoryStore:
         self._db = sqlite3.connect(path)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
+        self._db.execute("PRAGMA secure_delete = ON")  # what "forget me" deletes does not stay readable in free pages
         if path != ":memory:":
             self._db.execute("PRAGMA journal_mode = WAL")
         self._db.executescript(SCHEMA)
+        if "written_consent" not in {row["name"] for row in self._db.execute("PRAGMA table_info(people)")}:
+            self._db.execute("ALTER TABLE people ADD COLUMN written_consent TEXT")  # a file from before version 3
         try:
             self._db.executescript(FTS_SCHEMA)
             self.fts = True
@@ -245,13 +279,74 @@ class MemoryStore:
         self._db.execute("UPDATE facts SET expires_at = ? WHERE person_id = ?", (expires, person_id))
         self._db.commit()
 
+    def keep_written(self, person_id: int, note: str):
+        """Their explicit written consent is on record: keep them and their identity until they are forgotten, not
+        for 90 days. Only for consent given in writing by the person themselves; a spoken yes uses ``renew``."""
+        if not note or not note.strip():
+            raise ConsentRequired("keeping someone until forgotten needs a note of their written consent")
+        with self._db:
+            self._db.execute("UPDATE people SET written_consent = ? WHERE id = ?", (note.strip()[:300], person_id))
+
     def forget(self, person_id: int) -> bool:
-        """Delete a person, their facts and their place in episodes, in one transaction."""
+        """Delete a person, their identity, their facts and their place in episodes, in one transaction."""
         with self._db:
             cur = self._db.execute("DELETE FROM people WHERE id = ?", (person_id,))
         if cur.rowcount:
+            self._flush_deleted()
             self.logger.info(f"Forgot person #{person_id}")
         return bool(cur.rowcount)
+
+    def _flush_deleted(self):
+        """Out of the write-ahead log as well, not only out of the tables."""
+        self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+
+    # -- identity --------------------------------------------------------------------------------------------------
+
+    def add_identity(
+        self, person_id: int, kind: str, embedding: bytes, model: str, samples: int, consent_note: str
+    ) -> Identity:
+        """Enrol someone already stored; enrolling again with the same model replaces the old embedding."""
+        if kind not in IDENTITY_KINDS:
+            raise ValueError(f"an identity is one of {IDENTITY_KINDS}")
+        if not consent_note or not consent_note.strip():
+            raise ConsentRequired("nobody is enrolled without their agreement")
+        if self.person(person_id) is None:
+            raise ConsentRequired("an identity is kept only for someone who agreed to be remembered")
+        with self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO identity (person_id, kind, model, embedding, samples, consent_note, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (person_id, kind, model, embedding, samples, consent_note.strip()[:300], _iso(self._now())),
+            )
+        self.logger.info(f"Enrolled person #{person_id}: {kind} ({samples} samples, consent noted)")
+        return self.identities(person_id=person_id, kind=kind, model=model)[0]
+
+    def identities(
+        self, person_id: Optional[int] = None, kind: Optional[str] = None, model: Optional[str] = None
+    ) -> List[Identity]:
+        where = [
+            (clause, value)
+            for clause, value in (("person_id = ?", person_id), ("kind = ?", kind), ("model = ?", model))
+            if value is not None
+        ]
+        sql = (
+            "SELECT identity.*, people.name FROM identity JOIN people ON people.id = identity.person_id"
+            + (" WHERE " + " AND ".join(clause for clause, _ in where) if where else "")
+            + " ORDER BY person_id, kind, model"
+        )
+        return [
+            Identity(
+                r["person_id"],
+                r["name"],
+                r["kind"],
+                r["model"],
+                bytes(r["embedding"]),
+                r["samples"],
+                r["consent_note"],
+                r["created_at"],
+            )
+            for r in self._db.execute(sql, [value for _, value in where])
+        ]
 
     # -- facts -----------------------------------------------------------------------------------------------------
 
@@ -266,7 +361,8 @@ class MemoryStore:
             person = self.person(person_id)
             if person is None:
                 raise ConsentRequired("facts about a person are kept only for people who agreed to be remembered")
-            expires = person.expires_at
+            # someone kept by written consent may be long past their people.expires_at; a fact still gets its 90 days
+            expires = self._expiry(self._now()) if person.written_consent else person.expires_at
         cur = self._db.execute(
             "INSERT INTO facts (person_id, text, source, session, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
             (person_id, text[:500], source, session, _iso(self._now()), expires),
@@ -369,11 +465,15 @@ class MemoryStore:
         """Delete what has expired. Returns how many people, facts and episodes went."""
         now = _iso(self._now())
         with self._db:
-            people = self._db.execute("DELETE FROM people WHERE expires_at <= ?", (now,)).rowcount
+            people = self._db.execute(
+                "DELETE FROM people WHERE expires_at <= ? AND written_consent IS NULL", (now,)
+            ).rowcount
             facts = self._db.execute(
                 "DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
             ).rowcount
             episodes = self._db.execute("DELETE FROM episodes WHERE expires_at <= ?", (now,)).rowcount
+        if people:
+            self._flush_deleted()  # their identities went with them
         if people or facts or episodes:
             self.logger.info(f"Memory sweep: {people} people, {facts} facts, {episodes} episodes expired")
         return {"people": people, "facts": facts, "episodes": episodes}
@@ -381,7 +481,7 @@ class MemoryStore:
     def counts(self) -> Dict[str, int]:
         return {
             table: int(self._db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-            for table in ("people", "facts", "episodes", "maps", "places")
+            for table in ("people", "identity", "facts", "episodes", "maps", "places")
         }
 
     # -- maps and places (#36) -------------------------------------------------------------------------------------
@@ -482,6 +582,7 @@ class MemoryStore:
             row["created_at"],
             row["last_seen_at"],
             row["expires_at"],
+            row["written_consent"],
         )
 
     @staticmethod

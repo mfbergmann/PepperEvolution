@@ -7,7 +7,8 @@ Review a recorded session: a timed transcript with flags, from a SESSION_DIR fol
 
 Reads turns.jsonl and events.jsonl (src/session.py). For each turn: who said what (and the source), whether the
 addressee gate let it through (p), what the command router chose and how soon the action started, the time to
-Pepper's first word, tools with their durations, and what Pepper said. Events in between: people arriving and
+Pepper's first word, whose voice it sounded like and whether a second voice was heard (VOICE_ID, SECOND_VOICE), tools
+with their durations, and what Pepper said. Events in between: people arriving and
 leaving, greetings, camera events. Flags at the end point at what to look at first. The output holds people's words:
 keep it with the session records, out of git.
 """
@@ -60,7 +61,11 @@ def turn_lines(turn: Dict[str, Any]) -> List[str]:
         looking = ", someone looking" if gate.get("someone_looking") else ""
         looking += ", in a conversation" if gate.get("in_conversation") else ""
         looking += ", alone with Pepper" if gate.get("alone") else ""
+        looking += ", a second voice heard lately" if gate.get("second_voice") else ""
+        looking += " (which changed the answer)" if gate.get("second_voice_decided") else ""
         lines.append(f"      gate: p={gate.get('p')} {verdict}{looking} ({gate.get('seconds')} s)")
+    if turn.get("identity"):
+        lines.append(f"      voice: {voice_line(turn['identity'])}")
     router = turn.get("router")
     if router and router.get("choice"):
         started = f", started {router.get('started_s')} s after hearing" if router.get("executed") else ""
@@ -83,6 +88,20 @@ def turn_lines(turn: Dict[str, Any]) -> List[str]:
         lines.append(f"      (no speech; {turn.get('stop_reason')})")
     out.extend(lines)
     return out
+
+
+def voice_line(identity: Dict[str, Any]) -> str:
+    """What the voice comparison (VOICE_ID, SECOND_VOICE) found for one turn."""
+    if identity.get("error"):
+        return f"FAILED: {identity['error']}"
+    if identity.get("score") is None:
+        return "still being read when the turn went on" if identity.get("late") else "nothing to compare"
+    who = f"sounds like {identity['name']}" if identity.get("name") else "no confident match"
+    numbers = f"score {identity['score']}, low {identity.get('low')}, high {identity.get('high')}"
+    second = "; a part unlike any enrolled voice" if identity.get("second_voice") else ""
+    second += "; SECOND VOICE signalled" if identity.get("second_voice_signal") else ""
+    late = "; came too late for this turn" if identity.get("late") else ""
+    return f"{who} ({numbers}; {identity.get('windows')} windows in {identity.get('spent')} s){second}{late}"
 
 
 def event_line(event: Dict[str, Any]) -> str:
@@ -174,6 +193,12 @@ def review(folder: str) -> str:
             and (gate.get("p") or 1) < 0.8
         ):
             flags.append(f"answered with nobody looking at Pepper (p={gate.get('p')}): {t.get('text')!r}")
+    for t in turns:
+        if (t.get("addressee") or {}).get("second_voice_decided"):
+            answer = "answered" if t["addressee"].get("addressed") else "not answered"
+            flags.append(f"{answer} because of a second voice (was it right?): {t.get('text')!r}")
+        if (t.get("identity") or {}).get("error"):
+            flags.append(f"voice reading failed: {t['identity']['error']}")
     for t in gated_out:
         flags.append(f"not answered (check it was side talk): {t.get('text')!r} p={t['addressee'].get('p')}")
 
@@ -188,6 +213,14 @@ def review(folder: str) -> str:
         f"- camera judgements: {len(camera)}, median {median(camera)}; camera events: "
         f"{sum(1 for e in events if e.get('kind') == 'camera_event')}",
     ]
+    read = [t["identity"] for t in turns if t.get("identity")]
+    if read:
+        spent = [r["spent"] for r in read if r.get("spent") is not None]
+        out.append(
+            f"- voices read: {len(read)}, median {median(spent)}; named {sum(1 for r in read if r.get('name'))}, "
+            f"second voice signalled {sum(1 for r in read if r.get('second_voice_signal'))}, "
+            f"late {sum(1 for r in read if r.get('late'))}, failed {sum(1 for r in read if r.get('error'))}"
+        )
     frames = load(os.path.join(folder, "camera", "frames.jsonl"))  # RECORD_CAMERA
     if frames:
         span = f"{frames[0].get('at', '')[11:19]} to {frames[-1].get('at', '')[11:19]}"

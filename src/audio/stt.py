@@ -18,7 +18,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from loguru import logger
 
@@ -35,6 +35,7 @@ class Transcript:
     at: Optional[float] = None  # time.monotonic() when the final arrived (VoiceInput); None = when delivered
     parts: int = 1  # finals joined into this one across a pause (#26)
     unfinished: bool = False  # held as unfinished and answered when nothing more came (#26)
+    readings: Tuple[Any, ...] = ()  # VOICE_ID / SECOND_VOICE: futures of the voice readings of its audio
 
 
 class TranscriberUnavailable(RuntimeError):

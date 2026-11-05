@@ -43,6 +43,12 @@ from src.perception import FrameWatcher  # noqa: E402
 from src.perception.scene import ScenePass  # noqa: E402
 from src.perception.vision import MODEL as VISION_MODEL  # noqa: E402
 from src.ai.reflection import Reflection  # noqa: E402
+from src.identity.voice import (  # noqa: E402
+    CONFIDENT_SCORE,
+    DEFAULT_MODEL as DEFAULT_VOICE_MODEL,
+    SECOND_VOICE_SCORE,
+    VoiceIdentifier,
+)
 from src.memory import Memory, MemoryStore  # noqa: E402
 from src.navigation import Navigator  # noqa: E402
 from src.session import SessionRecorder, WavWriter  # noqa: E402
@@ -115,6 +121,11 @@ class Settings:
     voice_glances: bool = False
     local_microphone: Optional[str] = None
     map: bool = False
+    voice_id: bool = False
+    second_voice: bool = False
+    voice_id_model: str = ""
+    voice_id_threshold: float = 0.0
+    second_voice_threshold: float = 0.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -179,6 +190,11 @@ class Settings:
             voice_glances=env_bool("VOICE_GLANCES", False),
             local_microphone=os.getenv("LOCAL_MICROPHONE", "").strip() or None,
             map=env_bool("MAP", False),
+            voice_id=env_bool("VOICE_ID", False),
+            second_voice=env_bool("SECOND_VOICE", False),
+            voice_id_model=os.getenv("VOICE_ID_MODEL") or DEFAULT_VOICE_MODEL,
+            voice_id_threshold=float(os.getenv("VOICE_ID_THRESHOLD") or CONFIDENT_SCORE),
+            second_voice_threshold=float(os.getenv("SECOND_VOICE_THRESHOLD") or SECOND_VOICE_SCORE),
         )
 
 
@@ -434,6 +450,23 @@ class PepperEvolution:
             continuation=s.wait_for_unfinished,
             # STT_SECOND_PASS: Cohere Transcribe re-reads each utterance the streaming recogniser finished
             refiner=make_refiner(s.stt_second_pass, language=s.stt_language),
+            identifier=self.build_identifier(),
+        )
+
+    def build_identifier(self) -> Optional[VoiceIdentifier]:
+        """VOICE_ID / SECOND_VOICE: compares each utterance with the voices enrolled in the long-term store."""
+        s = self.settings
+        if not (s.voice_id or s.second_voice):
+            return None
+        if self.memory is None:
+            self.logger.warning("VOICE_ID and SECOND_VOICE need MEMORY_DIR (voices are enrolled there): both off")
+            return None
+        self.ai_manager.use_voice_identity(s.voice_id, s.second_voice)
+        return VoiceIdentifier(
+            self.memory.store,
+            model_path=s.voice_id_model,
+            confident=s.voice_id_threshold,
+            second_voice=s.second_voice_threshold,
         )
 
     async def run(self):

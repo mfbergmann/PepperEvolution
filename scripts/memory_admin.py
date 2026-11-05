@@ -6,7 +6,7 @@ run the expiry sweep.
     python scripts/memory_admin.py list                 # people (with consent and expiry), counts
     python scripts/memory_admin.py show 3               # one person: consent note, facts, sessions
     python scripts/memory_admin.py facts                # facts about the lab
-    python scripts/memory_admin.py forget 3             # delete person #3, their facts and their place in sessions
+    python scripts/memory_admin.py forget 3             # delete person #3, their identity, facts and place in sessions
     python scripts/memory_admin.py delete-fact 12
     python scripts/memory_admin.py sweep                # delete what has expired (the host also does this at start)
     python scripts/memory_admin.py episodes
@@ -44,7 +44,8 @@ def main(argv=None):
             for p in store.people():
                 print(
                     f"#{p.id}  {p.name}  (agreed {p.consent_at[:10]}, last seen {(p.last_seen_at or '')[:10]}, "
-                    f"expires {p.expires_at[:10]})"
+                    + ("kept until forgotten)" if p.written_consent else f"expires {p.expires_at[:10]})")
+                    + "".join(f" [{i.kind}]" for i in store.identities(person_id=p.id))
                 )
             print(store.counts())
         elif args.command in ("show", "forget", "delete-fact") and args.id is None:
@@ -54,6 +55,10 @@ def main(argv=None):
             if person is None:
                 sys.exit(f"No person #{args.id}")
             print(f"#{person.id}  {person.name}\n  consent: {person.consent_note} at {person.consent_at}")
+            if person.written_consent:
+                print(f"  kept until forgotten, written consent: {person.written_consent}")
+            for i in store.identities(person_id=person.id):  # never the embedding itself
+                print(f"  {i.kind} identity: {i.model}, {i.samples} samples, {i.created_at}; consent: {i.consent_note}")
             for f in store.facts_about(person.id, limit=100):
                 print(f"  fact #{f.id}: {f.text}")
             for e in store.episodes(person_id=person.id, limit=20):

@@ -167,6 +167,7 @@ def test_build_voice_with_a_local_microphone(monkeypatch):
     app.logger = MagicMock()
     app.ai_manager = MagicMock()
     app.recorder = None
+    app.memory = None  # VOICE_ID may be on in the lab's .env
     monkeypatch.setenv("STT_BACKEND", "fake")
     monkeypatch.setenv("VOICE_INPUT", "true")
     monkeypatch.setenv("LOCAL_MICROPHONE", "alsa_input.usb-DJI")

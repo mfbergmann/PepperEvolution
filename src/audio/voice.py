@@ -15,10 +15,11 @@ import asyncio
 import os
 import re
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Tuple
 
 from loguru import logger
 
+from ..identity.voice import merge_readings
 from .continuation import HOLD, MAX_HOLD, unfinished
 from .endpointer import Endpointer
 from .pcm import BYTES_PER_SAMPLE, SAMPLE_RATE, duration, resample, wav_bytes
@@ -55,7 +56,9 @@ class VoiceInput:
         min_chars: int = 2,
         continuation: bool = True,
         refiner: Optional[Any] = None,
+        identifier: Optional[Any] = None,
     ):
+        self.identifier = identifier  # VOICE_ID / SECOND_VOICE: src/identity VoiceIdentifier, reads each open-mic final
         self.refiner = refiner  # STT_SECOND_PASS: re-reads each streaming final's audio for the final text
         self.refined = 0  # finals whose text the second pass changed
         self._refining = asyncio.Lock()  # finals stay in order while they wait for the second pass
@@ -98,6 +101,8 @@ class VoiceInput:
             return
         started = time.monotonic()
         await self.transcriber.start()
+        if self.identifier is not None:
+            await self._load_identifier()
         if self.refiner is not None and self.transcriber.streaming:
             await self.refiner.start()
         self.logger.info(
@@ -107,6 +112,14 @@ class VoiceInput:
         if self.record_dir:
             os.makedirs(self.record_dir, exist_ok=True)
         self._loaded = True
+
+    async def _load_identifier(self):
+        try:
+            await self.identifier.start()
+            self.logger.info(f"Voice identification on: {len(self.identifier.enrolled())} enrolled")
+        except Exception as exc:  # noqa: BLE001 - Pepper hears and answers without it
+            self.logger.warning(f"Voice identification off ({type(exc).__name__}: {exc})")
+            self.identifier = None
 
     async def start(self):
         await self.load()
@@ -126,6 +139,8 @@ class VoiceInput:
         await self.transcriber.close()
         if self.refiner is not None:
             await self.refiner.close()
+        if self.identifier is not None:
+            self.identifier.close()
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -134,6 +149,7 @@ class VoiceInput:
             "streaming": self.transcriber.streaming,
             "second_pass": getattr(self.refiner, "name", None),
             "refined": self.refined,
+            "voice_id": self.identifier is not None,
             "started": self.started,
             "robot_microphone": self.source is not None and getattr(self.source, "name", "robot") == "robot",
             "microphone": getattr(self.source, "name", "robot") if self.source is not None else None,
@@ -153,17 +169,22 @@ class VoiceInput:
     async def _on_audio(self, pcm: bytes):
         try:
             if self.transcriber.streaming:
-                if self.record_dir or self.refiner is not None:
+                if self.record_dir or self.refiner is not None or self.identifier is not None:
                     self._keep_recent(pcm)
                 for transcript in await self.transcriber.process(pcm):
                     if transcript.final:
                         self.utterances += 1
                         transcript.at = time.monotonic()
+                        heard = None
+                        if self.refiner is not None or self.identifier is not None:
+                            heard = self._take_recent(transcript)
+                        if transcript.text.strip():
+                            transcript.readings = self._started_reading(heard)  # alongside the second pass, not after
                         if self.refiner is not None:
-                            self._spawn(self._refine(transcript, self._take_recent(transcript)))
+                            self._spawn(self._refine(transcript, heard))
                             continue
                         if self.record_dir:
-                            self._spawn(self._record_streamed(transcript))
+                            self._spawn(self._record_streamed(transcript, heard))
                         self._final(transcript)
                     else:
                         await self._set_listening(True)
@@ -177,7 +198,9 @@ class VoiceInput:
                 await self._set_listening(True)
             for utterance in utterances:
                 self.utterances += 1
-                self._spawn(self._transcribe_and_deliver(utterance.pcm, "voice", None))
+                self._spawn(
+                    self._transcribe_and_deliver(utterance.pcm, "voice", None, self._started_reading(utterance.pcm))
+                )
         except Exception as exc:  # noqa: BLE001 - never kill the audio stream
             self.last_error = str(exc)
             self.logger.error(f"Voice input error: {exc}")
@@ -215,6 +238,7 @@ class VoiceInput:
             backend=second.backend,
             at=second.at,
             parts=first.parts + second.parts,
+            readings=first.readings + second.readings,
         )
 
     def _hold(self, seconds: float):
@@ -259,9 +283,12 @@ class VoiceInput:
     # Shared
     # ------------------------------------------------------------------
 
-    async def _transcribe_and_deliver(self, pcm: bytes, source: str, client_id: Optional[str]) -> Optional[Dict]:
+    async def _transcribe_and_deliver(
+        self, pcm: bytes, source: str, client_id: Optional[str], readings: Tuple[Any, ...] = ()
+    ) -> Optional[Dict]:
         try:
             transcript = await self.transcriber.transcribe(pcm)
+            transcript.readings = readings
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)
             self.logger.error(f"Transcription failed: {exc}")
@@ -310,6 +337,7 @@ class VoiceInput:
             spoke_for=transcript.duration or None,
             **({"parts": transcript.parts} if transcript.parts > 1 else {}),
             **({"unfinished": True} if transcript.unfinished else {}),
+            **({"voice_reading": self._reading_of(transcript)} if transcript.readings else {}),
         )
         return {"text": text, "response": result}
 
@@ -370,9 +398,36 @@ class VoiceInput:
                 self._spawn(asyncio.to_thread(self._save, pcm, hyp))
             self._final(transcript)
 
-    async def _record_streamed(self, transcript: Transcript):
+    # ------------------------------------------------------------------
+    # Whose voice (VOICE_ID, SECOND_VOICE). Only ever adds information: if anything fails, the turn goes on without it
+    # ------------------------------------------------------------------
+
+    def _started_reading(self, pcm: Optional[bytes]) -> Tuple[Any, ...]:
+        if self.identifier is None or not pcm:
+            return ()
+        try:
+            return (self.identifier.read(pcm),)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(f"Voice reading did not start ({type(exc).__name__}: {exc})")
+            return ()
+
+    def _reading_of(self, transcript: Transcript) -> "asyncio.Future":
+        """One future for the whole utterance, however many parts it was joined from."""
+        if len(transcript.readings) == 1:
+            return transcript.readings[0]
+
+        async def merged():
+            results = await asyncio.gather(*transcript.readings, return_exceptions=True)
+            readings = [r for r in results if not isinstance(r, BaseException)]
+            if not readings:
+                raise RuntimeError("no part of the utterance could be read")
+            return merge_readings(readings)
+
+        return asyncio.ensure_future(merged())
+
+    async def _record_streamed(self, transcript: Transcript, pcm: Optional[bytes] = None):
         """Save the audio a streaming final came from."""
-        pcm = self._take_recent(transcript)
+        pcm = self._take_recent(transcript) if pcm is None else pcm
         if pcm:
             await asyncio.to_thread(self._save, pcm, transcript.text)
 

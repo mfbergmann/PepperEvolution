@@ -1,6 +1,6 @@
 # Memory: where Pepper keeps what it knows
 
-Status: built offline in 0.6.0 (2026-10-08), slices 1 to 5 of the build order; tested in unit tests, on the virtual Pepper and on replays of recorded sessions, not yet on the robot (the checks are in `HANDOFF.md`, "Before the next robot session"). Identity (slice 6) is still to come. This document is the plan that Milestones 4 and 5 and issues #27, #12, #24, #11, #13, #14 build on, so that each new piece plugs into one structure instead of being wired to the others by hand. `ARCHITECTURE.md` places it among the layers; this is the detail.
+Status: built offline in 0.6.0 (2026-10-08), slices 1 to 5 of the build order; tested in unit tests, on the virtual Pepper and on replays of recorded sessions, not yet on the robot (the checks are in `HANDOFF.md`, "Before the next robot session"). Voice identity (slice 6) was built offline on 2026-11-05 and has not run on the robot either; the face side is still to come. This document is the plan that Milestones 4 and 5 and issues #27, #12, #24, #11, #13, #14 build on, so that each new piece plugs into one structure instead of being wired to the others by hand. `ARCHITECTURE.md` places it among the layers; this is the detail.
 
 It was drafted with an independent proposal from a second model (Claude Fable 5.1, asked to read the code and the robot session records). The two agreed on the shape. The proposal's sharpest point is kept here: remembering where someone stood a minute ago and remembering someone's name next week are different problems. They share a vocabulary, but not a store.
 
@@ -49,7 +49,7 @@ flowchart LR
         S["sound direction\n(bridge, next)"]
         H["heard / said\n(manager)"]
         SC["scene notes\n(local VLM, later)"]
-        ID["identity\n(opt-in, later)"]
+        ID["identity\n(opt-in, voice built)"]
     end
     P & O & M & C & S & H & SC & ID --> OBS["World.observe(observation)"]
     OBS --> POSE[("Pose")]
@@ -120,7 +120,7 @@ Until the bridge reports the pose, the host dead-reckons from its own completed 
 
 ```
 people   (id, name, consent_at, consent_note, created_at, last_seen_at, expires_at)
-identity (person_id, kind: face|voice, embedding, model, created_at)     -- later (#14), only with consent
+identity (person_id, kind: face|voice, model, embedding, samples, consent_note, created_at)     -- only with consent
 facts    (id, person_id or NULL for the lab, text, source: person|mind, session, created_at, expires_at)
 episodes (session, started_at, ended_at, people, summary)                -- written by code at the end of a run
 ```
@@ -131,7 +131,7 @@ Rules:
   - through enrolment (a name, later identity), after a spoken "yes" to a question like "Shall I remember you next time?", with the consent noted;
   - through a per-session episode row computed by code: who, how long, what happened, without quotes. People who did not consent appear only as counts.
 - **"Forget me"** (an intent) deletes the person's row, identity and facts in one transaction and says so.
-  - Identity and personal facts expire after 90 days unless the person renews consent.
+  - Identity and personal facts expire after 90 days unless the person renews consent. The exception is below ("Identity").
   - A sweep runs at start-up.
 - **The sign and the docs must say** that "forget me" clears the memory store. Session records are separate development records with their own retention (lab practice), and one switch does not clear both.
 - **Search:** plain-text search (SQLite FTS5) over facts and episodes. Embeddings are an option once there are enough facts to need them, through a local embedding model on the GPU machine. The store keeps the text, so an index can be rebuilt at any time.
@@ -188,7 +188,7 @@ The store comes first, so the place where remembering people goes exists before 
    - Bridge `sound` events, the `speaker_bearing` view, and "come to me" from the voice's direction.
    - Tested with the fake NAOqi; the desktop NAOqi has no `ALSoundLocalization`, so the robot verifies it.
 5. **Scene notes** (#11): built. Clef Flash (who is where) and qwen3.5:4b (the place) write `scene` observations; the "Around you" line adds "Your last look around (12 s ago): ..." while fresh, and `recall` returns the details (benchmark below).
-6. **Identity** (#14), after the consent flow has been used on the robot; candidates below.
+6. **Identity** (#14): voice built, offline (below); the face side is still to come.
 
 ## Models for the later slices (survey 2026-10-08)
 
@@ -216,6 +216,47 @@ Alien3 (RTX 5090, 32 GB) has about 10 GB of GPU memory free next to Nimble and C
 
 The generative models count people in glass reflections and in Pepper's own reflection, even when told not to. So the scene pass (`src/perception/scene.py`) asks each model what it is good at. Clef Flash says who is where, with a probability. qwen3.5:4b describes only the place and the objects, with people left out of its schema; those notes matched the frames, at a median of 0.46 s. Both run in parallel on frames the camera stream already sends, once when someone comes into view and then every 20 s; a look takes about 0.5 s end to end. The scripts and the labels are in `results/system-one/` (local only, because the frames show people).
 
+## Identity (#14, #25; voice built 2026-11-05, not yet on the robot)
+
+Two switches, both off by default and both needing `MEMORY_DIR` and someone enrolled. `VOICE_ID` tells the mind "The voice sounds like *name*." for that turn, when confident, and hands the match to working memory as an `identity` observation (`recognised`), which goes on the track that just spoke, into the timeline and into `recall`; long-term memory notes `last_seen` and the session episode. It is a hint and not a login: it does not link them to the conversation the way telling Pepper their name does. `SECOND_VOICE` makes the addressee gate stricter while two people are talking (below).
+
+**What is kept.** One row per person, kind and model in `identity`: the centre of their clips' embeddings, the model's name, the number of clips, a consent note and the date. No audio, ever. `kind` is `voice` or `face`. Someone not enrolled has no row, and each utterance's audio and embeddings live only for the length of the comparison, on the host's CPU: nothing of it reaches Alien3 or a file (the session recording `VOICE_RECORD_DIR` is separate, and works as before). Enrolment is a person running `scripts/enroll_identity.py --person NAME --consent "..."` on clips of that person alone. The person must already be stored, so a typo creates nobody; clips under 1.5 s are skipped, and clips far from the rest are dropped (more than 2.5 robust standard deviations below the median).
+
+**Expiry.** An identity has no expiry of its own: it lives exactly as long as its person. The 90-day rule stands for everyone, with one exception: `--written-consent` records the person's own written consent in `people.written_consent`, and the sweep then leaves that person and their identity alone until they are forgotten. A later spoken yes does not undo it. Their facts keep the 90-day rule, because the written consent was about the voice. Everyone enrolled without that flag has their 90 days started again from the day of enrolment, and goes at the end of it, identity included. `scripts/memory_admin.py list` shows who is kept this way.
+
+**"Forget me"** deletes the identity in the same transaction as the person (a foreign key with `ON DELETE CASCADE`). `secure_delete` is on and the write-ahead log is flushed, so the bytes leave the file too; a test checks that. The enrolled voices are read from the store for each utterance, so it holds from the next word. It does not reach the session records (see above) or any copy of the file made by a backup.
+
+**The second-voice rule.** Each utterance is cut into 1.5 s windows (0.75 s apart, at most 8, evenly over a long clip). A clip's *low* score is the mean of its two worst windows against the closest enrolled voice. A low score under 0.15 means part of the clip is not the enrolled voice. That alone would say the same of a visitor alone with Pepper, since everyone not enrolled scores low, so it counts as a second voice only if the enrolled voice is in the same clip (a window at 0.40 or more) or was heard in the last 5 minutes. With no enrolled voice around there is no signal and the gate works as it did. For 60 s after a signal, being in a conversation or having just asked a question no longer lowers the bar, and the "alone with Pepper" override does not apply: the judgement decides, at 0.6, or 0.4 while someone looks at Pepper. Stop and be-quiet commands are never held back: the local phrases return before any of this, and one the router recognised passes when the second voice is the only reason it would have been dropped.
+
+**Never in the way.** A reading runs on its own thread, alongside the second pass. A turn waits for it only when it could change the answer (the judgement says no and only a bypass says yes), for at most 0.5 s, and for at most 0.25 s to name the voice. A late reading gives this turn no hint and no change, and still counts for the next turns. A failure at load turns identification off; a failure later loses that one reading. Each turn's `identity` and `addressee.second_voice` go in `turns.jsonl`, and `scripts/review_session.py` shows and flags them.
+
+**For a face identifier.** `src/identity/compare.py` is shared: make unit vectors with your own model, `store.add_identity(person_id, "face", to_blob(centroid), model_name, samples, consent_note)` with `robust_centroid`, then `best_match(vector, load_enrolled(store, "face", model_name))` for each comparison, deciding your own threshold on your own held-out data (scores from different models mean different things). Report a confident match with `world.note(IDENTITY, "recognised", via="face", person_id=..., name=..., score=...)` and `memory.recognised(person_id, name)`.
+
+### What the held-out evaluation showed (2026-11-05)
+
+Thresholds were chosen first, on the sessions of 2026-10-08 (122 clips) and 2026-10-20 (74 clips), each enrolled on the other, and on 30 of the 60 other speakers (read speech under Pepper's fan noise). Those speakers never scored above 0.28 as whole clips or 0.36 as single windows; 3 of 196 of the tester's clips had a low score under 0.15. Then, with the numbers fixed, the voice enrolled on those two days only (181 of 196 clips kept) was tested on what it had not seen, through the live code:
+
+| Held out | n | Whole-clip score | Low score | Named | Flagged as part-other |
+|---|---|---|---|---|---|
+| Tester alone, same robot microphones, new day | 12 | 0.41-0.76 | 0.21-0.46 | 12 | 0 |
+| Tester alone, a different microphone (clip-on) | 20 | 0.53-0.73 | 0.18-0.56 | 20 | 0 |
+| Labelled clips, tester | 4 | 0.41-0.52 | 0.21-0.30 | 4 | 0 |
+| Labelled clips, colleague (one person) | 4 | 0.11-0.17 | 0.06-0.13 | 0 | 4 |
+| Labelled clips, both voices | 11 | 0.26-0.52 | 0.06-0.37 | 2 | 6 |
+| Labelled clips, neither clearly | 3 | 0.29-0.41 | 0.09-0.43 | 1 | 1 |
+| Other speakers, read speech (30 people's clips) | 30 | -0.04-0.30 | | 0 | 27 |
+
+Gate simulation over the recorded two-person session (the recorded judgements, the rule above): of 22 conversation clips, 21 were answered as recorded and 5 would be; of the 12 solo clips that followed, 12 and 11. The one lost was still inside the 60 s from the conversation; no solo clip signalled. Keeping the lower bar after Pepper's own question would give 8 of 22, also 11 of 12. The 20 clips of the held-out solo session gave no signal and no changed answer. A session where a colleague appears, unlabelled, goes from 36 of 36 answered to 25 of 36 with 5 signals. 30 other speakers in a row with no enrolled voice around: no signal.
+
+How far to trust this:
+- **One colleague, one two-person session, one room.** Everything about a second voice rests on that. Nobody labelled which of those 22 clips were really meant for Pepper, so 5 of 22 says the gate went quiet, not that it was right each time.
+- **The 0.15 was not blind.** It came out of the training sessions, but it had already been tuned on the two-person session earlier the same day, and the same number won there. The live voiceprint partly comes from the solo end of that session, which is why the evaluation above enrols without it.
+- **It depends on the voiceprint.** Enrolled on one session of 20 clips and another microphone, the same thresholds named 175 of 208 clips and flagged 5 of 208 as part-other. Names get scarcer first.
+- **Other speakers were read speech mixed with fan noise,** not people in the room.
+- **Speed is not settled.** A whole reading took a median of 1.7 s (p90 3.0 s, clips of 5.2 s) on 4 threads with the desktop busy at a load of 11 on 8 cores; the windows alone earlier took 0.31 s at a clip median of 3.2 s. At those times most readings miss the 0.25 s for a name, and the signal arrives a turn late. The robot session has to show how often (`late` in the review).
+
+The live voiceprint is enrolled from all the solo sessions (212 of 228 clips kept), in the git-ignored store. The scripts and labels are in `results/system-one/voices/` (local only).
+
 ## Maps and places (#36, built 2026-10-28, not yet on the robot)
 
 Pepper only works in the office and the open space outside it, and the odometry frame resets whenever NAOqi starts, so nothing placed in it survives a reboot. The map frame does: NAOqi 2.5 can explore and localize by itself (`ALNavigation`), and the bridge exposes that (`/map`, `BRIDGE_API.md`).
@@ -234,5 +275,7 @@ Pepper only works in the office and the open space outside it, and the odometry 
 - persisting the rest of working memory (people tracks, the timeline) across restarts;
 - a vector database or a knowledge graph;
 - memory summaries written by the mind every turn;
-- face or voice embeddings before the consent flow exists;
+- enrolling anyone by voice alone: enrolment is `scripts/enroll_identity.py`, run by a person, with a consent note;
+- learning a voice during a session (tried: the first clip already held both voices);
+- telling apart two people who are both unknown (that would mean keeping embeddings of people who never agreed);
 - any model call on the read path.

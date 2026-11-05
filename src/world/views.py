@@ -63,6 +63,8 @@ def describe_event(event: Any, now: float) -> str:
         people = data.get("people")
         who = "" if people is None else f" ({people if people < 2 else '2 or more'} people in view)"
         return f"{when}: you looked around: {_clip(data.get('note') or data.get('place'))}{who}"
+    if kind == "recognised":
+        return f"{when}: you recognised {data.get('name')} by their {data.get('via')}"
     if kind == "remembered":
         return f"{when}: you stored a fact about {data.get('about')}"
     return f"{when}: {kind}"

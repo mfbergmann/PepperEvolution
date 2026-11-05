@@ -25,6 +25,7 @@ REMEMBER_FOR = 120.0
 MATCH_DEGREES = 20.0
 MATCH_METRES = 0.7
 VOICE_MATCH_DEGREES = 25.0  # sound direction is about 10 degrees accurate on Pepper (NAOqi docs)
+SPOKE_RECENTLY = 15.0  # seconds: a voice recognised this soon after a direction was heard belongs to that person
 CAMERA_MATCH_DEGREES = 30.0  # the camera fallback only says which third of the frame (about 19 degrees apart)
 
 
@@ -168,6 +169,14 @@ class Tracker:
         if best.heard_only:
             best.heading, best.last_seen = heading, now
         return best
+
+    def identify(self, person_id: int, now: float, within: float = SPOKE_RECENTLY) -> Optional[PersonTrack]:
+        """An enrolled voice was recognised: it belongs to the person a voice came from just now, if any."""
+        spoke = [t for t in self.tracks if t.spoke_at is not None and now - t.spoke_at <= within]
+        track = max(spoke, key=lambda t: t.spoke_at, default=None)
+        if track is not None:
+            track.person_id = person_id
+        return track
 
     def camera(self, heading: float, pose: Pose, now: float, within: float = CAMERA_MATCH_DEGREES) -> PersonTrack:
         """The camera saw someone in direction ``heading`` (absolute, radians) while the detector saw nobody (#24):

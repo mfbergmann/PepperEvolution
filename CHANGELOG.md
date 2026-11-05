@@ -10,6 +10,17 @@ Built offline after the 2026-10-22 robot session; nothing below has run on the r
 so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All the new switches are off by
 default.
 
+- **Voice identification, and no more joining in on side talk (#14, #25, `VOICE_ID`, `SECOND_VOICE`, need
+  `MEMORY_DIR`).** A person's voiceprint can be enrolled from recordings of them alone (`scripts/enroll_identity.py`, a
+  consent note required) and is kept in the long-term store: a new `identity` table, schema version 3, shared with the
+  face side to come (`src/identity/compare.py`). It goes with the person on "forget me". Someone whose written consent
+  is recorded stays until forgotten; everyone else keeps the 90-day rule. Unknown voices leave nothing, and audio is
+  never kept. With `VOICE_ID` the mind is told "The voice sounds like *name*." when confident. With `SECOND_VOICE`, a
+  voice unlike the enrolled one heard near it ends the gate's in-conversation bypass for 60 s. Held out, on one
+  two-person session: 21 of 22 conversation clips answered became 5, and 12 of 12 solo clips became 11; 32 of 32 solo
+  clips of the tester on other days or microphones were named, none flagged; none of 30 other speakers was named
+  (docs/MEMORY.md, "Identity", with what these numbers do not show). Runs on the host's CPU, off the audio loop; turn
+  records and `review_session.py` show each decision. A routed stop or quiet command gets past the second-voice rule.
 - **Beamforming over the four head microphones (#34, `BEAMFORM`).** The bridge streams all four microphones on request
   (`/ws/audio?channels=4`, resampled to 16 kHz on the robot), and the host beamforms them into one channel before
   speech recognition: a streaming MVDR beamformer that learns the fans' noise from quiet moments and the voice's

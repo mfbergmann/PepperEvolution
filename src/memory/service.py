@@ -161,6 +161,13 @@ class Memory:
             self.world.note(MIND, "forgot_person")
         return {"ok": True, "forgotten": True, "note": f"Everything you had stored about {person.name} is deleted."}
 
+    def recognised(self, person_id: int, name: str):
+        """Their enrolled voice or face was recognised: they were here, for the episode and ``last_seen``. This does
+        not link them to the conversation: ``here_line`` means they told Pepper who they are, which is a stronger claim
+        than a voice match."""
+        self.store.seen(person_id)
+        self.met[person_id] = name
+
     # -- for the state block and the end of the session --------------------------------------------------------------
 
     def here_line(self) -> str:
