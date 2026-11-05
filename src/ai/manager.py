@@ -20,7 +20,7 @@ from ..decide.router import Routed
 from ..decide.router import choose as choose_action
 from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
-from .glance import glance_target, people_yaws
+from .glance import MAX_SPREAD, MIN_SOUNDS, glance_target, people_yaws
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import HEARD, MIND, SAID
 from ..world.views import addressee_context
@@ -583,6 +583,12 @@ class AIManager:
         if degrees < 10:
             return "The voice you are answering came from straight ahead of your body."
         side = "left" if bearing > 0 else "right"
+        if voice["sounds"] < MIN_SOUNDS or voice["spread"] > MAX_SPREAD:
+            # a single located sound is often 40-56° off (#31); offering "turn -45" made the mind act on it (2026-11-05)
+            return (
+                f"The voice you are answering may have come from your {side}, but this is a rough guess from very "
+                "few sounds and often wrong: do not turn your body because of it."
+            )
         turn = degrees if bearing > 0 else -degrees
         return (
             f"The voice you are answering came from about {degrees}° to your {side} of where your body points now "

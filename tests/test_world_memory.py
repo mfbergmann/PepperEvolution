@@ -297,3 +297,25 @@ class TestVoiceDirection:
         assert "(turn 50 to face it)" in seen["state"]
         assert manager._voice_line == ""  # only for that turn
         assert result["stop_reason"] == "end_turn"
+
+
+class TestRoughVoiceDirection(TestVoiceDirection):
+    """A single located sound is often far off (#31): the mind must not be offered a turn on it (2026-11-05)."""
+
+    async def test_a_single_sound_offers_no_turn(self, mock_robot, mock_ai_provider):
+        from src.ai.manager import AIManager
+        from src.ai.models import AIResponse
+
+        world, clock = world_at()
+        seen = {}
+
+        async def chat(messages, tools=None, system=None, on_text=None):
+            seen["state"] = system[1]["text"]
+            return AIResponse(text="Hello.", stop_reason="end_turn")
+
+        mock_ai_provider.chat.side_effect = chat
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False, world=world)
+        self.sounds(world, clock, -45.0, n=1)
+        clock.t += 1.0
+        await manager.process_user_input("Hello", source="voice", heard_at=clock.t, spoke_for=1.2, open_mic=False)
+        assert "rough guess" in seen["state"] and "to face it" not in seen["state"]

@@ -91,6 +91,7 @@ class TestSettings:
         app = main.PepperEvolution.__new__(main.PepperEvolution)
         app.logger = MagicMock()
         app.ai_manager = MagicMock()
+        app.recorder = None
         app.settings = settings_with(monkeypatch, STT_BACKEND="fake", VOICE_INPUT="true", PEPPER_FAKE_BRIDGE="true")
         voice = app.build_voice(ConnectionConfig(ip="1.2.3.4"))
         assert voice.transcriber.name == "fake" and voice.source is None  # no robot microphone with the fake bridge

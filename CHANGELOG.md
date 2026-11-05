@@ -30,6 +30,10 @@ default.
   Hugging Face model in bf16 on Alien3's RTX 5090 answers in about 0.09 s for 6 s of speech, including the network
   (1.3 % word errors at 11 dB, against 1.5 % for the int8 package); `STT_SECOND_PASS=http://alien3:11436,<local folder>` tries Alien3 first
   and the desktop's copy when Alien3 does not answer.
+- **The mind no longer turns its body unasked.** The voice line offered "turn -45 to face it" even for one located
+  sound, which is often 40-56° off (#31), and on the robot Pepper turned the wrong way and overshot. A rough direction
+  (under 3 sounds, or spread over 15°) now says so and offers no turn, and the prompt says to turn only when asked.
+  On the recorded situations with the real model: unasked turns 5 of 5 to 0 of 5, and "come to me" still turns 5 of 5.
 - **`RECORD_CAMERA`** keeps every frame the camera streams (`camera/` in the session folder, with the head's angles
   and the people count in `camera/frames.jsonl`); with `WATCH_ROOM` the camera is recorded for the whole session. The
   review script counts the frames.
