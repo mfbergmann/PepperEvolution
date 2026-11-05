@@ -104,7 +104,7 @@ Until the bridge reports the pose, the host dead-reckons from its own completed 
 ## What the mind sees
 
 - **Every turn,** one "Around you" sentence. It is today's sentence plus, when nobody is in view and someone was seen in the last two minutes: "you last saw someone 12 s ago, about 90° to your right of where your body points now (turn -90 to face where they were)". It stays one sentence; it is in the dynamic block after the cached prompt, so caching is untouched.
-- **A known person in view** (later, opt-in identity) adds a short hint: "Mira is here (you know her: say `recall` to look her up)". The hint carries no facts, so the prompt does not grow.
+- **A known person around** (opt-in identity, below) adds a short hint: "Mira is here (you know them: say recall to look them up)". The hint carries no facts, so the prompt does not grow.
 - **The `recall` tool** (#12, #13) answers detail questions from working memory first, then the long-term store:
   - who was here and where, with ages;
   - Pepper's last moves;
@@ -188,7 +188,7 @@ The store comes first, so the place where remembering people goes exists before 
    - Bridge `sound` events, the `speaker_bearing` view, and "come to me" from the voice's direction.
    - Tested with the fake NAOqi; the desktop NAOqi has no `ALSoundLocalization`, so the robot verifies it.
 5. **Scene notes** (#11): built. Clef Flash (who is where) and qwen3.5:4b (the place) write `scene` observations; the "Around you" line adds "Your last look around (12 s ago): ..." while fresh, and `recall` returns the details (benchmark below).
-6. **Identity** (#14): voice built, offline (below); the face side is still to come.
+6. **Identity** (#14): voice and face built, offline (below).
 
 ## Models for the later slices (survey 2026-10-08)
 
@@ -216,11 +216,11 @@ Alien3 (RTX 5090, 32 GB) has about 10 GB of GPU memory free next to Nimble and C
 
 The generative models count people in glass reflections and in Pepper's own reflection, even when told not to. So the scene pass (`src/perception/scene.py`) asks each model what it is good at. Clef Flash says who is where, with a probability. qwen3.5:4b describes only the place and the objects, with people left out of its schema; those notes matched the frames, at a median of 0.46 s. Both run in parallel on frames the camera stream already sends, once when someone comes into view and then every 20 s; a look takes about 0.5 s end to end. The scripts and the labels are in `results/system-one/` (local only, because the frames show people).
 
-## Identity (#14, #25; voice built 2026-11-05, not yet on the robot)
+## Identity (#14, #25; voice and face built 2026-11-05, not yet on the robot)
 
-Two switches, both off by default and both needing `MEMORY_DIR` and someone enrolled. `VOICE_ID` tells the mind "The voice sounds like *name*." for that turn, when confident, and hands the match to working memory as an `identity` observation (`recognised`), which goes on the track that just spoke, into the timeline and into `recall`; long-term memory notes `last_seen` and the session episode. It is a hint and not a login: it does not link them to the conversation the way telling Pepper their name does. `SECOND_VOICE` makes the addressee gate stricter while two people are talking (below).
+Three switches, all off by default and all needing `MEMORY_DIR` and someone enrolled. A match is a social cue and never authentication (`docs/SAFETY.md`). The face side is below ("Faces"); this part is about voices. `VOICE_ID` tells the mind "The voice sounds like *name*." for that turn, when confident, and hands the match to working memory as an `identity` observation (`recognised`), which goes on the track that just spoke, into the timeline and into `recall`; long-term memory notes `last_seen` and the session episode. It is a hint and not a login: it does not link them to the conversation the way telling Pepper their name does. `SECOND_VOICE` makes the addressee gate stricter while two people are talking (below).
 
-**What is kept.** One row per person, kind and model in `identity`: the centre of their clips' embeddings, the model's name, the number of clips, a consent note and the date. No audio, ever. `kind` is `voice` or `face`. Someone not enrolled has no row, and each utterance's audio and embeddings live only for the length of the comparison, on the host's CPU: nothing of it reaches Alien3 or a file (the session recording `VOICE_RECORD_DIR` is separate, and works as before). Enrolment is a person running `scripts/enroll_identity.py --person NAME --consent "..."` on clips of that person alone. The person must already be stored, so a typo creates nobody; clips under 1.5 s are skipped, and clips far from the rest are dropped (more than 2.5 robust standard deviations below the median).
+**What is kept.** One row per person, kind and model in `identity`: the centre of their clips' embeddings, the model's name, the number of clips, a consent note and the date. No audio, ever. `kind` is `voice` or `face`. Someone not enrolled has no row, and each utterance's audio and embeddings live only for the length of the comparison, on the host's CPU or, with `VOICE_ID_URL`, also on the GPU machine: nothing of it reaches a file, there or here, and what is enrolled never leaves the host (the session recording `VOICE_RECORD_DIR` is separate, and works as before). Enrolment is a person running `scripts/enroll_identity.py --person NAME --consent "..."` on clips of that person alone. The person must already be stored, so a typo creates nobody; clips under 1.5 s are skipped, and clips far from the rest are dropped (more than 2.5 robust standard deviations below the median).
 
 **Expiry.** An identity has no expiry of its own: it lives exactly as long as its person. The 90-day rule stands for everyone, with one exception: `--written-consent` records the person's own written consent in `people.written_consent`, and the sweep then leaves that person and their identity alone until they are forgotten. A later spoken yes does not undo it. Their facts keep the 90-day rule, because the written consent was about the voice. Everyone enrolled without that flag has their 90 days started again from the day of enrolment, and goes at the end of it, identity included. `scripts/memory_admin.py list` shows who is kept this way.
 
@@ -228,7 +228,7 @@ Two switches, both off by default and both needing `MEMORY_DIR` and someone enro
 
 **The second-voice rule.** Each utterance is cut into 1.5 s windows (0.75 s apart, at most 8, evenly over a long clip). A clip's *low* score is the mean of its two worst windows against the closest enrolled voice. A low score under 0.15 means part of the clip is not the enrolled voice. That alone would say the same of a visitor alone with Pepper, since everyone not enrolled scores low, so it counts as a second voice only if the enrolled voice is in the same clip (a window at 0.40 or more) or was heard in the last 5 minutes. With no enrolled voice around there is no signal and the gate works as it did. For 60 s after a signal, being in a conversation or having just asked a question no longer lowers the bar, and the "alone with Pepper" override does not apply: the judgement decides, at 0.6, or 0.4 while someone looks at Pepper. Stop and be-quiet commands are never held back: the local phrases return before any of this, and one the router recognised passes when the second voice is the only reason it would have been dropped.
 
-**Never in the way.** A reading runs on its own thread, alongside the second pass. A turn waits for it only when it could change the answer (the judgement says no and only a bypass says yes), for at most 0.5 s, and for at most 0.25 s to name the voice. A late reading gives this turn no hint and no change, and still counts for the next turns. A failure at load turns identification off; a failure later loses that one reading. Each turn's `identity` and `addressee.second_voice` go in `turns.jsonl`, and `scripts/review_session.py` shows and flags them.
+**Never in the way.** A reading runs on its own thread, alongside the second pass, on the GPU machine if `VOICE_ID_URL` is set and the host's CPU if that fails or takes over 0.4 s (then for the next 30 s). A turn waits for it only when it could change the answer (the judgement says no and only a bypass says yes), for at most 0.5 s, and for at most 0.25 s to name the voice. A late reading gives this turn no hint and no change, and still counts for the next turns. A failure at load turns identification off; a failure later loses that one reading. Each turn's `identity` and `addressee.second_voice` go in `turns.jsonl`, and `scripts/review_session.py` shows and flags them.
 
 **For a face identifier.** `src/identity/compare.py` is shared: make unit vectors with your own model, `store.add_identity(person_id, "face", to_blob(centroid), model_name, samples, consent_note)` with `robust_centroid`, then `best_match(vector, load_enrolled(store, "face", model_name))` for each comparison, deciding your own threshold on your own held-out data (scores from different models mean different things). Report a confident match with `world.note(IDENTITY, "recognised", via="face", person_id=..., name=..., score=...)` and `memory.recognised(person_id, name)`.
 
@@ -253,10 +253,60 @@ How far to trust this:
 - **The 0.15 was not blind.** It came out of the training sessions, but it had already been tuned on the two-person session earlier the same day, and the same number won there. The live voiceprint partly comes from the solo end of that session, which is why the evaluation above enrols without it.
 - **It depends on the voiceprint.** Enrolled on one session of 20 clips and another microphone, the same thresholds named 175 of 208 clips and flagged 5 of 208 as part-other, and the gate simulation came to 4 of 22 and 11 of 12. Names get scarcer first. There, one of the other speakers reached 0.35 against the 0.40 needed for a name, and with the two-day voiceprint one of the three unclear labelled clips was named at 0.41: the margin is thin.
 - **Other speakers were read speech mixed with fan noise,** not people in the room.
-- **Speed is not settled.** A whole reading took a median of 1.7 s (p90 3.0 s, clips of 5.2 s) on 4 threads with the desktop busy at a load of 11 on 8 cores; the windows alone earlier took 0.31 s at a clip median of 3.2 s. At those times most readings miss the 0.25 s for a name, and the signal arrives a turn late. The simulation assumes each reading arrives in time for its own turn, so 5 of 22 is the in-time case: with a late signal, each run of side talk gets about one more answer at its start. The robot session has to show how often (`late` in the review).
+- **Speed, on the CPU, is too slow for the waits;** on the GPU machine it is not (next section). The simulation assumes each reading arrives in time for its own turn, so 5 of 22 is the in-time case: with a late signal, each run of side talk gets about one more answer at its start.
 - **The clips carry the 1.5 s pre-roll,** as the live audio does. Changing `RECORD_PRE_ROLL_SECONDS` means evaluating again.
 
 The live voiceprint is enrolled from all the solo sessions (212 of 228 clips kept), in the git-ignored store. The scripts and labels are in `results/system-one/voices/` (local only).
+
+### Readings from the GPU machine (`VOICE_ID_URL`, 2026-11-05)
+
+`scripts/stt_server.py` on Alien3 also serves the speaker model, the same file on the RTX 5090, at `POST /embed`: the clip goes up once, and the vectors for the whole clip and its windows come back. sherpa-onnx has no batch call for this, so they run one after another. It is stateless. It knows nobody, the comparing stays on the host, it writes nothing and logs only durations. Everyone's speech goes there for the length of a request, as with the second pass; the tailnet carries it. It runs in the Cohere server's process (about 1 GB more GPU memory) and did not slow it: 0.093 s before and 0.090 s after, for clips of 6.5 s.
+
+From the desktop, through `VoiceIdentifier.read` on 72 of the tester's solo clips (median 3.8 s; each mode measured on its own):
+
+| How | Median | p90 | Max | Over the 0.25 s for a name | Over the 0.5 s for the gate |
+|---|---|---|---|---|---|
+| Host CPU, idle desktop | 0.51 s | 1.1 s | 1.3 s | 99 % | 51 % |
+| Host CPU, 8 busy processes (20 clips) | 1.6 s | 3.1 s | 3.5 s | 100 % | 100 % |
+| GPU machine | 0.075 s | 0.096 s | 0.100 s | 0 % | 0 % |
+| GPU machine, a Cohere request alongside, as live | 0.083 s | 0.105 s | 0.122 s | 0 % | 0 % |
+| The same, 3 s between clips | 0.088 s | 0.101 s | 0.104 s | 0 % | 0 % |
+| The same, 8 busy processes (40 clips) | 0.085 s | 0.105 s | 0.107 s | 0 % | 0 % |
+
+So the waits stay at 0.5 s and 0.25 s. A reading kept its connection open after 60 s of silence (0.096 s). With the port closed, the CPU read at once at its usual speed; with a server that never answers, the first clip cost 0.4 s more, the next ones nothing. A turn was never held longer than the waits, and a late reading still reaches working memory for the next turns. These are one desktop and one network path; the robot session checks them live (`via` and `late` in the review).
+
+The vectors match. On 72 solo clips of the tester and 60 other speakers' read speech, 811 vectors in all, local against remote: lowest cosine 0.999997, largest change in a clip's score against the voiceprint 0.0003 and in its low score 0.0002, and no name or second-voice decision changed. So the 0.40 and 0.15 stand as measured, and the evaluation above was not re-run. The two-person session was not sent there for this. The host refuses vectors from a server naming a different model.
+
+### Faces (`FACE_ID`, #14, 2026-11-05)
+
+`src/identity/face.py`, from the offline evaluation in `results/system-one/faces/RESULTS.md` (local only): YuNet on the frame upscaled 2x, InsightFace's `w600k_r50` through onnxruntime (weights for non-commercial research only), both on the host's CPU, models in `~/.local/share/pepper-models/`. A face's score is the mean of its three best cosines against the person's gallery; 0.45 counts as a match, and only a match in 3 of the last 5 different frames counts as recognising them. Faces under 12 px are not judged. Those thresholds were set on this camera; published ones are too low here.
+
+**What is kept.** A gallery: 73 embeddings of the tester from solo sessions only, checked by eye by the evaluation. **All 73 are stored, end to end, in the person's one `identity` row** (`samples` says how many). A centroid would be another method, and the threshold was not measured on one. One row keeps it simple: enrolling again replaces it whole, the schema stays, and the foreign key takes it with the person. `scripts/enroll_identity.py --face-gallery` enrols from such a file, refuses one from another recogniser, and needs the same consent note and existing person as a voice. The store's file is set to mode 600 on enrolment. Faces that match nobody leave nothing: the frame is read, its faces embedded, compared and dropped within the call, and only a count of how many frames had a face goes on. With nobody enrolled, no face is even looked for. The frames themselves are kept only with `RECORD_CAMERA`, as before.
+
+**"Forget me".** The gallery goes in the same transaction as the person, and leaves the file (`secure_delete`, the log flushed; a test checks the bytes). It is read from the store for every frame and again when a frame's result comes back, so a frame in flight does not count, and nothing is cached. The tool, or noticing the row gone after `memory_admin.py forget`, also clears working memory: the hint, the name on the track, and the "recognised" lines `recall` would read. The session records are separate, as above.
+
+**From frame to mind.** Every frame the stream delivers is offered from `FrameWatcher.frame` on its way past, also while the people detector reports nobody (it misses people: 172 of 706 frames marked empty held a face). A frame byte-identical to the one before is not a new vote. Reading runs on its own thread and frames are dropped while it is busy, so neither the stream nor the judgements wait. Winning the vote gives `world.note(IDENTITY, "recognised", via="face", person_id, name, score, bearing)` and `memory.recognised`, then again every 15 s while it holds, never per frame. The bearing is the head's yaw for that frame plus the box centre's offset (`geometry.offsets`); the person goes on the track within 20° of it, or a new camera track, and off any other track they were on. While the base is turning, nothing is attached. A face match does not link them to the conversation.
+
+**One voice from two senses.** Both senses fill one record per person (`WorldModel.known`). For 30 s after either recognised them, the "Around you" line ends with "*name* is here (you know them: say recall to look them up)." With two people, "*a* and *b* are here (...)". The hint has no facts and no pronoun guessed. If the voice answered in this turn is theirs and their face was seen too, it is one sentence: "*name* is here and the voice you are answering sounds like them (...)", and the voice's own line is dropped. Heard only, the turn keeps "The voice sounds like *name*." and no "is here"; on later turns, "is here" until it fades. A face and a voice naming different people both stand. No event wakes the mind, and `recall`'s timeline hears of each person by each sense at most once in 2 minutes.
+
+**In the session record.** `face` lines for frames where someone enrolled matched (person id, score, width, votes), `face_lost`, `identity` observations, and `face_stats` once a minute (frames read, dropped, repeated, failed, with a face, matched, milliseconds; `review_session.py` summarises the last). Never an embedding, and nothing about a face that matched nobody: not even its score. To study near misses, run the replay over frames recorded with `RECORD_CAMERA`.
+
+**What the replay showed.** Through the production code and the enrolled store, on the 2026-11-05 solo frames (under `unshare -n`; numbers only):
+
+| Stream | Unique frames | With a face | Matched, enrolled gallery | Vote holding | Matched, gallery from the other stream only (held out) | Vote holding |
+|---|---|---|---|---|---|---|
+| Office | 461 | 189 | 147 (78 %) | 147 (78 %) | 138 (73 %) | 140 (74 %) |
+| Open area | 291 | 114 | 103 (90 %) | 110 (96 %) | 96 (84 %) | 103 (90 %) |
+
+The enrolled gallery was partly built from these frames, so its columns are not held out. The held-out columns use 30 evenly spread faces of 24 px or more from the other stream, picked by a simpler rule than the evaluation's (81 % and 93 %, with fewer detections counted as faces), so take them as a floor. Working memory heard 10 times in 407 s and 9 times in 290 s. Scores match the evaluation's draft exactly (72 faces, largest difference 0.000000).
+
+Speed, one face a frame, with the desktop at a load of 2-4: 12 ms for a frame with no face (most of them), and with a face 312 ms on 1 thread, 170 ms on 2 and 96 ms on 4. **It uses 2**: speech recognition shares the CPU, and at a frame a second that leaves plenty of room. No frame was dropped in the replay, which reads one frame at a time, so the stream's own rate has not been tried against this load. sherpa-onnx, onnxruntime and OpenCV work together in one process.
+
+How far to trust this:
+- **One person, two rooms, four weeks, one robot.** False accepts rest on thin evidence: on this camera 0 of 16 clearly other faces, labelled by this same recogniser, and 0 of 1237 strangers from a public set taken with other cameras.
+- **Misses come from blur,** not size: the blurriest quarter of faces in the office was accepted 43 % of the time, the rest 84-100 %.
+- **No photo or screen could be tested.** Expect them to match. The robot session checks it.
+- **Hair and beard changes are untested.** A gallery goes stale; refresh it by asking the person.
 
 ## Maps and places (#36, built 2026-10-28, not yet on the robot)
 

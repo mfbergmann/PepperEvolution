@@ -72,7 +72,12 @@ Pepper is 1.2 m tall, 28 kg, and drives on an omnidirectional base at up to 0.55
 | Speech model | recognition runs on a worker thread, never on the event loop | `WhisperTranscriber`, `SherpaTranscriber` | the loop must stay free for `/emergency_stop` |
 | Shutdown | Ctrl-C shuts the API down, then the robot connection; `REST_ON_EXIT=true` rests the robot | `main.py` | |
 
-## What the model is allowed to do
+## Recognising someone is a social cue, never authentication
+
+A match on a face or a voice (`VOICE_ID`, `FACE_ID`, `src/identity/`) can only change what the mind is told: one line in its state saying who seems to be here. **No permission, tool or safety behaviour depends on it, and none may.** Nothing in the bridge, the motion bounds, the stops, the addressee gate's commands, the tools or the memory rules reads who was recognised. It gives no standing: it does not link anyone to the conversation the way telling Pepper their name does (`Memory.here_line`), does not unlock facts, and does not allow or refuse any action.
+
+There is no liveness check. **A photo or a screen showing an enrolled person is expected to match**, and a recording of their voice likely does too. Anyone can pass as someone enrolled by holding up their picture, so nothing may ever be built on a match being true. If something ever needs to know who someone really is, it needs another means, and a new row in this file.
+
 
 The model only sees the tools in `src/ai/tools.py`: speak, animations from a fixed list, head moves, turns, drives, posture, eye colour, photo, sensors, tablet, emergency stop; with `MAP`, going to a named place on its map and naming, forgetting or relocalizing at places (never exploring). It cannot change speeds beyond the bounds above, cannot disable collision protection, cannot touch Autonomous Life or awareness modes, and cannot run arbitrary NAOqi calls. Anything it needs beyond that is a code change and a new row in this table.
 

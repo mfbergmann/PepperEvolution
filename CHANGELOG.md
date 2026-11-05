@@ -21,6 +21,27 @@ default.
   clips of the tester on other days or microphones were named, none flagged; none of 30 other speakers was named
   (docs/MEMORY.md, "Identity", with what these numbers do not show). Runs on the host's CPU, off the audio loop; turn
   records and `review_session.py` show each decision. A routed stop or quiet command gets past the second-voice rule.
+- **Voice readings in time for the turn (`VOICE_ID_URL`).** `scripts/stt_server.py` also serves the speaker model
+  (`POST /embed`, stateless, nothing kept or logged, about 1 GB of GPU memory, Cohere no slower). From the desktop a
+  reading took a median of 0.08 s (p90 0.105 s, none over 0.25 s) instead of 0.51 s (p90 1.1 s; 99 % over the 0.25 s
+  for a name, 51 % over the 0.5 s for the gate), so the waits stay as they are. Vectors match the CPU's (lowest cosine
+  0.999997, scores within 0.0003, no decision changed on 132 clips), so the thresholds stand. The host's CPU takes over
+  if the server fails or takes over 0.4 s, and reads for the next 30 s.
+- **Face identification (#14, `FACE_ID`, needs `MEMORY_DIR` and the camera stream;
+  `requirements-face.txt`).** YuNet 2x + InsightFace `w600k_r50` on the host's CPU, on its own thread, dropping frames
+  while busy: the mean of a face's three best cosines against the person's gallery at 0.45, and 3 of the last 5
+  different frames to count. The whole gallery is kept in the person's one identity row, as the threshold was validated
+  on it (`scripts/enroll_identity.py --face-gallery`). It goes with the person on "forget me" and is re-read for every
+  frame. Working memory gets who, with a bearing that puts them on the right track, and the "Around you" line says
+  "*name* is here (you know them: say recall to look them up)"; voice and face make one mention. Faces that match
+  nobody leave nothing, not even a score. A social cue, never authentication: a photo will match, and nothing depends on
+  it (docs/SAFETY.md). Replay of 752 solo frames through this code: 78-90 % of frames with a face matched (73-84 % with
+  a gallery from the other stream only), 12 ms a frame without a face and 170 ms with one on 2 threads. The weights are
+  for non-commercial research only.
+- **Camera stream: no more doubled frames.** A client reconnecting at another rate (the host, when someone comes into
+  view) while the bridge's loop slept left two loops running, sending twice the asked rate: 254 of 715 frames on
+  2026-11-05 were byte-identical to the one before. The old loop now ends. Also fixes that loop's ending being able to
+  stop the new one. Needs a deploy; not yet on the robot.
 - **Beamforming over the four head microphones (#34, `BEAMFORM`).** The bridge streams all four microphones on request
   (`/ws/audio?channels=4`, resampled to 16 kHz on the robot), and the host beamforms them into one channel before
   speech recognition: a streaming MVDR beamformer that learns the fans' noise from quiet moments and the voice's
