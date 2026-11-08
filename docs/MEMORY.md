@@ -303,7 +303,7 @@ The enrolled gallery was partly built from these frames, so its columns are not 
 Speed, one face a frame, with the desktop at a load of 2-4: 12 ms for a frame with no face (most of them), and with a face 312 ms on 1 thread, 170 ms on 2 and 96 ms on 4. **It uses 2**: speech recognition shares the CPU, and at a frame a second that leaves plenty of room. No frame was dropped in the replay, which reads one frame at a time, so the stream's own rate has not been tried against this load. sherpa-onnx, onnxruntime and OpenCV work together in one process.
 
 How far to trust this:
-- **One person, two rooms, four weeks, one robot.** False accepts rest on thin evidence: on this camera 0 of 16 clearly other faces, labelled by this same recogniser (13 of them from the open area on 2026-11-05: not the colleague, who the tester found in none of the images, so passers-by or detector errors), and 0 of 1237 strangers from a public set taken with other cameras.
+- **One person, two rooms, four weeks, one robot.** False accepts rest on thin evidence: on this camera 0 of 16 clearly other faces, labelled by this same recogniser (most of them the colleague, whom the tester found in a handful of frames on 2026-11-05; those faces scored 0.04-0.11), and 0 of 1237 strangers from a public set taken with other cameras.
 - **Misses come from blur,** not size: the blurriest quarter of faces in the office was accepted 43 % of the time, the rest 84-100 %.
 - **No photo or screen could be tested.** Expect them to match. The robot session checks it.
 - **Hair and beard changes are untested.** A gallery goes stale; refresh it by asking the person.
