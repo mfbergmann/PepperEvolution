@@ -646,3 +646,22 @@ def test_faces_are_off_by_default():
     import main
 
     assert main.Settings.__dataclass_fields__["face_id"].default is False
+
+
+class TestFacePlaces:
+    async def test_every_face_is_kept_as_a_direction_only(self):
+        store, _ = enrolled_store()
+        now = [10.0]
+        faces = identifier(store, frames=[[seen(A, x=0.5), seen(B, x=0.9)]], clock=lambda: now[0])
+        await feed(faces, 1, head_yaw=20.0)
+        bearings = faces.faces_since(0.0)
+        assert len(bearings) == 2 and bearings[0] == pytest.approx(20.0)  # the enrolled face and a stranger's
+        assert bearings[1] < 20.0  # right of the middle of the frame: right of the head
+        assert faces.faces_since(11.0) == []
+        assert all(isinstance(b, float) for b in bearings)  # nothing but a number per face
+
+    async def test_without_the_head_angle_a_face_has_no_direction(self):
+        store, _ = enrolled_store()
+        faces = identifier(store, frames=[[seen(B)]])
+        await feed(faces, 1, head_yaw=None)
+        assert faces.faces_since(0.0) == [None]

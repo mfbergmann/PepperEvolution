@@ -21,9 +21,18 @@ from ..decide.router import Routed
 from ..decide.router import choose as choose_action
 from ..decide.router import plan as plan_action
 from ..pepper.robot import PepperRobot, Photo
-from .glance import MAX_SPREAD, MIN_SOUNDS, glance_target, people_yaws
+from .glance import (
+    HOLD,
+    LOOK_AROUND_EVERY,
+    MAX_SPREAD,
+    MIN_SOUNDS,
+    glance_target,
+    look_around_yaws,
+    others_found,
+    people_yaws,
+)
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
-from ..world.observations import HEARD, IDENTITY, MIND, SAID
+from ..world.observations import CAMERA, HEARD, IDENTITY, MIND, SAID
 from ..world.views import addressee_context
 from .models import CLOSING, ERROR_TEXT, MAP_PROMPT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
@@ -191,6 +200,13 @@ class AIManager:
         self.voice_glances = False  # VOICE_GLANCES: turn the head towards a voice from where nobody is seen (#33)
         self.head_angles: Optional[Callable[[], Optional[Sequence[float]]]] = None  # main.py: the camera's head angles
         self._last_glance: Optional[float] = None
+        # LOOK_AROUND: after a second voice, a short head sweep for the other person (needs VOICE_GLANCES, SECOND_VOICE)
+        self.look_around = False
+        self.faces_seen: Optional[Callable[[float], List[Optional[float]]]] = (
+            None  # main.py: FaceIdentifier.faces_since
+        )
+        self._last_look_around: Optional[float] = None
+        self._looking_around = False
 
     # Backwards-compatible alias (older code/tests used context_window = pairs kept)
     @property
@@ -281,10 +297,13 @@ class AIManager:
                 await self._wait_for_voice_reading(
                     voice_reading, rec, VOICE_READING_WAIT
                 )  # for the record: no one waits
-                self._glance_at_voice(rec)
+                looking = self._look_around_for_people(rec)
+                if not looking:
+                    self._glance_at_voice(rec)
                 result = self._bare_result("", source, client_id, "not_addressed")
                 self._finish_record(rec, result)
-                self._look_at_speaker()
+                if not looking:
+                    self._look_at_speaker()
                 return result
             self._last_talk_at = self._clock()
             if routed is not None and routed.intent in ("stop", "quiet"):
@@ -589,7 +608,7 @@ class AIManager:
     def _glance_at_voice(self, rec: Dict[str, Any]):
         """Reflex, no model: the voice came from where nobody is seen, so turn the head there and let the camera and
         face tracking find the speaker (src/ai/glance.py). Head only."""
-        if not self.voice_glances or self.world is None:
+        if not self.voice_glances or self.world is None or self._looking_around:
             return
         if self.busy or self.robot.direct_commands_running or self.robot.halted:
             return  # a running turn may be using the head
@@ -614,6 +633,81 @@ class AIManager:
         task = asyncio.create_task(look(), name="glance-at-voice")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _look_around_for_people(self, rec: Dict[str, Any]) -> bool:
+        """Reflex, no model: a second voice was heard, but nobody else is in view, so look around for them, head only:
+        towards the voice if its direction is known, then to either side, then back (src/ai/glance.py). Once per
+        second-voice episode. What it found goes into working memory, faces as directions only, never who. True when
+        it started."""
+        if not (self.look_around and self.voice_glances and self.second_voice_gate) or self.world is None:
+            return False
+        if self._looking_around or self.busy or self.robot.direct_commands_running or self.robot.halted:
+            return False
+        now = self._clock()
+        if not self.second_voice.active(now):
+            return False
+        if self._last_look_around is not None and now - self._last_look_around < LOOK_AROUND_EVERY:
+            return False
+        if self.world.most_in_view(10.0) >= 2:
+            return False  # the camera already sees two people
+        head = self.head_angles() if self.head_angles is not None else None
+        start_yaw = head[0] if head else None
+        start_pitch = head[1] if head else self.NEUTRAL_HEAD[1]
+        before = people_yaws(self.world)
+        stops = look_around_yaws(start_yaw, before, rec.get("voice"))
+        if not stops:
+            return False
+        self._last_look_around = now
+        self._last_glance = now
+        self._looking_around = True
+        rec["look_around"] = stops
+        self.logger.info(f"A second voice: looking around (yaws {stops})")
+        self._event("look_around_start", yaws=stops)
+        count_before = self.world.count or 0
+
+        async def sweep():
+            bearings: List[Optional[float]] = []
+            stopped = ""
+            paused = False
+            try:
+                if self.face_tracking and not self._tracking_off:
+                    await self.robot.set_awareness(False)  # tracking would pull the head straight back
+                    paused = True
+                for yaw in stops:
+                    if self.busy or self.robot.direct_commands_running or self.robot.halted:
+                        stopped = "busy"
+                        break
+                    await self.robot.move_head(yaw, start_pitch, speed=self.TURN_TO_ARRIVAL_SPEED, wait=True)
+                    await asyncio.sleep(HOLD)
+                    bearings += people_yaws(self.world)
+                    if (self.world.count or 0) > count_before:
+                        stopped = "found"
+                        break
+                if self.faces_seen is not None:
+                    bearings += self.faces_seen(now)
+                found = others_found(bearings, [start_yaw if start_yaw is not None else 0.0, *before])
+                self._event("look_around", yaws=stops, found=found, stopped=stopped or None)
+                self.world.note(CAMERA, "looked_around", found=found)
+                if stopped == "busy":
+                    return  # the turn that started has the head now
+                if stopped != "found" and start_yaw is not None:
+                    await self.robot.move_head(start_yaw, start_pitch, speed=self.TURN_TO_ARRIVAL_SPEED, wait=False)
+            except Exception as exc:  # noqa: BLE001 - a missed look is not worth an error
+                self.logger.debug(f"Could not look around: {exc}")
+            finally:
+                self._looking_around = False
+                if paused and not self.robot.halted:
+                    try:
+                        await self.robot.set_awareness(
+                            True, tracking_mode="Head", engagement_mode="SemiEngaged", stimuli=self.TRACKING_STIMULI
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.debug(f"Could not resume face tracking: {exc}")
+
+        task = asyncio.create_task(sweep(), name="look-around")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return True
 
     def _look_at_speaker(self):
         """After side talk Pepper does not answer, it still looks at the person, as anyone would."""

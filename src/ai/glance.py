@@ -44,3 +44,62 @@ def glance_target(
 
 def people_yaws(world: Any) -> list:
     return [getattr(person, "yaw", None) for person in (getattr(world, "people", None) or [])]
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Looking around for a second voice: two voices were heard (SECOND_VOICE), but the camera may show only one person (on
+# 2026-11-05 the colleague was in none of the frames of a conversation). Head only, a short sweep, then back.
+# ----------------------------------------------------------------------------------------------------------------------
+
+SWING = 50.0  # degrees either side of where the head points: roughly one camera width (about 55°) beyond the view
+DISTINCT_STOP = 35.0  # degrees: a stop this close to another (or to the start) adds little
+HOLD = 1.6  # seconds at each stop: the stream sends about one frame a second while someone is in view
+SAME_PERSON = 25.0  # degrees: faces this close together count as one person
+LOOK_AROUND_EVERY = 90.0  # seconds: once per second-voice episode (SECOND_VOICE_WINDOW is 60 s), not per utterance
+
+
+def voice_bearing(voice: Optional[dict]) -> Optional[float]:
+    """The voice's bearing when enough located sounds agree on it (as for a glance), else None."""
+    if not voice or voice.get("bearing") is None:
+        return None
+    if (voice.get("sounds") or 0) < MIN_SOUNDS or (voice.get("spread") or 0.0) > MAX_SPREAD:
+        return None
+    return float(voice["bearing"])
+
+
+def look_around_yaws(
+    head_yaw: Optional[float], people_yaws: Iterable[Optional[float]], voice: Optional[dict] = None
+) -> list:
+    """Head yaws (degrees, left positive) to look at in turn: the voice's direction first if it is known, then either
+    side of where the head points now. Stops where someone is already in view, or near another stop, are left out."""
+    start = float(head_yaw) if head_yaw is not None else 0.0
+    seen = [float(y) for y in people_yaws if y is not None]
+    wanted = []
+    bearing = voice_bearing(voice)
+    if bearing is not None:
+        wanted.append(bearing)
+    wanted += [start + SWING, start - SWING]
+    stops: list = []
+    for yaw in wanted:
+        yaw = max(-HEAD_LIMIT, min(HEAD_LIMIT, yaw))
+        if abs(yaw - start) < DISTINCT_STOP or any(abs(yaw - s) < DISTINCT_STOP for s in stops):
+            continue
+        if any(abs(yaw - s) <= IN_VIEW_WITHIN / 2 for s in seen):
+            continue  # already in view there
+        stops.append(round(yaw, 1))
+    return stops
+
+
+def others_found(bearings: Iterable[Optional[float]], known: Iterable[Optional[float]]) -> int:
+    """How many people the bearings of faces and people seen during a look-around point at, beyond those already
+    known (the person Pepper was facing). Bearings within SAME_PERSON of each other count once."""
+    known_yaws = [float(k) for k in known if k is not None]
+    fresh = sorted(float(b) for b in bearings if b is not None)
+    fresh = [b for b in fresh if all(abs(b - k) > SAME_PERSON for k in known_yaws)]
+    people = 0
+    last: Optional[float] = None
+    for b in fresh:
+        if last is None or b - last > SAME_PERSON:
+            people += 1
+        last = b
+    return people

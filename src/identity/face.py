@@ -54,6 +54,7 @@ MAX_FACES = 8  # the recogniser's cost is per face
 THREADS = 2
 REFRESH = 15.0  # seconds between notes to working memory while someone stays recognised
 STATS_EVERY = 60.0  # seconds between lines of counts in the session record
+PLACES_KEPT = 64  # face positions kept in memory for a look-around (src/ai/glance.py): about a minute at 1 fps
 
 # The 112x112 alignment template the ArcFace family was trained on (eyes, nose, mouth corners)
 _ARCFACE_TEMPLATE = (
@@ -101,6 +102,7 @@ class FaceReading:
     faces: int = 0  # how many faces this frame had, judged or not
     matches: Tuple[Match, ...] = ()  # at most one per person, their best
     spent: float = 0.0
+    places: Tuple[Tuple[float, float], ...] = ()  # (x, y) of every face judged, anyone's: where, never who
 
 
 def gallery_blob(vectors: Any) -> bytes:
@@ -286,6 +288,7 @@ class FaceIdentifier:
         self._noted: Dict[int, float] = {}  # when working memory last heard of them
         self._known: Set[int] = set()  # who was enrolled at the last look, to notice someone forgotten
         self._stats_at = clock()
+        self._places: Deque[Tuple[float, Optional[float]]] = deque(maxlen=PLACES_KEPT)  # (when, bearing)
 
     async def start(self) -> None:
         """Load the models (under a second; may fail: no file, no OpenCV). The caller decides what failing means."""
@@ -322,7 +325,8 @@ class FaceIdentifier:
     def _read(self, jpeg: bytes, galleries: List[Gallery]) -> FaceReading:
         started = time.monotonic()
         faces, seen = self.model.faces(jpeg)
-        return FaceReading(faces, read_faces(seen, galleries, self.threshold), time.monotonic() - started)
+        places = tuple((f.x, f.y) for f in seen)
+        return FaceReading(faces, read_faces(seen, galleries, self.threshold), time.monotonic() - started, places)
 
     def _take(self, done: "asyncio.Future", head_yaw: Optional[float]) -> None:
         """A frame was read (a future's callback, so it must not raise)."""
@@ -334,6 +338,9 @@ class FaceIdentifier:
             enrolled = {i.person_id for i in self.store.identities(kind=KIND, model=self.model.name)}
             self._notice_forgotten(enrolled)  # forgotten while this frame was being read: it does not count
             matches = [m for m in reading.matches if m.person_id in enrolled]
+            now = self._clock()
+            for x, y in reading.places:
+                self._places.append((now, None if head_yaw is None else head_yaw + offsets(x, y)[0]))
             self._count(reading, matches)
             held = self.votes.update({m.person_id for m in matches})
             for match in matches:
@@ -348,6 +355,11 @@ class FaceIdentifier:
             self._maybe_record_stats()
         except Exception as exc:  # noqa: BLE001
             self._failed(exc)
+
+    def faces_since(self, since: float) -> List[Optional[float]]:
+        """Body-frame bearings of every face judged since ``since`` (this identifier's clock), anyone's. Kept in memory
+        only, a few seconds' worth, never written: for a look-around to count people, never to say who they are."""
+        return [bearing for at, bearing in self._places if at >= since]
 
     def _recognised(self, match: Match, head_yaw: Optional[float]) -> None:
         now = self._clock()

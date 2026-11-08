@@ -124,6 +124,7 @@ class Settings:
     record_camera: bool = False
     watch_room: bool = False
     voice_glances: bool = False
+    look_around: bool = False
     local_microphone: Optional[str] = None
     map: bool = False
     voice_id: bool = False
@@ -199,6 +200,7 @@ class Settings:
             record_camera=env_bool("RECORD_CAMERA", False),
             watch_room=env_bool("WATCH_ROOM", False),
             voice_glances=env_bool("VOICE_GLANCES", False),
+            look_around=env_bool("LOOK_AROUND", False),
             local_microphone=os.getenv("LOCAL_MICROPHONE", "").strip() or None,
             map=env_bool("MAP", False),
             voice_id=env_bool("VOICE_ID", False),
@@ -394,6 +396,11 @@ class PepperEvolution:
             self.logger.warning("FACE_ID reads the camera stream (VISION_STREAM, DECIDE_URL): off")
         # glances need voice directions, and the head's angle from a stream that stays open (or they repeat)
         self.ai_manager.voice_glances = s.voice_glances and s.sound_direction and s.watch_room
+        # LOOK_AROUND: after a second voice (SECOND_VOICE), a short head sweep for the other person; faces only as
+        # directions, from FACE_ID's reader when it runs, and NAOqi's people otherwise
+        self.ai_manager.look_around = s.look_around and self.ai_manager.voice_glances
+        if self.faces is not None:
+            self.ai_manager.faces_seen = self.faces.faces_since
         if self.decider is not None:
             models = [ADDRESSEE_MODEL] + ([VISION_MODEL] if self.vision is not None else [])
             self.decider.keep_warm(models)  # the first call after an unload takes ~30 s
