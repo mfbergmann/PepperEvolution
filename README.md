@@ -13,6 +13,8 @@ A cloud-AI control system for SoftBank Pepper robots. A small bridge server on t
 - **Notices people and remembers** – a world model on the host keeps who is in view (distance, direction, gaze) and where people were after they leave view (odometry), greets someone who walks up, and tells the model each turn who is around and where. With `MEMORY_DIR`, Pepper remembers people who agree to it, and forgets them when asked ([docs/MEMORY.md](docs/MEMORY.md)).
 - **Judges the situation fast (optional, a local GPU machine)** – small local decision models decide in about 0.15 s whether speech was meant for Pepper (side talk gets no reply), which physical action to start at once (Pepper moves about 0.25 s after the transcript while Claude prepares the words), and whether someone in view is waving or showing something. Without the GPU machine everything still works, slower. See [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md).
 - **Is recorded for review** – with `SESSION_DIR`, every run keeps its log, audio, photos and a per-turn record locally; `scripts/review_session.py` turns it into a timed transcript with flags.
+- **Keeps a ledger of its own decisions** – each turn records the route it took (a control phrase, ignored as side talk, a routed action, the mind), which engine answered, what it was shown and what it cost, and what happened next (stopped, repeated, ignored and repeated). This is the evidence for improving routing and, later, training a local mind ([docs/ORCHESTRATOR.md](docs/ORCHESTRATOR.md)).
+- **Enforces where data may go** – every service that sees Pepper's data is registered with what it may receive; anything else is refused, and sessions are replayed to outside services only when marked as the tester alone ([docs/DATA_FLOWS.md](docs/DATA_FLOWS.md)).
 - **Stays safe** – moves are clamped and sonar-checked, the bridge never blocks so emergency stop always gets through, and the robot is put into a known state (Autonomous Life off, motors on) when the host connects.
 - **Works without the robot** – `PEPPER_FAKE_BRIDGE=true` runs the whole stack with a simulated robot.
 
@@ -74,7 +76,7 @@ Pepper Robot (NAOqi 2.5, Python 2.7)        Host (Python 3.12+)
                                        Anthropic Claude API      GPU machine: Ollama decision models
 ```
 
-The design it is building towards (reflexes, continuous perception, a shared world model, one mind that speaks) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The design it is building towards (reflexes, continuous perception, a shared world model, one mind that speaks) is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). How each turn is routed between those engines, recorded and checked against the data policy is in [docs/ORCHESTRATOR.md](docs/ORCHESTRATOR.md); where data goes is in [docs/DATA_FLOWS.md](docs/DATA_FLOWS.md).
 
 ## Project structure
 
@@ -91,14 +93,16 @@ PepperEvolution/
 │   ├── memory/             # long-term memory: SQLite store (people with consent, facts, episodes), memory tools
 │   ├── decide/             # local decision models: client (fails open), addressee gate, command router
 │   ├── perception/         # camera stream judged about once a second
-│   ├── session.py          # session records (SESSION_DIR)
+│   ├── identity/           # opt-in voice and face matching against enrolled people
+│   ├── orchestra/          # orchestrator: engine registry and data policy, session presence, ledger, per-turn routing
+│   ├── session.py          # session records (SESSION_DIR): turns, events, outcomes, session.json
 │   ├── communication/      # FastAPI app: REST, /ws hub, direct commands
 │   ├── sensors/, actuators/# thin convenience wrappers
 ├── web/index.html          # Browser control panel (served at /)
 ├── examples/               # basic_chat.py (terminal), event_monitor.py, mic_monitor.py
-├── tests/                  # ~670 tests incl. running the real bridge with tests/fakenaoqi
-├── docs/                   # HANDOFF, ARCHITECTURE, MEMORY, ROADMAP, SETUP_PROFILES, GETTING_STARTED, BRIDGE_API, SAFETY, research notes, signs/
-├── scripts/                # start.sh, review_session.py, smoke_host.py, compare_models.py, virtual_pepper.sh, ...
+├── tests/                  # ~940 tests incl. running the real bridge with tests/fakenaoqi
+├── docs/                   # HANDOFF, ARCHITECTURE, ORCHESTRATOR, DATA_FLOWS, MEMORY, ROADMAP, SETUP_PROFILES, GETTING_STARTED, BRIDGE_API, SAFETY, research notes, signs/
+├── scripts/                # start.sh, review_session.py, mark_session.py, replay_decisions.py, compare_minds.py, ...
 └── main.py                 # Host application entry point
 ```
 
@@ -142,7 +146,7 @@ Running it yourself: [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) explains t
 | `LED_STATE_SIGNALS` / `BACKCHANNEL_AFTER` | `true` / `2.0` | Eye colour state signals; seconds before a spoken filler |
 | `DECIDE_URL` | | Fast local judgements on a GPU machine (Ollama with `nimble`, `clef-flash`): who is Pepper being spoken to, which action to start at once, what the camera shows. Empty = off; see [docs/SETUP_PROFILES.md](docs/SETUP_PROFILES.md) |
 | `ADDRESSEE_GATE` / `ROUTER` / `VISION_STREAM` | `true` | With `DECIDE_URL`: answer only speech meant for Pepper; start simple actions at once; judge camera frames while someone is in view (`ADDRESSEE_THRESHOLD`, `ROUTER_THRESHOLD`, `VISION_FPS` tune them) |
-| `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`) |
+| `SESSION_DIR` | | One folder per run with everything needed to review a session (`scripts/review_session.py`). Its `session.json` says who was there: `unknown` until marked `solo` or `others` with `scripts/mark_session.py` after review |
 | `SOUND_DIRECTION` | `false` | With bridge 0.6: each spoken turn gets the direction the voice came from (NAOqi sound localisation), for "come to me" out of the camera's view |
 | `MEMORY_DIR` | | Long-term memory: people who agreed to be remembered, facts, session episodes ([docs/MEMORY.md](docs/MEMORY.md); `scripts/memory_admin.py`); empty = off |
 | `SCENE_NOTES` / `SCENE_MODEL` | `false` / `qwen3.5:4b` | With `DECIDE_URL`: every 20 s while someone is in view, who is where and a short note on the place |

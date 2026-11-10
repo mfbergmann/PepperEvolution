@@ -77,6 +77,17 @@ A single conversational model holds the dialogue, decides what to do, calls tool
   - It fires at most once every 3 minutes. Replayed on recorded sessions, it fired three times in 58 minutes, none during a real conversation.
 - **Memory (Milestone 5; store built in 0.6.0, `docs/MEMORY.md`).** Who Pepper has met and what it has learned, kept across sessions, only for people who agreed, with "forget me" at any time. Face or voice identity (opt-in) comes after the consent flow has been used on the robot.
 
+### The orchestrator (started 2026-11-10, #37)
+
+Every turn passes through several engines: control phrases, the gate and router, voice and face readings, the mind. The orchestrator (`src/orchestra/`, [ORCHESTRATOR.md](ORCHESTRATOR.md)) makes that routing explicit and puts it on the record.
+
+- **Registry.** Each engine is listed with where it runs and which data it is cleared for. Anything not listed is refused, and the list is kept in step with [DATA_FLOWS.md](DATA_FLOWS.md) by a test.
+- **Presence.** Each session declares who was there (`session.json`): `unknown` until the tester marks it `solo` or `others`.
+- **Ledger.** Each turn records its path, the engine that answered, what the mind was shown, timing and cost, and outcomes that become known afterwards.
+- **Routing.** The decision is a set of pure functions, checked against every recorded session (`scripts/replay_decisions.py`).
+
+It never speaks or moves the robot: execution stays in `AIManager`, under the bridge's bounds. The mind is chosen per conversation, never per sentence, so there is still one voice. The next phases use the ledger and the tester's blind marks to evaluate and learn routing, then to train a local mind on Alliance GPUs.
+
 ## Which model does what
 
 | Job | Where it runs | Speed | Model |

@@ -252,7 +252,18 @@ Goal: Pepper remembers who it talked to and what was said.
 
 - Bridge autostart on robot boot: **done**, a NAOqi package with an `autorun` service (`deploy.py --install-autostart`); verified on the robot after a reboot (2026-10-01) and a cold power-on (2026-10-08). Watchdog (#15): built in 0.7.0. `watchdog.sh` starts the bridge and starts it again if it exits or stops answering. On the robot (2026-10-20) a killed bridge was back in 10.6 s, and the host now asks a restarted bridge again for sound localisation. A cold boot with the watchdog is still to check.
 - Latency budget per turn in the log; per-sentence speech timing.
-- **Session recording and review (issue #16): done in 0.5.** Every robot session is recorded and reviewed, because real interactions are the main source of fixes. `SESSION_DIR` gives one folder per run with the host and bridge logs, utterance audio, photos with the measured head angle, `turns.jsonl` (per turn: end of speech, the judgements, the router's action and timing, tools, first word, what Pepper said) and `events.jsonl` (people, greetings, camera events, handshakes). `scripts/review_session.py` prints a timed transcript with flags (slow first words, long replies, unanswered speech, failed tools). Records stay local and git-ignored (`CLAUDE.md`, "Session records").
+- **Session recording and review (issue #16): done in 0.5.** Every robot session is recorded and reviewed, because real interactions are the main source of fixes. `SESSION_DIR` gives one folder per run with the host and bridge logs, utterance audio, photos with the measured head angle, `turns.jsonl` (per turn: end of speech, the judgements, the router's action and timing, tools, first word, what Pepper said) and `events.jsonl` (people, greetings, camera events, handshakes). Since 2026-11-10 (#37) also each turn's id, path, engine and what the mind was shown, `outcomes.jsonl` and `session.json` (who was there). `scripts/review_session.py` prints a timed transcript with flags (slow first words, long replies, unanswered speech, failed tools). Records stay local and git-ignored (`CLAUDE.md`, "Session records").
+
+## Orchestrator and a local mind (#37, started 2026-11-10)
+
+Design: [ORCHESTRATOR.md](ORCHESTRATOR.md). The long-term goal is one local machine for everything; while the system is spread over several, every destination is registered and checked against [DATA_FLOWS.md](DATA_FLOWS.md).
+
+- **1a. Ledger, registry, session presence: built 2026-11-10.** To check on the robot.
+- **1b. Routing as pure functions: built 2026-11-10.** Recomputed on all 21 recorded sessions: 276 of 276 gate verdicts and 275 of 277 paths agree; the other two were recorded before later fixes.
+- **2. Evaluation, then routing that learns.** A held-out set from the ledger, a recurring blind sheet, a promotion bar written before any learner. First candidate: the addressee gate's thresholds.
+- **3. A local mind.** Distil Sonnet's replies and the tester's marks into an open model on Alliance GPUs. Waits for two decisions: Anthropic's terms on training from outputs, and consent wording for Alliance as a destination.
+
+Why Sonnet stays the mind for now (2026-11-10): DeepSeek-V4-Flash on SHARCNET Brine replayed 190 solo turns 4× faster to the first word, but claimed actions without making them in 18 turns (Sonnet 0) and lost the tester's blind marks 7 to 12, with 6 equal.
 
 ## Testing without the robot
 
