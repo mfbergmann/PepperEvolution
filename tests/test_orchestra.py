@@ -55,7 +55,8 @@ class TestRegistry:
         assert for_model("qwen", "http://alien3.tail1234.ts.net:11434") == "alien3"
         assert for_model("qwen", "http://localhost:11434") == "local-ollama"
         assert for_model("qwen", "http://localhost.example.com") is None
-        assert for_model("gpt-4o") is None
+        assert for_model("gpt-4o") is None and for_model("gpt-4o", "http://localhost:11434") is None
+        assert for_model("o3", "http://alien3:11434") is None
 
 
 class TestManifest:
@@ -220,3 +221,49 @@ class TestTurnLedger:
         last = lines(tmp_path / "turns.jsonl")[-1]
         assert last["mind"]["history"] == [last["turn_id"].replace("#4", "#3")]
         assert len(manager._turn_of) == 2
+
+
+class TestReplayPolicy:
+    def test_the_recorded_state_goes_only_where_identity_is_cleared(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "compare_minds", os.path.join(ROOT, "scripts", "compare_minds.py")
+        )
+        cm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cm)
+        rec = {
+            "at": "2026-11-10T12:00:00",
+            "around": "One person in view.",
+            "mind": {"state": "Current state: ...\nThe voice sounds like Tester."},
+        }
+        assert "sounds like" in cm.state_block(rec, identity_ok=True)
+        rebuilt = cm.state_block(rec, identity_ok=False)
+        assert "sounds like" not in rebuilt and "One person in view." in rebuilt
+
+
+class TestLedgerSafety:
+    async def test_a_failing_ledger_never_breaks_a_stop(self, mock_robot, mock_ai_provider, tmp_path):
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False)
+        manager.recorder = SessionRecorder(str(tmp_path))
+
+        def broken(*a, **k):
+            raise RuntimeError("ledger down")
+
+        manager.outcomes.heard = broken
+        manager.outcomes.finished = broken
+        result = await manager.process_user_input("Pepper, stop", source="voice")
+        assert result["stop_reason"] == "intent"
+        result = await manager.process_user_input("hello", source="voice")
+        assert result["text"]
+
+    async def test_names_in_context_are_flagged(self, mock_robot, mock_ai_provider, tmp_path):
+        manager = AIManager(mock_robot, mock_ai_provider, speak_responses=False, tablet_subtitles=False)
+        manager.recorder = SessionRecorder(str(tmp_path))
+        await manager.process_user_input("hello", source="voice")
+        manager._who_line = "The voice sounds like Tester."
+        manager._rec = manager._new_record("hello again", "voice", None)
+        await manager._run_turn("hello again", False, "voice", None)
+        assert manager._rec["around_names"] and manager._rec["mind"]["names"]
+        assert "around_names" not in lines(tmp_path / "turns.jsonl")[0]
+        assert lines(tmp_path / "turns.jsonl")[0]["mind"]["names"] is False

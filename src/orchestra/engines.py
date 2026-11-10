@@ -13,6 +13,7 @@ Data classes:
 - presence of the session the data comes from: ``solo`` (the tester alone with Pepper), ``unknown``, ``others``.
 """
 
+import re
 from dataclasses import dataclass
 from typing import FrozenSet, Iterable, Optional
 from urllib.parse import urlparse
@@ -81,6 +82,8 @@ def for_model(model: str, base_url: Optional[str] = None) -> Optional[str]:
     """The engine a configured mind (AI_MODEL, OLLAMA_URL) sends to, or None when it is not registered."""
     if model.startswith("claude"):
         return "anthropic"
+    if model.startswith("gpt") or re.match(r"o\d", model):
+        return None  # OpenAI's API whatever OLLAMA_URL says (build_provider sends these to OpenAI): not cleared
     if base_url:
         host = (urlparse(base_url if "//" in base_url else "//" + base_url).hostname or "").lower()
         if host in HOSTS:

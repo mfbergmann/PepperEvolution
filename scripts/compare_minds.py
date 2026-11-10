@@ -41,15 +41,18 @@ from src.ai.models import (  # noqa: E402
 from src.ai.speech import strip_animation_tags  # noqa: E402
 from src.ai.tools import MEMORY_TOOLS, TOOLS  # noqa: E402
 from src.orchestra import manifest  # noqa: E402
-from src.orchestra.engines import TEXT, PolicyError, for_model  # noqa: E402
+from src.orchestra.engines import IDENTITY, SOLO, TEXT, PolicyError, allowed, for_model  # noqa: E402
 
 HISTORY_TURNS = 20  # as AIManager
 
 
-def state_block(rec: Dict[str, Any]) -> str:
+def state_block(rec: Dict[str, Any], identity_ok: bool = False) -> str:
+    """The state block for a replayed turn. The recorded one (since the ledger) is exactly what the mind saw, but it
+    can name people ("The voice sounds like ...", who Pepper knows is here): only for engines cleared for identity.
+    Otherwise it is rebuilt from the date and the "Around you" line, as before."""
     recorded = (rec.get("mind") or {}).get("state")
-    if recorded:
-        return recorded  # as the mind was shown it
+    if recorded and identity_ok:
+        return recorded
     at = datetime.fromisoformat(rec["at"])
     text = (
         "Current state: battery 80%; posture Stand; motors awake; autonomous life solitary; voice language English. "
@@ -108,6 +111,7 @@ async def main():
     args = ap.parse_args()
     load_dotenv()
     engines = {"anthropic", for_model(args.candidate, args.candidate_url)}
+    identity_ok = all(allowed(name, (TEXT, IDENTITY), SOLO) for name in engines)  # both get the same context
     for s in args.sessions:
         for name in engines:
             try:
@@ -118,7 +122,7 @@ async def main():
     with open(os.path.expanduser(args.candidate_key_file)) as f:
         candidate = OllamaProvider(args.candidate_url, args.candidate, api_key=f.read().strip())
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-    done = 0
+    done = skipped = 0
     with open(args.out, "w") as out:
         os.chmod(args.out, 0o600)
         for session in args.sessions:
@@ -130,10 +134,13 @@ async def main():
                 rec = json.loads(line)
                 spoken = " ".join(as_list(rec.get("spoken")))
                 heard = (rec.get("mind") or {}).get("sent") or rec.get("text")
-                if rec.get("stop_reason") == "end_turn" and rec.get("text"):
+                names = rec.get("around_names") or (rec.get("mind") or {}).get("names")
+                if names and not identity_ok and rec.get("stop_reason") == "end_turn":
+                    skipped += 1  # its context named recognised people: identity data, not cleared there
+                elif rec.get("stop_reason") == "end_turn" and rec.get("text"):
                     system = [
                         {"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}},
-                        {"type": "text", "text": state_block(rec)},
+                        {"type": "text", "text": state_block(rec, identity_ok)},
                     ]
                     trimmed = history[-2 * HISTORY_TURNS :]
                     candidate_system = system
@@ -183,6 +190,9 @@ async def main():
                         {"role": "user", "content": rec["text"]},
                         {"role": "assistant", "content": spoken or "(no reply)"},
                     ]
+
+    if skipped:
+        print(f"{skipped} turns not replayed: their context named recognised people (identity data)")
 
 
 if __name__ == "__main__":

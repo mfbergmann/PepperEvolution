@@ -28,7 +28,7 @@ The orchestrator makes the routing explicit, puts every decision and its outcome
 ## What we learned that shapes this
 
 - **Fast judgements must fail open.** Alien3 being down must never make Pepper mute (`DecisionClient`, 2026-10-08). Every engine call has a timeout and a fallback, and the record says which happened.
-- **Stopping never waits.** `stop` and `be quiet` are matched before the turn lock, the judgements and the model. The orchestrator adds no await to that path. It records the intent after acting.
+- **Stopping never waits.** `stop` and `be quiet` are matched before the turn lock, the judgements and the model. The orchestrator adds no await to that path. Before acting it only makes a synchronous note, guarded so it can never raise; the turn line is written after acting.
 - **A cheaper mind loses on actions.** DeepSeek was 4× faster to its first word, but claimed actions without making them (18 against 0). It did nothing where the live run acted (17 against 4). Over a third of photo turns went to it without looking. Blind marks: Sonnet 12, DeepSeek 7, equal 6. Speed alone does not decide routing, and action turns are where a weaker mind costs most.
 - **History is provider-specific.** Claude's thinking blocks must be replayed in the tool loop, and each provider shapes tool results differently. Switching minds inside a tool loop is impossible. Switching between turns changes the voice. So the mind is chosen per conversation, not per sentence.
 - **Opt-out lists leak.** `compare_minds.py` refused two named sessions. A new session with a visitor would have been replayable by default. Presence must be declared, not assumed.
@@ -85,7 +85,7 @@ heard ─► intents (rules, this host) ──► act now ───────�
 - Blind keys carry turn ids, and `scripts/collect_marks.py` keeps marks in `results/marks/marks.jsonl`.
 - The live host refuses a mind whose destination is not cleared for a session of unknown presence. With today's settings that changes nothing: Anthropic is cleared, and Brine is not.
 
-**1b. The branching as pure functions.** *Built 2026-11-10. On all 21 recorded sessions: 276 of 276 gate verdicts and 275 of 277 paths agree. The other two are records made before later fixes: a routed "look at me" that still ended the turn, and a phrase the intent list no longer matches.*
+**1b. The branching as pure functions.** *Built 2026-11-10. On all 21 recorded sessions: 276 of 276 gate verdicts and 275 of 277 paths agree. The other two are records made before later fixes: a routed "look at me" that still ended the turn, and a phrase the intent list no longer matches. No recorded session had SECOND_VOICE on, so the second-voice rule and the stop override rest on unit tests until the two-person session.*
 - Move the decision out of `process_user_input` into `route.py`, with no change in behaviour.
 - `scripts/replay_decisions.py` recomputes every recorded gate verdict and path and must agree with what was recorded.
 - This is a separate commit from 1a, so it can be reverted alone if the next robot session finds anything.

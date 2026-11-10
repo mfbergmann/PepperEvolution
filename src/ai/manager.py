@@ -290,7 +290,7 @@ class AIManager:
                 self._last_talk_at = self._clock()
                 self._heard.append(user_input)
                 self._note_heard(user_input, source, intent=intent.name)
-                self.outcomes.heard(user_input, intent.name)
+                self._ledger(self.outcomes.heard, user_input, intent.name)  # synchronous: before acting, no await
                 rec["path"] = route.INTENT
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
@@ -323,7 +323,7 @@ class AIManager:
                 rec["addressee"]["addressed"] = True
             rec["path"] = path
             self._note_heard(user_input, source, addressed=meant)
-            self.outcomes.heard(user_input, routed.intent if meant and routed is not None else None)
+            self._ledger(self.outcomes.heard, user_input, routed.intent if meant and routed is not None else None)
             if path == route.NOT_ADDRESSED:
                 # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
                 await self._wait_for_voice_reading(
@@ -374,7 +374,7 @@ class AIManager:
                 return result
             self._rec = rec
             rec.setdefault("path", route.MIND)
-            self.outcomes.started(rec["turn_id"])
+            self._ledger(self.outcomes.started, rec["turn_id"])
             self._voice_line = voice_line
             self._who_id = rec.get("_who_id")
             self._who_line = self._voice_hint(rec)
@@ -767,6 +767,7 @@ class AIManager:
             "heard_at": heard_at,
             "received_at": self._clock(),
             "around": self.world.summary() if self.world is not None else "",
+            "around_names": self._names_in_context(),  # the line can name recognised people (identity data)
             "tools": [],
             "turn_id": self.turn_ids.next(),
         }
@@ -774,8 +775,14 @@ class AIManager:
     def _finish_record(self, rec: Dict[str, Any], result: Dict[str, Any]):
         """Write one line to turns.jsonl: what was heard, decided, done and said, with timings."""
         person = rec["source"] in ("user", "voice")
-        self.outcomes.finished(
-            rec["turn_id"], rec["text"] if person else "", rec.get("path", ""), result, rec.get("tools", []), person
+        self._ledger(
+            self.outcomes.finished,
+            rec["turn_id"],
+            rec["text"] if person else "",
+            rec.get("path", ""),
+            result,
+            rec.get("tools", []),
+            person,
         )
         if self.recorder is None:
             return
@@ -794,6 +801,8 @@ class AIManager:
             "tools": rec.get("tools", []),
             "around": rec.get("around", ""),
         }
+        if rec.get("around_names"):
+            out["around_names"] = True
         for key in ("path", "intent", "addressee", "router", "voice", "identity", "parts", "unfinished", "mind"):
             if key in rec:
                 out[key] = rec[key]
@@ -961,6 +970,7 @@ class AIManager:
                 system = self._build_system_prompt()
                 if mind is not None and "state" not in mind:
                     mind["state"] = system[-1]["text"]  # what the mind was shown this turn (the first call's)
+                    mind["names"] = self._names_in_context()
                 call_started = self._clock()
                 first_text: List[float] = []
 
@@ -1177,6 +1187,27 @@ class AIManager:
         if response.is_error:
             call["error"] = str(usage.get("error", ""))[:200]
         return call
+
+    def _names_in_context(self) -> bool:
+        """Whether this turn's context names people Pepper recognised or knows are here (identity data, which only
+        destinations cleared for it may receive: src/orchestra/engines.py)."""
+        try:
+            return bool(
+                self._who_line
+                or (self.memory is not None and self.memory.here_line())
+                or (
+                    self.world is not None and hasattr(self.world, "known_line") and self.world.known_line(self._who_id)
+                )
+            )
+        except Exception:  # noqa: BLE001 - when unsure, say it may name someone
+            return True
+
+    def _ledger(self, fn: Callable[..., Any], *args: Any, **kwargs: Any):
+        """Ledger bookkeeping never breaks a turn (docs/ORCHESTRATOR.md)."""
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(f"ledger: {fn.__name__} failed ({type(exc).__name__}: {exc})")
 
     def _history_turn_ids(self) -> List[str]:
         """The turn ids of the person's messages in the history, oldest first."""

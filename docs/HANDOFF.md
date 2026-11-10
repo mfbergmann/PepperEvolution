@@ -246,6 +246,12 @@ Each session folder gets a `session.json` with presence `unknown`. After review,
 
 The host refuses at start-up a mind whose destination is not cleared in `src/orchestra/engines.py` for live data. Brine and OpenAI are refused; Anthropic, Alien3 and a local Ollama are cleared. The tester's 25 blind marks are kept as labels in `results/marks/marks.jsonl` (`scripts/collect_marks.py`).
 
+Turns whose context names recognised people are flagged `around_names` or `mind.names`. The replay skips them for engines not cleared for identity.
+
+The tester should confirm the migrated marks with `scripts/mark_session.py --list`. They came from the old exclusion list, not from a review.
+
+The branching now lives in `src/orchestra/route.py` (1b). If the robot session shows any change in when Pepper answers or acts, revert that commit alone. On the two-person session, check the second-voice rule live: no record had it yet.
+
 ## Next robot session: seeing and the map (set 2026-11-05)
 
 Pepper is shut down; bridge 0.8.0 is on it. `.env` has beamforming live, the Cohere second pass, `WATCH_ROOM`, `VOICE_GLANCES`, `RECORD_CAMERA` and `RECORD_MICROPHONES` on; `MAP` off. The DJI was tried and is not used: on Pepper's chest it heard less than the beamformed head. The full `ALNavigation` method list is present on the robot; nothing has been run with it.

@@ -141,9 +141,10 @@ class TestBuildProvider:
     def test_openai_is_not_a_cleared_destination(self, monkeypatch):
         # not in docs/DATA_FLOWS.md: refused before any client is made (default-deny, docs/ORCHESTRATOR.md)
         for model in ("gpt-4o", "o3"):
-            s = settings_with(monkeypatch, AI_MODEL=model, OPENAI_API_KEY="sk-test")
-            with pytest.raises(PolicyError, match="not cleared"):
-                main.build_provider(s)
+            for url in ("", "http://localhost:11434"):  # OLLAMA_URL set does not make OpenAI local
+                s = settings_with(monkeypatch, AI_MODEL=model, OPENAI_API_KEY="sk-test", OLLAMA_URL=url)
+                with pytest.raises(PolicyError, match="not cleared"):
+                    main.build_provider(s)
 
     def test_local_model_through_ollama(self, monkeypatch):
         s = settings_with(monkeypatch, AI_MODEL="qwen3-vl:30b-a3b-instruct", OLLAMA_URL="http://alien3:11434/")
