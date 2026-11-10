@@ -126,3 +126,20 @@ class TestMessages:
         elided = {"type": "image", "elided": True}
         history = [{"role": "user", "content": [{"type": "text", "text": "hi"}, elided]}]
         assert provider()._convert_messages_local(history, None) == [{"role": "user", "content": "hi"}]
+
+
+def test_a_hosted_service_gets_its_key_and_the_key_is_not_kept_on_the_provider():
+    p = OllamaProvider("https://brine.example/", "DeepSeek-V4-Flash-0731", api_key="secret-xyz")
+    assert p.client.api_key == "secret-xyz" and str(p.client.base_url).startswith("https://brine.example/v1")
+    assert p.api_key == "" and "secret-xyz" not in repr(vars(p).get("model"))
+    assert OllamaProvider("http://alien3:11434", "m").client.api_key == "ollama"  # Ollama: unchanged
+
+
+def test_the_key_comes_from_a_file(tmp_path, monkeypatch):
+    import main
+
+    key = tmp_path / "key"
+    key.write_text("from-file\n")
+    s = main.Settings.from_env()
+    s.ai_model, s.ollama_url, s.ai_api_key_file = "DeepSeek-V4-Flash-0731", "https://brine.example", str(key)
+    assert main.build_provider(s).client.api_key == "from-file"

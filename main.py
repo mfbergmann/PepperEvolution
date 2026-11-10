@@ -124,6 +124,7 @@ class Settings:
     record_camera: bool = False
     watch_room: bool = False
     voice_glances: bool = False
+    ai_api_key_file: str = ""  # a file holding the key for OLLAMA_URL, for a hosted service (docs/DATA_FLOWS.md)
     look_around: bool = False
     local_microphone: Optional[str] = None
     map: bool = False
@@ -158,6 +159,7 @@ class Settings:
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             ollama_url=os.getenv("OLLAMA_URL") or None,
+            ai_api_key_file=os.getenv("AI_API_KEY_FILE", ""),
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "8000")),
             speak_responses=env_bool("SPEAK_RESPONSES", True),
@@ -233,7 +235,11 @@ def build_provider(settings: Settings) -> AIProvider:
             raise ValueError("OPENAI_API_KEY is required for OpenAI models")
         return OpenAIProvider(settings.openai_api_key, model, max_tokens=settings.ai_max_tokens)
     if settings.ollama_url:
-        return OllamaProvider(settings.ollama_url, model, max_tokens=settings.ai_max_tokens)
+        key = ""
+        if settings.ai_api_key_file:
+            with open(os.path.expanduser(settings.ai_api_key_file)) as f:
+                key = f.read().strip()
+        return OllamaProvider(settings.ollama_url, model, max_tokens=settings.ai_max_tokens, api_key=key)
     raise ValueError(f"Unsupported AI model: {model} (set OLLAMA_URL for a local model)")
 
 

@@ -432,12 +432,13 @@ class OllamaProvider(OpenAIProvider):
       OpenAI-style tool messages cannot carry images.
     """
 
-    def __init__(self, base_url: str, model: str, max_tokens: int = DEFAULT_MAX_TOKENS):
-        AIProvider.__init__(self, "", model)
+    def __init__(self, base_url: str, model: str, max_tokens: int = DEFAULT_MAX_TOKENS, api_key: str = ""):
+        AIProvider.__init__(self, "", model)  # the key is never kept on the provider, so never in a repr or log
         import openai
 
         self.base_url = base_url.rstrip("/")
-        self.client = openai.AsyncOpenAI(base_url=self.base_url + "/v1", api_key="ollama")
+        # a hosted OpenAI-compatible service (SHARCNET Brine) needs a key; Ollama ignores it
+        self.client = openai.AsyncOpenAI(base_url=self.base_url + "/v1", api_key=api_key or "ollama")
         self.max_tokens = max_tokens
 
     async def chat(
