@@ -34,6 +34,8 @@ from .glance import (
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import CAMERA, HEARD, IDENTITY, MIND, SAID
 from ..world.views import addressee_context
+from ..orchestra.engines import for_model as engine_for_model
+from ..orchestra.ledger import OutcomeWatch, TurnIds, digest
 from .models import CLOSING, ERROR_TEXT, MAP_PROMPT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
@@ -189,7 +191,12 @@ class AIManager:
         self._spoke_this_turn = False
         self._response_callbacks: List[ResponseCallback] = []
         self._partial_callbacks: List[PartialCallback] = []
-        self.recorder: Optional[Any] = None  # SessionRecorder (src/session.py): turns.jsonl and events.jsonl
+        self._recorder: Optional[Any] = None  # SessionRecorder (src/session.py): turns, events, outcomes
+        # The ledger (src/orchestra, docs/ORCHESTRATOR.md): turn ids, which engine answered, what it was shown
+        self.turn_ids = TurnIds()
+        self.outcomes = OutcomeWatch(self._outcome, lambda: self._clock())
+        self.mind_engine = engine_for_model(provider.model, getattr(provider, "base_url", None))
+        self._turn_of: Dict[int, Any] = {}  # id(user message) -> (message, turn id): which turns are in the history
         self._rec: Optional[Dict[str, Any]] = None  # the record of the turn being run
         self._voice_line = ""  # where the voice of the turn being run came from (sound direction)
         self._who_line = ""  # whose voice it sounded like (VOICE_ID)
@@ -220,6 +227,20 @@ class AIManager:
     @property
     def busy(self) -> bool:
         return self._lock.locked()
+
+    @property
+    def recorder(self) -> Optional[Any]:
+        return self._recorder
+
+    @recorder.setter
+    def recorder(self, value: Optional[Any]):
+        self._recorder = value
+        self.turn_ids = TurnIds(getattr(value, "name", "") if value is not None else "")
+
+    def _outcome(self, turn_id: str, kind: str, **data: Any):
+        self.logger.debug(f"outcome {kind} for {turn_id} {data}")
+        if self._recorder is not None:
+            self._recorder.record_outcome(turn_id, kind, **data)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -268,6 +289,8 @@ class AIManager:
                 self._last_talk_at = self._clock()
                 self._heard.append(user_input)
                 self._note_heard(user_input, source, intent=intent.name)
+                self.outcomes.heard(user_input, intent.name)
+                rec["path"] = "intent"
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
@@ -292,6 +315,7 @@ class AIManager:
                 meant = True  # stopping is never held back because of a second voice
                 rec["addressee"]["addressed"] = True
             self._note_heard(user_input, source, addressed=meant)
+            self.outcomes.heard(user_input, routed.intent if meant and routed is not None else None)
             if not meant:
                 # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
                 await self._wait_for_voice_reading(
@@ -300,6 +324,7 @@ class AIManager:
                 looking = self._look_around_for_people(rec)
                 if not looking:
                     self._glance_at_voice(rec)
+                rec["path"] = "not_addressed"
                 result = self._bare_result("", source, client_id, "not_addressed")
                 self._finish_record(rec, result)
                 if not looking:
@@ -309,6 +334,7 @@ class AIManager:
             if routed is not None and routed.intent in ("stop", "quiet"):
                 # stopping is the whole request: nothing goes on to the model
                 intent = next(i for i in INTENTS if i.name == routed.intent)
+                rec["path"] = "routed_intent"
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
@@ -316,12 +342,14 @@ class AIManager:
             if routed is not None and routed.intent == "look_at_me":
                 # "turn toward me and come to me": look at once, but the rest of the request still goes to the model
                 # (on 2026-10-08 the look_at_me intent ended the turn and the drive never happened)
+                rec["path"] = "look_then_mind"
                 self._start_look_at_me(routed, rec)
                 user_input = (
                     "[Already started: looking at the person. Do not do it again; say a few words and do anything "
                     f"else that was asked.] {user_input}"
                 )
             elif routed is not None:
+                rec["path"] = "routed_then_mind"
                 self._start_routed(routed, rec)
                 user_input = (
                     f"[Already started: {routed.description}. It is under way, so do not do it again; say a few "
@@ -336,10 +364,13 @@ class AIManager:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
                 # Queued behind the turn that "stop" cancelled: the person does not want it any more.
                 self.logger.info(f"[{source}] dropped after a stop: {user_input!r}")
+                rec["path"] = "cancelled"
                 result = self._bare_result("", source, client_id, "cancelled")
                 self._finish_record(rec, result)
                 return result
             self._rec = rec
+            rec.setdefault("path", "mind")
+            self.outcomes.started(rec["turn_id"])
             self._voice_line = voice_line
             self._who_id = rec.get("_who_id")
             self._who_line = self._voice_hint(rec)
@@ -740,15 +771,21 @@ class AIManager:
             "received_at": self._clock(),
             "around": self.world.summary() if self.world is not None else "",
             "tools": [],
+            "turn_id": self.turn_ids.next(),
         }
 
     def _finish_record(self, rec: Dict[str, Any], result: Dict[str, Any]):
         """Write one line to turns.jsonl: what was heard, decided, done and said, with timings."""
+        person = rec["source"] in ("user", "voice")
+        self.outcomes.finished(
+            rec["turn_id"], rec["text"] if person else "", rec.get("path", ""), result, rec.get("tools", []), person
+        )
         if self.recorder is None:
             return
         start = rec.get("heard_at") or rec["received_at"]
         first = rec.pop("first_word_at", None)
         out = {
+            "turn_id": rec["turn_id"],
             "source": rec["source"],
             "text": rec["text"],
             "heard": self.recorder.wall(rec.get("heard_at")),
@@ -760,9 +797,11 @@ class AIManager:
             "tools": rec.get("tools", []),
             "around": rec.get("around", ""),
         }
-        for key in ("intent", "addressee", "router", "voice", "identity", "parts", "unfinished"):
+        for key in ("path", "intent", "addressee", "router", "voice", "identity", "parts", "unfinished", "mind"):
             if key in rec:
                 out[key] = rec[key]
+        if result.get("model"):
+            out.update(model=result["model"], rounds=result.get("rounds"), usage=result.get("usage") or {})
         self.recorder.record_turn(out)
 
     VOICE_END_SILENCE = 0.7  # the recogniser ends an utterance after about 1 s of silence: no voice in the tail
@@ -884,8 +923,13 @@ class AIManager:
 
     async def _run_turn(self, user_input: str, speak: bool, source: str, client_id: Optional[str]) -> Dict[str, Any]:
         self.logger.info(f"[{source}] {user_input}")
-        self.conversation_history.append({"role": "user", "content": user_input})
+        message = {"role": "user", "content": user_input}
+        self.conversation_history.append(message)
+        rec = self._rec
+        if rec is not None:
+            self._turn_of[id(message)] = (message, rec["turn_id"])
         self._trim_history()
+        mind = self._mind_record(rec, user_input)
 
         self._hush = False
         self._abort = False
@@ -917,17 +961,30 @@ class AIManager:
                 if self._abort:
                     await say(ABORTED_TEXT)
                     break
+                system = self._build_system_prompt()
+                if mind is not None and "state" not in mind:
+                    mind["state"] = system[-1]["text"]  # what the mind was shown this turn (the first call's)
+                call_started = self._clock()
+                first_text: List[float] = []
+
+                async def on_text(piece: str, first_text=first_text):
+                    if not first_text:
+                        first_text.append(self._clock())
+                    await speaker.on_text(piece)
+
                 chat = asyncio.ensure_future(
                     self.provider.chat(
                         messages=self.conversation_history,
                         tools=self.tools,
-                        system=self._build_system_prompt(),
-                        on_text=speaker.on_text,
+                        system=system,
+                        on_text=on_text,
                     )
                 )
                 self._chat_task = chat
                 try:
                     response = await chat
+                    if mind is not None:
+                        mind["calls"].append(self._call_record(rounds, call_started, first_text, response))
                 except asyncio.CancelledError:
                     if not self._abort:
                         chat.cancel()  # we are being cancelled (shutdown): take the model call down too
@@ -975,6 +1032,8 @@ class AIManager:
                 if phantom:
                     # The model wrote its tool call as text. Nothing was added to history; ask again once.
                     phantom_retries += 1
+                    if mind is not None:
+                        mind["calls"][-1]["phantom"] = True
                     self.logger.warning(f"Phantom tool call (attempt {phantom_retries}): {response.text[:120]!r}")
                     if phantom_retries <= 1:
                         speaker.suppress_repeats = True
@@ -1086,6 +1145,61 @@ class AIManager:
             except Exception as exc:  # noqa: BLE001
                 self.logger.debug(f"response callback failed: {exc}")
         return result
+
+    def _mind_record(self, rec: Optional[Dict[str, Any]], sent: str) -> Optional[Dict[str, Any]]:
+        """The ledger's account of this turn's mind: which engine, which prompt and tools, what history and photos
+        it had. Filled in by the calls; goes into the turn record as ``mind``."""
+        if rec is None:
+            return None
+        provider = self.provider
+        mind: Dict[str, Any] = {
+            "engine": self.mind_engine,
+            "model": getattr(provider, "model", ""),
+            "effort": getattr(provider, "effort", None),
+            "prompt": digest(self.system_prompt),
+            "tools": digest(self.tools),
+            "history": self._history_turn_ids()[:-1],
+            "photos_in_context": self._photos_in_context(),
+            "calls": [],
+        }
+        if sent != rec["text"]:
+            mind["sent"] = sent  # e.g. with "[Already started: ...]" in front
+        rec["mind"] = mind
+        return mind
+
+    def _call_record(self, rounds: int, started: float, first_text: List[float], response: AIResponse) -> Dict:
+        usage = response.usage or {}
+        call: Dict[str, Any] = {
+            "round": rounds,
+            "seconds": round(self._clock() - started, 3),
+            "first_text_s": round(first_text[0] - started, 3) if first_text else None,
+            "stop": response.stop_reason,
+            "tools": [tc.name for tc in response.tool_calls],
+            "usage": {k: v for k, v in usage.items() if k != "error"},
+        }
+        if response.is_error:
+            call["error"] = str(usage.get("error", ""))[:200]
+        return call
+
+    def _history_turn_ids(self) -> List[str]:
+        """The turn ids of the person's messages in the history, oldest first."""
+        return [
+            self._turn_of[id(m)][1]
+            for m in self.conversation_history
+            if self._is_user_text(m) and id(m) in self._turn_of and self._turn_of[id(m)][0] is m
+        ]
+
+    def _photos_in_context(self) -> int:
+        count = 0
+        for msg in self.conversation_history:
+            content = msg.get("content")
+            if msg.get("role") != "user" or not isinstance(content, list):
+                continue
+            for block in content:
+                inner = block.get("content") if isinstance(block, dict) else None
+                if isinstance(inner, list):
+                    count += sum(1 for b in inner if isinstance(b, dict) and b.get("type") == "image")
+        return count
 
     def _drop_dangling_user_message(self):
         """Remove the user message we just appended if nothing answered it (keeps history valid)."""
@@ -1494,6 +1608,8 @@ class AIManager:
         if len(starts) > self.history_turns:
             cut = starts[-self.history_turns]
             self.conversation_history = self.conversation_history[cut:]
+        kept = {id(m) for m in self.conversation_history}
+        self._turn_of = {k: v for k, v in self._turn_of.items() if k in kept}
 
     def _prune_images(self):
         """Replace all but the most recent photos with a text placeholder to bound context size."""
@@ -1549,3 +1665,4 @@ class AIManager:
 
     def clear_conversation_history(self):
         self.conversation_history.clear()
+        self._turn_of.clear()

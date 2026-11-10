@@ -28,6 +28,11 @@ def sentences(text: str) -> int:
     return len([s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()])
 
 
+def turn_id(row: Dict[str, Any]) -> str:
+    """The ledger's id; records from before it (2026-11-10) are named by session and time instead."""
+    return row.get("turn_id") or f"{row['session']}@{row['at']}"
+
+
 def summary(rows: List[Dict[str, Any]], key: str) -> Dict[str, Any]:
     first = [r[key]["first_text_s"] for r in rows if r[key]["first_text_s"] is not None]
     total = [r[key]["total_s"] for r in rows]
@@ -94,7 +99,7 @@ def main():
     for i, r in enumerate(picked, 1):
         a_is = rng.choice(["baseline", "candidate"])
         b_is = "candidate" if a_is == "baseline" else "baseline"
-        key.append({"n": i, "A": a_is, "B": b_is, "at": r["at"]})
+        key.append({"n": i, "A": a_is, "B": b_is, "at": r["at"], "session": r["session"], "turn_id": turn_id(r)})
 
         def shown(k):
             tools = "".join(f" [{t['name']} {json.dumps(t['input'])}]" for t in r[k]["tools"])

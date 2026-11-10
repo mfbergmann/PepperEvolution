@@ -230,6 +230,22 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 
 First replay, 190 turns from 19 solo runs: DeepSeek's first words in 0.17 s median against 0.71 s for Sonnet, and its first tool agreed with the live run as often (126 against 125). But in 18 turns it said it was acting ("coming to you now", "turning to my right") without calling the tool, against 0 for Sonnet; a prompt rule cut that to 11. It took a photo in 9 of 21 turns where the live run looked first (Sonnet 17), and gave four or more sentences in 17 turns (Sonnet 4). So not as the mind with tools yet; perhaps for talk-only turns that the router has already marked "talk". The tester's blind marks (25 turns): Sonnet better 12, DeepSeek 7, equal 6, and Sonnet ahead on talk-only turns too (7 / 4 / 4). Sonnet stays. Next idea (tester): an orchestrator routing each turn to the right engine, then learning from recorded outcomes and marks.
 
+**Orchestrator, first part (2026-11-10, #37, `docs/ORCHESTRATOR.md`, `src/orchestra/`).** Recording only; Pepper behaves as before. On the next robot session, check that these are written:
+- Every turn line now has a `turn_id` and a `path`: `intent`, `not_addressed`, `routed_intent`, `look_then_mind`, `routed_then_mind`, `mind` or `cancelled`.
+- Answered turns also carry `mind`:
+  - the engine, model and effort
+  - hashes of the prompt and the tool list
+  - the state block as sent, and the text as sent when it differs
+  - the history's turn ids and the photos in context
+  - one entry per model call, with time to the first text and usage
+- `outcomes.jsonl` gets `stopped_during`, `stopped_after`, `repeated`, `repeated_after_ignored`, `error` and `tool_failed`, by turn id.
+
+Each session folder gets a `session.json` with presence `unknown`. After review, mark it with `scripts/mark_session.py <folder> solo|others`. `compare_minds.py` now refuses anything not marked `solo`, in place of its list of two excluded sessions. The 21 earlier sessions were marked from that list:
+- 19 solo
+- 2 others
+
+The host refuses at start-up a mind whose destination is not cleared in `src/orchestra/engines.py` for live data. Brine and OpenAI are refused; Anthropic, Alien3 and a local Ollama are cleared. The tester's 25 blind marks are kept as labels in `results/marks/marks.jsonl` (`scripts/collect_marks.py`).
+
 ## Next robot session: seeing and the map (set 2026-11-05)
 
 Pepper is shut down; bridge 0.8.0 is on it. `.env` has beamforming live, the Cohere second pass, `WATCH_ROOM`, `VOICE_GLANCES`, `RECORD_CAMERA` and `RECORD_MICROPHONES` on; `MAP` off. The DJI was tried and is not used: on Pepper's chest it heard less than the beamformed head. The full `ALNavigation` method list is present on the robot; nothing has been run with it.

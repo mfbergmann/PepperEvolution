@@ -2,8 +2,10 @@
 Session records: one folder per host run, for reviewing real interactions afterwards.
 
 With ``SESSION_DIR`` set, each run gets ``<SESSION_DIR>/<YYYY-MM-DD_HHMMSS>/`` holding the host log, utterance audio,
-photos, ``turns.jsonl`` (one line per turn: what was heard, the decisions taken, timings, tools, what Pepper said)
-and ``events.jsonl`` (people, touches, greetings, reflexes, camera judgements). ``scripts/review_session.py`` turns a
+photos, ``turns.jsonl`` (one line per turn: what was heard, the decisions taken, timings, tools, what Pepper said,
+which engines were used and what the mind was shown), ``events.jsonl`` (people, touches, greetings, reflexes, camera
+judgements), ``outcomes.jsonl`` (what later showed about a turn, by turn id) and ``session.json`` (the session's
+declared presence, src/orchestra/manifest.py). ``scripts/review_session.py`` turns a
 folder into a readable, timed transcript. The records hold real people's voices and images: they stay on the host
 machine and out of git (see CLAUDE.md, "Session records").
 """
@@ -49,6 +51,15 @@ class SessionRecorder:
 
     def record_event(self, kind: str, **data: Any):
         self._append("events.jsonl", {"kind": kind, **data})
+
+    def record_outcome(self, turn_id: str, kind: str, **data: Any):
+        """Something learned about a turn after its line was written (src/orchestra/ledger.py)."""
+        self._append("outcomes.jsonl", {"turn_id": turn_id, "kind": kind, **data})
+
+    @property
+    def name(self) -> str:
+        """The run's folder name, e.g. ``2026-11-05_154622``: the session part of turn ids."""
+        return os.path.basename(self.folder.rstrip(os.sep))
 
     def _append(self, name: str, record: Dict[str, Any]):
         line = {"at": datetime.now().isoformat(timespec="milliseconds"), **record}

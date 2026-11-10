@@ -57,6 +57,9 @@ from src.identity.voice import (  # noqa: E402
 from src.memory import Memory, MemoryStore  # noqa: E402
 from src.navigation import Navigator  # noqa: E402
 from src.session import SessionRecorder, WavWriter  # noqa: E402
+from src.orchestra import manifest  # noqa: E402
+from src.orchestra.engines import MIND_SENDS, UNKNOWN, PolicyError, allowed  # noqa: E402
+from src.orchestra.engines import for_model as engine_for_model  # noqa: E402
 from src.world import Observation, WorldModel  # noqa: E402
 from src.world.observations import IDENTITY, MAP, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
 
@@ -221,6 +224,15 @@ class Settings:
 
 def build_provider(settings: Settings) -> AIProvider:
     model = settings.ai_model
+    # Default-deny (docs/ORCHESTRATOR.md): a live session's presence is unknown, and the mind gets words, photos and
+    # names. Only a destination cleared for that in docs/DATA_FLOWS.md may be the mind.
+    engine = engine_for_model(model, settings.ollama_url)
+    if model.startswith(("claude", "gpt")) or re.match(r"o\d", model) or settings.ollama_url:
+        if not allowed(engine, MIND_SENDS, UNKNOWN):
+            raise PolicyError(
+                f"{model} via {settings.ollama_url or 'its API'} ({engine or 'not a registered destination'}) is not "
+                "cleared to be the live mind: see docs/DATA_FLOWS.md and src/orchestra/engines.py"
+            )
     if model.startswith("claude"):
         if not settings.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for Claude models")
@@ -253,6 +265,7 @@ class PepperEvolution:
         if self.settings.session_dir:
             # One folder per run holds everything for the review (CLAUDE.md, "Session records").
             self.recorder = SessionRecorder.start(self.settings.session_dir)
+            manifest.start(self.recorder.folder, version=__version__)  # presence unknown until the tester marks it
             self.settings.log_file = self.recorder.path("host.log")
             self.settings.voice_record_dir = self.recorder.path("audio")
             self.settings.photo_record_dir = self.recorder.path("photos")

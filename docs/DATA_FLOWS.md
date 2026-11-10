@@ -2,6 +2,8 @@
 
 *Started 2026-11-10. Keep this up to date whenever a new service sees any of Pepper's data, or a test starts or ends.* While the system is being built, work is spread over several machines and services. The long-term goal is one local machine for everything. This page records what goes where in the meantime, so the recording notice (`docs/signs/recording-notice.html`) and consent wording can be checked against it.
 
+The code enforces this table: `src/orchestra/engines.py` lists each destination and what it is cleared for, refuses anything not listed (default-deny), and a test fails if a destination there has no row here (docs/ORCHESTRATOR.md). Data cleared for solo sessions only goes out only from sessions marked `solo` (`scripts/mark_session.py`).
+
 "Personal data" here means recordings, transcripts, camera frames and photos, voice and face data, and the memory store.
 
 | Destination | What goes there | Kept there? | Since | Decided by |
@@ -19,7 +21,7 @@
 
 ## Tests in progress
 
-- **DeepSeek on Brine as the mind (from 2026-11-10).** `scripts/compare_minds.py` replays solo-session turns to Sonnet and DeepSeek on identical context; results in the git-ignored `results/system-one/minds/`. The live host still uses Sonnet. To run the host on DeepSeek: `AI_MODEL=DeepSeek-V4-Flash-0731`, `OLLAMA_URL=https://brine.sharcnet.ca`, `AI_API_KEY_FILE=~/.config/brine/key`. Then every answered turn's words go to Brine instead of Anthropic, and so do photos, which DeepSeek cannot read: decide that before trying it live.
+- **DeepSeek on Brine as the mind (from 2026-11-10).** `scripts/compare_minds.py` replays turns from sessions marked `solo` (it refuses any other) to Sonnet and DeepSeek on identical context; results in the git-ignored `results/system-one/minds/`. The live host still uses Sonnet. To run the host on DeepSeek: `AI_MODEL=DeepSeek-V4-Flash-0731`, `OLLAMA_URL=https://brine.sharcnet.ca`, `AI_API_KEY_FILE=~/.config/brine/key`. Then every answered turn's words would go to Brine instead of Anthropic, and so would photos and names, which Brine is not cleared for: the host refuses to start with it as the mind until that is decided and the registry changed.
 
 ## What the recording notice does not yet say (2026-11-10)
 

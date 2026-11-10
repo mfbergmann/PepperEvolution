@@ -5,6 +5,7 @@ Tests for main.py configuration and provider selection.
 import pytest
 
 import main
+from src.orchestra.engines import PolicyError
 from src.ai.models import AnthropicProvider, OllamaProvider, OpenAIProvider
 
 
@@ -137,16 +138,26 @@ class TestBuildProvider:
         with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
             main.build_provider(s)
 
-    def test_openai(self, monkeypatch):
-        s = settings_with(monkeypatch, AI_MODEL="gpt-4o", OPENAI_API_KEY="sk-test")
-        assert isinstance(main.build_provider(s), OpenAIProvider)
+    def test_openai_is_not_a_cleared_destination(self, monkeypatch):
+        # not in docs/DATA_FLOWS.md: refused before any client is made (default-deny, docs/ORCHESTRATOR.md)
+        for model in ("gpt-4o", "o3"):
+            s = settings_with(monkeypatch, AI_MODEL=model, OPENAI_API_KEY="sk-test")
+            with pytest.raises(PolicyError, match="not cleared"):
+                main.build_provider(s)
 
     def test_local_model_through_ollama(self, monkeypatch):
         s = settings_with(monkeypatch, AI_MODEL="qwen3-vl:30b-a3b-instruct", OLLAMA_URL="http://alien3:11434/")
         provider = main.build_provider(s)
         assert isinstance(provider, OllamaProvider) and provider.base_url == "http://alien3:11434"
-        s = settings_with(monkeypatch, AI_MODEL="o3", OPENAI_API_KEY="sk-test")
-        assert type(main.build_provider(s)) is OpenAIProvider  # OpenAI models still go to OpenAI
+
+    def test_brine_is_not_cleared_as_the_live_mind(self, monkeypatch):
+        # Brine: text from solo sessions only; a live session's presence is unknown and the mind gets photos
+        s = settings_with(monkeypatch, AI_MODEL="DeepSeek-V4-Flash-0731", OLLAMA_URL="https://brine.sharcnet.ca")
+        with pytest.raises(PolicyError, match="brine"):
+            main.build_provider(s)
+        s = settings_with(monkeypatch, AI_MODEL="m", OLLAMA_URL="https://somewhere.example")
+        with pytest.raises(PolicyError, match="not a registered destination"):
+            main.build_provider(s)
 
     def test_unknown_model(self, monkeypatch):
         monkeypatch.delenv("OLLAMA_URL", raising=False)

@@ -9,8 +9,11 @@ what Pepper said, as recorded), and the same tool list. Tools are captured, neve
 response of each turn only. A fresh baseline pass is made rather than using the recorded replies, because those had
 photos and live state the replay cannot rebuild; the recorded reply is kept as a reference.
 
-Only sessions where the tester was alone with Pepper may be replayed to a hosted service (docs/DATA_FLOWS.md). The
-output holds transcripts, so it goes to the git-ignored results/ folder only.
+Only sessions marked ``solo`` (scripts/mark_session.py: the tester alone with Pepper) may be replayed to a destination
+cleared for solo data only, such as Brine (docs/DATA_FLOWS.md, src/orchestra/engines.py); every other session is
+refused before anything is sent. Records written since the ledger (docs/ORCHESTRATOR.md) hold the state block and the
+text the mind was actually shown; older ones get a rebuilt state block. The output holds transcripts, so it goes to
+the git-ignored results/ folder only.
 
     .venv/bin/python scripts/compare_minds.py --out results/system-one/minds/replay.jsonl SESSION_DIR...
 """
@@ -37,12 +40,16 @@ from src.ai.models import (  # noqa: E402
 )
 from src.ai.speech import strip_animation_tags  # noqa: E402
 from src.ai.tools import MEMORY_TOOLS, TOOLS  # noqa: E402
+from src.orchestra import manifest  # noqa: E402
+from src.orchestra.engines import TEXT, PolicyError, for_model  # noqa: E402
 
 HISTORY_TURNS = 20  # as AIManager
-EXCLUDED = ("2026-10-22_164938", "2026-11-05_160237")  # someone else was there: never to a hosted service
 
 
 def state_block(rec: Dict[str, Any]) -> str:
+    recorded = (rec.get("mind") or {}).get("state")
+    if recorded:
+        return recorded  # as the mind was shown it
     at = datetime.fromisoformat(rec["at"])
     text = (
         "Current state: battery 80%; posture Stand; motors awake; autonomous life solitary; voice language English. "
@@ -100,9 +107,13 @@ async def main():
     ap.add_argument("--candidate-only", action="store_true", help="skip the baseline (it is then left empty)")
     args = ap.parse_args()
     load_dotenv()
+    engines = {"anthropic", for_model(args.candidate, args.candidate_url)}
     for s in args.sessions:
-        if any(x in s for x in EXCLUDED):
-            sys.exit(f"{s}: someone other than the tester was there; not replayed to a hosted service")
+        for name in engines:
+            try:
+                manifest.require(s, name, (TEXT,))
+            except PolicyError as exc:
+                sys.exit(f"not replayed: {exc}")
     baseline = AnthropicProvider(os.environ["ANTHROPIC_API_KEY"], args.baseline, effort=args.effort)
     with open(os.path.expanduser(args.candidate_key_file)) as f:
         candidate = OllamaProvider(args.candidate_url, args.candidate, api_key=f.read().strip())
@@ -118,6 +129,7 @@ async def main():
             for line in open(os.path.join(session, "turns.jsonl")):
                 rec = json.loads(line)
                 spoken = " ".join(as_list(rec.get("spoken")))
+                heard = (rec.get("mind") or {}).get("sent") or rec.get("text")
                 if rec.get("stop_reason") == "end_turn" and rec.get("text"):
                     system = [
                         {"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}},
@@ -132,16 +144,17 @@ async def main():
                         ]
                     if args.candidate_only:
                         a = {"text": "", "tools": [], "first_text_s": None, "total_s": 0.0, "stop": None, "error": None}
-                        b = await ask(candidate, candidate_system, trimmed, rec["text"], tools)
+                        b = await ask(candidate, candidate_system, trimmed, heard, tools)
                     else:
                         a, b = await asyncio.gather(
-                            ask(baseline, system, trimmed, rec["text"], tools),
-                            ask(candidate, candidate_system, trimmed, rec["text"], tools),
+                            ask(baseline, system, trimmed, heard, tools),
+                            ask(candidate, candidate_system, trimmed, heard, tools),
                         )
                     out.write(
                         json.dumps(
                             {
                                 "session": os.path.basename(session.rstrip("/")),
+                                "turn_id": rec.get("turn_id"),
                                 "at": rec["at"],
                                 "source": rec.get("source"),
                                 "heard": rec["text"],
@@ -152,8 +165,8 @@ async def main():
                                     "tools": [t.get("name") for t in as_list(rec.get("tools"))],
                                     "first_word_s": rec.get("first_word_s"),
                                 },
-                                "baseline": a,
-                                "candidate": b,
+                                "baseline": {**a, "model": args.baseline if not args.candidate_only else None},
+                                "candidate": {**b, "model": args.candidate, "rule": args.candidate_rule or None},
                             }
                         )
                         + "\n"

@@ -141,5 +141,5 @@ def test_the_key_comes_from_a_file(tmp_path, monkeypatch):
     key = tmp_path / "key"
     key.write_text("from-file\n")
     s = main.Settings.from_env()
-    s.ai_model, s.ollama_url, s.ai_api_key_file = "DeepSeek-V4-Flash-0731", "https://brine.example", str(key)
+    s.ai_model, s.ollama_url, s.ai_api_key_file = "some-model", "http://localhost:11434", str(key)
     assert main.build_provider(s).client.api_key == "from-file"
