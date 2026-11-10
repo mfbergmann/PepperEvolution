@@ -79,13 +79,13 @@ heard ─► intents (rules, this host) ──► act now ───────�
 
 ## Phases
 
-**1a. The ledger (additive).**
+**1a. The ledger (additive).** *Built 2026-11-10 (44c44bd); to be checked on the robot.*
 - Turn ids, mind-call records, outcomes, the registry and manifests.
 - `compare_minds.py` uses manifests instead of its exclusion list.
 - Blind keys carry turn ids, and `scripts/collect_marks.py` keeps marks in `results/marks/marks.jsonl`.
 - The live host refuses a mind whose destination is not cleared for a session of unknown presence. With today's settings that changes nothing: Anthropic is cleared, and Brine is not.
 
-**1b. The branching as pure functions.**
+**1b. The branching as pure functions.** *Built 2026-11-10. On all 21 recorded sessions: 276 of 276 gate verdicts and 275 of 277 paths agree. The other two are records made before later fixes: a routed "look at me" that still ended the turn, and a phrase the intent list no longer matches.*
 - Move the decision out of `process_user_input` into `route.py`, with no change in behaviour.
 - `scripts/replay_decisions.py` recomputes every recorded gate verdict and path and must agree with what was recorded.
 - This is a separate commit from 1a, so it can be reverted alone if the next robot session finds anything.

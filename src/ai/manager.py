@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Sequen
 
 from loguru import logger
 
-from ..decide import addressed, judge_addressee
+from ..decide import judge_addressee
 from ..identity.voice import SecondVoiceWatch
 from ..decide.router import Routed
 from ..decide.router import choose as choose_action
@@ -35,7 +35,9 @@ from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import CAMERA, HEARD, IDENTITY, MIND, SAID
 from ..world.views import addressee_context
 from ..orchestra.engines import for_model as engine_for_model
+from ..orchestra import route
 from ..orchestra.ledger import OutcomeWatch, TurnIds, digest
+from ..orchestra.route import GateSituation, Thresholds, accept_route, decide_turn, gate_verdicts
 from .models import CLOSING, ERROR_TEXT, MAP_PROMPT, MEMORY_PROMPT, SYSTEM_PROMPT, AIProvider, AIResponse
 from .speech import SpeechStreamer, looks_like_tool_xml, strip_animation_tags, strip_tool_xml
 from .tool_executor import ToolExecutor
@@ -44,7 +46,6 @@ from .tools import MAP_TOOLS, MEMORY_TOOLS, TOOLS
 ResponseCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 PartialCallback = Callable[[str], Awaitable[None]]
 
-STOPPING = ("stop", "quiet")  # requests that are never held back by the addressee gate's second-voice rule
 VOICE_READING_WAIT = 0.5  # seconds a turn may wait for a voice reading that could change whether it is answered
 VOICE_HINT_WAIT = 0.25  # seconds a turn may wait for a voice reading only to tell the mind whose voice it was
 MAX_ROUNDS_TEXT = "I got a bit carried away there. What would you like next?"
@@ -290,7 +291,7 @@ class AIManager:
                 self._heard.append(user_input)
                 self._note_heard(user_input, source, intent=intent.name)
                 self.outcomes.heard(user_input, intent.name)
-                rec["path"] = "intent"
+                rec["path"] = route.INTENT
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
@@ -311,12 +312,19 @@ class AIManager:
             route_task = asyncio.create_task(self._choose_action(previous, user_input, rec)) if route_on else None
             meant = await gate_task if gate_task is not None else True
             routed = await route_task if route_task is not None else None
-            if not meant and rec["addressee"].get("second_voice_decided") and routed and routed.intent in STOPPING:
+            path = decide_turn(
+                meant,
+                bool(rec.get("addressee", {}).get("second_voice_decided")),
+                routed.intent if routed is not None else None,
+                routed is not None,
+            )
+            if not meant and path != route.NOT_ADDRESSED:
                 meant = True  # stopping is never held back because of a second voice
                 rec["addressee"]["addressed"] = True
+            rec["path"] = path
             self._note_heard(user_input, source, addressed=meant)
             self.outcomes.heard(user_input, routed.intent if meant and routed is not None else None)
-            if not meant:
+            if path == route.NOT_ADDRESSED:
                 # Side talk near Pepper: no reply, and it does not count as talking to Pepper (greetings).
                 await self._wait_for_voice_reading(
                     voice_reading, rec, VOICE_READING_WAIT
@@ -324,32 +332,28 @@ class AIManager:
                 looking = self._look_around_for_people(rec)
                 if not looking:
                     self._glance_at_voice(rec)
-                rec["path"] = "not_addressed"
                 result = self._bare_result("", source, client_id, "not_addressed")
                 self._finish_record(rec, result)
                 if not looking:
                     self._look_at_speaker()
                 return result
             self._last_talk_at = self._clock()
-            if routed is not None and routed.intent in ("stop", "quiet"):
+            if path == route.ROUTED_INTENT:
                 # stopping is the whole request: nothing goes on to the model
                 intent = next(i for i in INTENTS if i.name == routed.intent)
-                rec["path"] = "routed_intent"
                 result = await self._handle_intent(intent, user_input, speak, source, client_id)
                 rec["intent"] = intent.name
                 self._finish_record(rec, result)
                 return result
-            if routed is not None and routed.intent == "look_at_me":
+            if path == route.LOOK_THEN_MIND:
                 # "turn toward me and come to me": look at once, but the rest of the request still goes to the model
                 # (on 2026-10-08 the look_at_me intent ended the turn and the drive never happened)
-                rec["path"] = "look_then_mind"
                 self._start_look_at_me(routed, rec)
                 user_input = (
                     "[Already started: looking at the person. Do not do it again; say a few words and do anything "
                     f"else that was asked.] {user_input}"
                 )
-            elif routed is not None:
-                rec["path"] = "routed_then_mind"
+            elif path == route.ROUTED_THEN_MIND:
                 self._start_routed(routed, rec)
                 user_input = (
                     f"[Already started: {routed.description}. It is under way, so do not do it again; say a few "
@@ -364,12 +368,12 @@ class AIManager:
             if self._last_stop_at is not None and submitted < self._last_stop_at:
                 # Queued behind the turn that "stop" cancelled: the person does not want it any more.
                 self.logger.info(f"[{source}] dropped after a stop: {user_input!r}")
-                rec["path"] = "cancelled"
+                rec["path"] = route.CANCELLED
                 result = self._bare_result("", source, client_id, "cancelled")
                 self._finish_record(rec, result)
                 return result
             self._rec = rec
-            rec.setdefault("path", "mind")
+            rec.setdefault("path", route.MIND)
             self.outcomes.started(rec["turn_id"])
             self._voice_line = voice_line
             self._who_id = rec.get("_who_id")
@@ -486,22 +490,18 @@ class AIManager:
         # Pepper just asked something: the next words are most likely the answer ("I'm on your right" after
         # "are you to my left or right?" scored 0.37 and was ignored, 2026-10-08)
         answering = self._last_question_at is not None and self._clock() - self._last_question_at < self.IN_CONVERSATION
-        lower = self.AFTER_QUESTION_THRESHOLD if answering else self.addressee_looking_threshold
-        verdict = addressed(p, self.addressee_threshold, looking or talking or answering, lower)
-        # Side talk needs someone to talk to. Alone with Pepper on 2026-10-08, 12 of 38 things said to it mid-
-        # conversation scored 0.06-0.35 and went unanswered, three of them answers to its own questions (the model
-        # never sees what Pepper said). In a conversation with nobody else seen for a minute, answer.
-        if not verdict and alone and (talking or answering):
-            verdict = True
-        # SECOND_VOICE: two voices were heard a moment ago, so they have each other to talk to, whatever the people
-        # detector counts (#25). Being in a conversation with Pepper proves nothing now: the judgement alone decides.
-        without_second_voice = verdict
-        by_judgement = addressed(p, self.addressee_threshold, looking, self.addressee_looking_threshold)
-        if self.second_voice_gate and verdict != by_judgement:
+        situation = GateSituation(looking, talking, answering, alone)
+        thresholds = Thresholds(
+            self.addressee_threshold, self.addressee_looking_threshold, self.AFTER_QUESTION_THRESHOLD
+        )
+        verdicts = gate_verdicts(p, situation, thresholds)
+        # The rules (src/orchestra/route.py): someone looking, a conversation with Pepper or a question just asked
+        # lower the bar; alone with Pepper in a conversation, side talk has no one to talk to (12 of 38 things said
+        # to it mid-conversation went unanswered on 2026-10-08); with a second voice, the judgement alone decides.
+        if self.second_voice_gate and verdicts.second_voice_matters:
             await self._wait_for_voice_reading(voice_reading, rec, VOICE_READING_WAIT)  # only when it can change this
         second_voice = self.second_voice_gate and self.second_voice.active(self._clock())
-        if second_voice:
-            verdict = by_judgement
+        verdict = verdicts.final(second_voice)
         context = addressee_context(self.world) if self.world is not None else {}
         rec["addressee"] = {
             "pepper_said": context.get("pepper_said"),  # for re-benchmarking the judgement with it (#25)
@@ -512,7 +512,7 @@ class AIManager:
             "after_question": answering,
             "alone": alone,
             "second_voice": second_voice,
-            "second_voice_decided": verdict != without_second_voice,  # it changed the answer: look at these in review
+            "second_voice_decided": verdict != verdicts.usual,  # it changed the answer: look at these in review
             "addressed": verdict,
             "seconds": round(self._clock() - started, 3),
         }
@@ -529,19 +529,16 @@ class AIManager:
             return None
         action, p = chosen
         rec["router"].update(choice=action, p=round(p, 3), executed=False)
-        if p < self.router_threshold:
-            return None
-        routed = plan_action(action, p, text)
-        if routed is None:
-            return None  # e.g. a drive: Claude decides, with the bridge's guards
-        if routed.intent is None and (
+        routed = plan_action(action, p, text) if p >= self.router_threshold else None  # None: e.g. a drive
+        body_free = not (
             self.busy
             or self.robot.direct_commands_running
             or self.robot.halted
             or getattr(self.robot.state, "awake", None) is False
-        ):
-            return None  # a turn or a command owns the body, or the motors are off: Claude handles it
-        return routed
+        )
+        # a turn or a command owns the body, or the motors are off: Claude handles it (stop and quiet still start)
+        planned, is_intent = routed is not None, routed is not None and routed.intent is not None
+        return routed if accept_route(p, self.router_threshold, planned, is_intent, body_free) else None
 
     def _start_routed(self, routed: Routed, rec: Dict[str, Any]):
         """Start a routed action now; the model's first call of the same tool waits for it instead of repeating."""
