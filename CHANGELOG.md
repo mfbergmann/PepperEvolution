@@ -10,6 +10,24 @@ Built offline after the 2026-10-22 robot session; nothing below has run on the r
 so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All the new switches are off by
 default.
 
+- **The orchestrator, first part (#37, `docs/ORCHESTRATOR.md`, `src/orchestra/`).** Recording and policy only; Pepper
+  behaves as before.
+  - Each turn line has a `turn_id`, its `path`, and for the mind: engine, model, prompt and tool hashes, the state
+    block and text as sent, history ids, and per-call timing and usage.
+  - `outcomes.jsonl` records what later showed about a turn: stopped, repeated, repeated after being ignored, errors,
+    failed tools.
+  - A default-deny registry of destinations (`src/orchestra/engines.py`), kept in step with `docs/DATA_FLOWS.md` by a
+    test. The host refuses at start-up a mind not cleared for live data (OpenAI, Brine).
+  - `session.json` per session: presence `unknown` until marked with `scripts/mark_session.py`. Replays to Brine need
+    `solo`.
+  - The turn's branching is now pure functions (`src/orchestra/route.py`). `scripts/replay_decisions.py` recomputed
+    all 21 recorded sessions: 276 of 276 gate verdicts and 275 of 277 paths agree (the other two predate later fixes).
+  - Blind marks are kept as labels (`scripts/collect_marks.py`).
+- **DeepSeek on SHARCNET Brine compared with Sonnet (`scripts/compare_minds.py`, `scripts/score_minds.py`,
+  `AI_API_KEY_FILE`).** 190 replayed solo turns: 4× faster to the first word, but actions claimed without the tool
+  in 18 turns (Sonnet 0); blind marks 7 to Sonnet's 12, 6 equal. Sonnet stays.
+- **Look around for the second voice (`LOOK_AROUND`).** With two voices heard and fewer than two people in view, a
+  short head-only sweep looks for the other person.
 - **Voice identification, and no more joining in on side talk (#14, #25, `VOICE_ID`, `SECOND_VOICE`, need
   `MEMORY_DIR`).** A person's voiceprint can be enrolled from recordings of them alone (`scripts/enroll_identity.py`, a
   consent note required) and is kept in the long-term store: a new `identity` table, schema version 3, shared with the

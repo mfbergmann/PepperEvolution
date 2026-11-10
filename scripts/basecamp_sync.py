@@ -50,6 +50,8 @@ DOCUMENTS: List[Tuple[str, str]] = [
     ("docs/HANDOFF.md", "Handoff notes: state, robot sessions, next steps"),
     ("docs/ROADMAP.md", "Roadmap"),
     ("docs/ARCHITECTURE.md", "Architecture"),
+    ("docs/ORCHESTRATOR.md", "Orchestrator: routing, the ledger, toward a local mind"),
+    ("docs/DATA_FLOWS.md", "Where Pepper's data goes"),
     ("docs/MEMORY.md", "Memory design"),
     ("docs/SAFETY.md", "Safety ledger"),
     ("docs/SETUP_PROFILES.md", "Setup profiles: cloud only or with a local GPU"),
