@@ -23,6 +23,9 @@ default.
   - The turn's branching is now pure functions (`src/orchestra/route.py`). `scripts/replay_decisions.py` recomputed
     all 21 recorded sessions: 276 of 276 gate verdicts and 275 of 277 paths agree (the other two predate later fixes).
   - Blind marks are kept as labels (`scripts/collect_marks.py`).
+  - Phase 2a: an evaluation set drawn from the ledger (`src/orchestra/evalset.py`, `scripts/build_evalset.py`),
+    solo sessions only, keys and flags but never text, with a held-out share that stays fixed between builds; and
+    the promotion bar as a pure function (`src/orchestra/promotion.py`, exact sign test on blind marks).
 - **DeepSeek on SHARCNET Brine compared with Sonnet (`scripts/compare_minds.py`, `scripts/score_minds.py`,
   `AI_API_KEY_FILE`).** 190 replayed solo turns: 4× faster to the first word, but actions claimed without the tool
   in 18 turns (Sonnet 0); blind marks 7 to Sonnet's 12, 6 equal. Sonnet stays.

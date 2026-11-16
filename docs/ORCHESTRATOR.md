@@ -90,7 +90,7 @@ heard ─► intents (rules, this host) ──► act now ───────�
 - `scripts/replay_decisions.py` recomputes every recorded gate verdict and path and must agree with what was recorded.
 - This is a separate commit from 1a, so it can be reverted alone if the next robot session finds anything.
 
-**2. Evaluation, then routing that learns.**
+**2. Evaluation, then routing that learns.** *2a built 2026-11-16: the evaluation set (`src/orchestra/evalset.py`, `scripts/build_evalset.py`) and the promotion bar below as a pure function (`src/orchestra/promotion.py`). A dry run on the recorded sessions picks 77 turns from the 19 solo sessions (30 held out, 47 for development): 65 action turns and 19 marked, none with outcomes yet, because every recorded session predates the ledger. The bar needs 40 marked held-out turns, so more blind sheets come before any promotion. The set isn't frozen yet: the first `build_evalset.py` run into `results/evalset/` fixes it.*
 - An evaluation set drawn from the ledger, fixed and held out:
   - turns with outcomes
   - turns with marks
