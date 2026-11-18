@@ -230,6 +230,13 @@ The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in 
 
 First replay, 190 turns from 19 solo runs: DeepSeek's first words in 0.17 s median against 0.71 s for Sonnet, and its first tool agreed with the live run as often (126 against 125). But in 18 turns it said it was acting ("coming to you now", "turning to my right") without calling the tool, against 0 for Sonnet; a prompt rule cut that to 11. It took a photo in 9 of 21 turns where the live run looked first (Sonnet 17), and gave four or more sentences in 17 turns (Sonnet 4). So not as the mind with tools yet; perhaps for talk-only turns that the router has already marked "talk". The tester's blind marks (25 turns): Sonnet better 12, DeepSeek 7, equal 6, and Sonnet ahead on talk-only turns too (7 / 4 / 4). Sonnet stays. Next idea (tester): an orchestrator routing each turn to the right engine, then learning from recorded outcomes and marks.
 
+**Expect, then check (#30, built 2026-11-17, `EXPECTATIONS` off by default).** On a robot session, turn it on and check:
+- After "turn to me" and "come to me", the session's `events.jsonl` has `expect` lines (`met` or `surprise`).
+- A surprise shows in the next "Around you" line ("A surprise ... ago: you turned ... but nobody was in front of you").
+- No surprises after turns that plainly worked.
+
+Replayed on the recorded sessions: face 8 of 13 met, closer 1 of 5. Most "closer" drives left no distance reading afterwards.
+
 **Orchestrator, first part (2026-11-10, #37, `docs/ORCHESTRATOR.md`, `src/orchestra/`).** Recording only; Pepper behaves as before. On the next robot session, check that these are written:
 - Every turn line now has a `turn_id` and a `path`: `intent`, `not_addressed`, `routed_intent`, `look_then_mind`, `routed_then_mind`, `mind` or `cancelled`.
 - Answered turns also carry `mind`:

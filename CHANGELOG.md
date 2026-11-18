@@ -10,6 +10,16 @@ Built offline after the 2026-10-22 robot session; nothing below has run on the r
 so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All the new switches are off by
 default.
 
+- **Expect, then check, first slice (#30, `EXPECTATIONS`, off by default).**
+  - Before a turn towards someone it knew about, or a drive towards someone ahead, working memory notes what should change (`src/world/expectations.py`). Afterwards it compares that with the people detector.
+  - A mismatch becomes a timeline "surprise", is recorded in `events.jsonl`, and reaches the mind's "Around you" line for a minute.
+  - The bridge reports people only on change, so a report from before the move is turned with Pepper. Its distances are dropped, and a drive is judged by the distance measured when the bridge reports poses.
+  - `scripts/replay_expectations.py` replayed the recorded sessions:
+    - face: 13 expectations, 8 met, 4 surprised, 1 cancelled
+    - closer: 5 expectations, 1 met, 2 surprised, 2 cancelled
+
+    One surprise is a real wrong turn: Pepper turned -5 degrees "to face" someone the detector then placed at -47 degrees.
+  - Built by DeepSeek-V4-Flash on SHARCNET Brine from a spec, reviewed and corrected by Claude.
 - **The orchestrator, first part (#37, `docs/ORCHESTRATOR.md`, `src/orchestra/`).** Recording and policy only; Pepper
   behaves as before.
   - Each turn line has a `turn_id`, its `path`, and for the mind: engine, model, prompt and tool hashes, the state

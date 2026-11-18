@@ -61,7 +61,7 @@ from src.orchestra import manifest  # noqa: E402
 from src.orchestra.engines import MIND_SENDS, UNKNOWN, PolicyError, allowed  # noqa: E402
 from src.orchestra.engines import for_model as engine_for_model  # noqa: E402
 from src.world import Observation, WorldModel  # noqa: E402
-from src.world.observations import IDENTITY, MAP, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
+from src.world.observations import EXPECT, IDENTITY, MAP, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -129,6 +129,7 @@ class Settings:
     voice_glances: bool = False
     ai_api_key_file: str = ""  # a file holding the key for OLLAMA_URL, for a hosted service (docs/DATA_FLOWS.md)
     look_around: bool = False
+    expectations: bool = False
     local_microphone: Optional[str] = None
     map: bool = False
     voice_id: bool = False
@@ -206,6 +207,7 @@ class Settings:
             watch_room=env_bool("WATCH_ROOM", False),
             voice_glances=env_bool("VOICE_GLANCES", False),
             look_around=env_bool("LOOK_AROUND", False),
+            expectations=env_bool("EXPECTATIONS", False),
             local_microphone=os.getenv("LOCAL_MICROPHONE", "").strip() or None,
             map=env_bool("MAP", False),
             voice_id=env_bool("VOICE_ID", False),
@@ -285,7 +287,7 @@ class PepperEvolution:
         self.robot_microphone: Optional[AudioStream] = None
         self.api_server: Optional[APIServer] = None
         self.voice: Optional[VoiceInput] = None
-        self.world = WorldModel()
+        self.world = WorldModel(expectations=self.settings.expectations)
         # Long-term memory (docs/MEMORY.md): people who agreed to be remembered, facts, session episodes
         self.memory: Optional[Memory] = None
         if self.settings.memory_dir:
@@ -591,7 +593,7 @@ class PepperEvolution:
         else:
             self.logger.info("Sound direction on: voices get the direction they came from")
 
-    RECORDED_SOURCES = (POSE, MOTION, SOUND, SCENE, IDENTITY, MIND, MAP)  # people events are recorded as they come
+    RECORDED_SOURCES = (POSE, MOTION, SOUND, SCENE, IDENTITY, MIND, MAP, EXPECT)  # people events come as they are
 
     def _record_observation(self, obs: Observation):
         """World-model inputs that are not bridge events into events.jsonl, so sessions can be replayed."""

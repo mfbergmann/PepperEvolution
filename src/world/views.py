@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 RECALL_WINDOW = 600.0  # seconds of the timeline that recall describes
 RECALL_EVENTS = 12  # most recent entries only
 TEXT_CHARS = 120
-QUIET_KINDS = {"track"}  # bookkeeping, for review rather than for the mind
+QUIET_KINDS = {"track", "expectation_met"}  # bookkeeping, for review rather than for the mind
 
 
 def _ago(seconds: float) -> str:
@@ -71,6 +71,8 @@ def describe_event(event: Any, now: float) -> str:
         return f"{when}: you recognised {data.get('name')} by their {data.get('via')}"
     if kind == "remembered":
         return f"{when}: you stored a fact about {data.get('about')}"
+    if kind == "surprise":
+        return f"{when}: {data.get('reason')}"
     return f"{when}: {kind}"
 
 

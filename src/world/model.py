@@ -16,8 +16,9 @@ from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from .frames import Pose, pose_from
-from .observations import CAMERA, IDENTITY, MAP, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
+from .expectations import ExpectationWatch, Target, Verdict, plan_closer, plan_face
+from .frames import Pose, pose_from, wrap, wrap_deg
+from .observations import CAMERA, EXPECT, IDENTITY, MAP, MOTION, PEOPLE, POSE, SCENE, SOUND, Observation
 from .timeline import Timeline
 from .tracks import Tracker
 
@@ -122,9 +123,19 @@ def _duration(seconds: Optional[int]) -> Optional[str]:
 class WorldModel:
     """Who is around, updated from bridge events; summarised for the model."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic, arrival_absence: float = ARRIVAL_ABSENCE_SECONDS):
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        arrival_absence: float = ARRIVAL_ABSENCE_SECONDS,
+        expectations: bool = False,
+    ):
         self._clock = clock
         self.arrival_absence = arrival_absence
+        self.expectations = expectations  # note what a turn or drive should change, then check it (#30)
+        self.watch = ExpectationWatch()
+        self._targets_before: List[Target] = []
+        self._move_started_at: Optional[float] = None  # people reports older than this predate the move
+        self._people_pose: Optional[Pose] = None  # Pepper's pose when the current people report came in
         self.people: List[Person] = []
         self.seen: Dict[str, Tuple[float, float]] = {}  # camera judgements: what -> (probability, time)
         self.count: Optional[int] = None  # None until the first report
@@ -166,6 +177,7 @@ class WorldModel:
         if obs.source == PEOPLE:
             people = obs.data.get("people") or []
             arrival = self.update_people(obs.data.get("count"), people, initial=bool(obs.data.get("initial")))
+            self._people_pose = self.pose
             self._update_tracks(people, obs.at, placed=measured is not None or not self._moving)
         elif obs.source == POSE:
             pass  # applied above
@@ -189,6 +201,8 @@ class WorldModel:
             self.timeline.add("track", obs.at, track=track.id, camera=True, bearing=obs.data["bearing"])
         else:
             self.timeline.add(obs.kind, obs.at, **{**obs.data, "source": obs.source})
+        if self.expectations:
+            self._follow_expectations(obs)
         for sink in self._sinks:
             try:
                 sink(obs)
@@ -286,11 +300,15 @@ class WorldModel:
         kind = obs.kind
         if kind.endswith("_started"):
             self._moving += 1
+            if self.expectations and kind in ("turn_started", "drive_started"):
+                self._snapshot_targets(obs.at)
             return
         self._moving = max(0, self._moving - 1)
         data = obs.data
+        before, measured_before = self.pose, self._measured_once
         completed = data.get("completed") is not False
         if data.get("refused"):  # the bridge refused it (an obstacle, motors off): Pepper did not move
+            self._targets_before = []
             self.timeline.add(kind, obs.at, description="refused", completed=False, source=MOTION)
             return
         if measured is not None:
@@ -319,6 +337,83 @@ class WorldModel:
             completed=completed,
             source=MOTION,
         )
+        if self.expectations:
+            targets = self._targets_before
+            self._targets_before = []
+            if targets and completed and kind in ("turn", "drive"):
+                exp = (
+                    plan_face(float(data.get("angle") or 0.0), targets, obs.at, self.watch.next_id())
+                    if kind == "turn"
+                    else plan_closer(
+                        self._driven(data, before, measured, measured_before), targets, obs.at, self.watch.next_id()
+                    )
+                )
+                if exp is not None:
+                    self.watch.add(exp)
+                    self._check_at_once(obs.at)
+
+    def _snapshot_targets(self, at: float):
+        """Remember who could be aimed at just before a move: everyone in view, then remembered tracks. A new move
+        cancels any expectation the last one left open."""
+        self.watch.cancel("another move started")
+        self._move_started_at = at
+        targets = [Target(p.yaw, p.distance) for p in self.people if p.yaw is not None]
+        for track in self.tracker.remembered(at):
+            bearing = track.bearing(self.pose)
+            if bearing is not None:
+                targets.append(Target(bearing, track.distance_from(self.pose), track.id))
+        self._targets_before = targets
+
+    @staticmethod
+    def _driven(data: Dict[str, Any], before: Pose, measured: Optional[Pose], measured_before: bool) -> float:
+        """How far a drive went: the measured pose change when the bridge reported poses before and after it (the
+        sonar guard can stop a drive short), else the distance asked."""
+        if measured is not None and measured_before:
+            return math.hypot(measured.x - before.x, measured.y - before.y)
+        return float(data.get("distance") or 0.0)
+
+    def _people_dicts(self) -> List[Dict[str, Any]]:
+        """Who is in view, for judging expectations. The bridge reports people only on change, so the latest report
+        can predate the move. Its bearings are then turned by however far Pepper turned since (someone at -5° before
+        a -5° turn is straight ahead after it), and its distances dropped (a drive changed them by an unknown
+        amount)."""
+        if self.updated_at is None or self._people_pose is None:
+            return []
+        if self._move_started_at is None or self.updated_at >= self._move_started_at:
+            return [{"yaw": p.yaw, "distance": p.distance} for p in self.people]
+        turned = math.degrees(wrap(self.pose.theta - self._people_pose.theta))
+        return [{"yaw": None if p.yaw is None else wrap_deg(p.yaw - turned), "distance": None} for p in self.people]
+
+    def _check_at_once(self, at: float):
+        """Judge a just-added expectation against who is in view now: the bridge only reports people on change, so
+        someone who settled in front during the move may send no report after it ends."""
+        for verdict in self.watch.on_people(self._people_dicts(), at):
+            self._emit_expectation(verdict)
+
+    def _follow_expectations(self, obs: Observation):
+        """A people report judges open expectations; any observation moves the clock, so what is due can expire."""
+        verdicts = []
+        if obs.source == PEOPLE:
+            verdicts += self.watch.on_people(self._people_dicts(), obs.at)
+        verdicts += self.watch.tick(obs.at, self._people_dicts())
+        for verdict in verdicts:
+            self._emit_expectation(verdict)
+
+    def _emit_expectation(self, verdict: Verdict):
+        """A judged expectation as a timeline event and a sink observation (a surprise, or a satisfied one)."""
+        kind = "surprise" if not verdict.met else "expectation_met"
+        data = {
+            "kind": verdict.expectation.kind,
+            "action": verdict.expectation.action,
+            "reason": verdict.reason,
+        }
+        self.timeline.add(kind, verdict.at, **data)
+        obs = Observation(EXPECT, "surprise" if not verdict.met else "met", verdict.at, data)
+        for sink in self._sinks:
+            try:
+                sink(obs)
+            except Exception as exc:  # noqa: BLE001 - a lost record must never break perception
+                self.logger.debug(f"observation sink failed: {exc}")
 
     def _apply_map(self, obs: Observation):
         """A position on the map, with the named place it falls in (the navigator works that out). Arriving at and
@@ -555,6 +650,10 @@ class WorldModel:
         known = self.known_line(speaking)
         if known:
             text += f" {known}"
+        if self.expectations:
+            surprise = self.watch.latest_surprise(now)
+            if surprise is not None:
+                text += f" A surprise {_ago(now - surprise.at)}: {surprise.reason}."
         return text
 
     def scene_line(self) -> str:

@@ -22,6 +22,7 @@ SAID = "said"  # a sentence Pepper said
 IDENTITY = "identity"  # who someone is (opt-in)
 MIND = "mind"  # something the mind decided to note
 MAP = "map"  # where Pepper is on its saved map (ALNavigation's localization, #36): map frame, never odometry
+EXPECT = "expect"  # an expectation judged against what was perceived (#30)
 
 # frames for anything with a direction (docs/MEMORY.md, "Frames")
 BODY = "body"  # x forward, y left, angles positive to the left, turning with the base
