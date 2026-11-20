@@ -339,3 +339,108 @@ def test_a_drive_is_judged_by_how_far_it_measurably_went():
     assert exp.data["driven"] == pytest.approx(0.3) and exp.data["expected"] == pytest.approx(1.5)
     world.handle_people(1, [{"id": 1, "yaw": 0.0, "distance": 1.5}])
     assert world.watch.stats["closer"]["met"] == 1
+
+
+# -- a turn towards a voice (2026-11-19) ------------------------------------------------------------------------------
+
+
+def test_plan_face_towards_a_heard_target_says_so():
+    exp = plan_face(15.0, [Target(14.8, None, 3, heard=True)], at=100.0, next_id=1)
+    assert exp is not None and exp.data["aimed_at"] == "voice"
+    assert "towards where a voice seemed to come from" in exp.action
+    assert "towards where a voice seemed to come from" in expire(exp, 200.0).reason
+    seen = plan_face(15.0, [Target(14.8, 1.2, 4)], at=100.0, next_id=2)
+    assert seen.data["aimed_at"] == "seen" and "to face someone" in seen.action
+
+
+def _turn_towards_a_voice(world, clock, bearing=15.0):
+    world.attach_voice(world.pose.heading_of(bearing))  # heard, nobody seen: a heard-only track
+    world.note(MOTION, "turn_started", angle=bearing)
+    clock[0] += 2
+    world.note(MOTION, "turn", angle=bearing, completed=True)
+
+
+def test_a_turn_towards_a_voice_is_expected_and_met_when_someone_is_there():
+    clock = [1000.0]
+    world = started_at(clock)[0]
+    world.handle_people(0, [])
+    _turn_towards_a_voice(world, clock)
+    assert world.watch.stats["face"]["made"] == 1
+    clock[0] += 1
+    world.handle_people(1, [{"id": 1, "yaw": 2.0, "distance": 1.3}])
+    assert world.watch.stats["face"]["met"] == 1
+
+
+def test_a_turn_towards_a_voice_that_finds_nobody_forgets_that_direction():
+    clock = [1000.0]
+    world = started_at(clock)[0]
+    received = []
+    world.add_sink(received.append)
+    world.handle_people(0, [])
+    _turn_towards_a_voice(world, clock)
+    clock[0] += 1
+    assert "you heard someone" in world.remembered_line()
+    clock[0] += FACE_DUE + 1
+    world.note(MIND, "note")
+    assert world.watch.stats["face"]["surprised"] == 1
+    surprise = [o for o in received if o.source == EXPECT and o.kind == "surprise"][-1]
+    assert surprise.data["aimed_at"] == "voice" and surprise.data["expect"] == "face"
+    assert "towards where a voice seemed to come from" in world.summary()
+    assert world.remembered_line() == ""  # the wrong direction is no longer offered as where someone is
+
+
+def test_a_seen_target_keeps_its_position_after_a_surprise():
+    clock = [1000.0]
+    world = started_at(clock)[0]
+    world.handle_people(1, [{"id": 1, "yaw": 90.0, "distance": 1.5}])
+    world.handle_people(0, [])
+    world.note(MOTION, "turn_started", angle=90)
+    world.note(MOTION, "turn", angle=90, completed=True)
+    clock[0] += FACE_DUE + 1
+    world.note(MIND, "note")
+    assert world.watch.stats["face"]["surprised"] == 1
+    assert world.tracker.remembered(clock[0])  # people move; only a voice's direction is known wrong
+
+
+def test_judged_expectations_reach_the_session_records(tmp_path):
+    # the data once held "kind", which record_event(kind, **data) got twice: every line was lost in the sink
+    from src.session import SessionRecorder
+
+    recorder = SessionRecorder.start(str(tmp_path))
+    clock = [1000.0]
+    world = started_at(clock)[0]
+    world.add_sink(lambda obs: recorder.record_event("observation", **obs.record()))
+    world.handle_people(0, [])
+    _turn_towards_a_voice(world, clock)
+    clock[0] += FACE_DUE + 1
+    world.note(MIND, "note")
+    rows = [json.loads(line) for line in open(os.path.join(recorder.folder, "events.jsonl"))]
+    expect = [r for r in rows if r.get("source") == "expect"]
+    assert len(expect) == 1
+    assert expect[0]["obs"] == "surprise" and expect[0]["expect"] == "face" and expect[0]["aimed_at"] == "voice"
+
+
+def test_replay_uses_the_voice_direction_each_turn_recorded(tmp_path):
+    script = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "replay_expectations.py"
+    )
+    spec = importlib.util.spec_from_file_location("replay_expectations", script)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["replay_expectations"] = module
+    spec.loader.exec_module(module)
+
+    t = datetime(2026, 11, 19, 12, 0, 0)
+    obs = lambda s, **d: {"at": _iso(t + timedelta(seconds=s)), "kind": "observation", **d}  # noqa: E731
+    events = [
+        {"at": _iso(t), "kind": "people", "count": 0, "people": []},
+        obs(2, source="motion", obs="turn_started", angle=15.0),
+        obs(4, source="motion", obs="turn", angle=15.0, completed=True),
+        obs(12, source="sound", obs="sound", azimuth=0.0, confidence=0.5),  # moves the clock past the due time
+    ]
+    (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    turn = {"heard": _iso(t + timedelta(seconds=1)), "voice": {"bearing": 14.8, "sounds": 2, "spread": 22.9}}
+    (tmp_path / "turns.jsonl").write_text(json.dumps(turn) + "\n")
+
+    text, stats = module.replay(str(tmp_path))
+    assert stats["face"] == {"made": 1, "met": 0, "surprised": 1, "cancelled": 0}
+    assert "face aimed at a voice: met 0, surprised 1" in text

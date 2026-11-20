@@ -10,7 +10,9 @@ output.
 This first slice covers two expectations:
 
 - **face**: Pepper turns in place by about the bearing of a person it knew about; afterwards someone should be
-  nearly straight ahead.
+  nearly straight ahead. The person may be known only by where their voice came from (a heard-only track): the
+  expectation then says it was aimed at a voice, so a surprise can be told apart from a person who moved. Sound
+  directions are often wrong (#31), and a surprise here is how Pepper finds out.
 - **closer**: Pepper drives forward with a person nearly straight ahead at a known distance; afterwards their
   distance should have dropped by about what was driven.
 """
@@ -40,6 +42,7 @@ class Target:
     bearing: float
     distance: Optional[float]
     track_id: Optional[int] = None
+    heard: bool = False  # known only from where a voice came from, never seen
 
 
 @dataclass(frozen=True)
@@ -78,15 +81,13 @@ def plan_face(angle: float, targets: Sequence[Target], at: float, next_id: int) 
         "target_bearing": best.bearing,
         "track_id": best.track_id,
         "expected_bearing": wrap_deg(best.bearing - angle),
+        "aimed_at": "voice" if best.heard else "seen",
     }
-    return Expectation(
-        next_id,
-        "face",
-        made_at=at,
-        due_at=at + FACE_DUE,
-        action=f"turned {angle:+.0f} degrees to face someone",
-        data=data,
-    )
+    if best.heard:
+        action = f"turned {angle:+.0f} degrees towards where a voice seemed to come from"
+    else:
+        action = f"turned {angle:+.0f} degrees to face someone"
+    return Expectation(next_id, "face", made_at=at, due_at=at + FACE_DUE, action=action, data=data)
 
 
 def plan_closer(distance: float, targets: Sequence[Target], at: float, next_id: int) -> Optional[Expectation]:

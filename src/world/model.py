@@ -361,7 +361,7 @@ class WorldModel:
         for track in self.tracker.remembered(at):
             bearing = track.bearing(self.pose)
             if bearing is not None:
-                targets.append(Target(bearing, track.distance_from(self.pose), track.id))
+                targets.append(Target(bearing, track.distance_from(self.pose), track.id, heard=track.heard_only))
         self._targets_before = targets
 
     @staticmethod
@@ -399,14 +399,25 @@ class WorldModel:
         for verdict in verdicts:
             self._emit_expectation(verdict)
 
+    def _forget_heard(self, track_id: Optional[int]):
+        """A turn towards a voice found nobody there: the direction that voice was placed in is wrong (#31), so the
+        heard-only track loses it and stops being offered as where someone is. A later voice starts a fresh track."""
+        for track in self.tracker.tracks:
+            if track.id == track_id and track.heard_only:
+                track.forget_position()
+                self.timeline.add("track", self._clock(), track=track.id, forgot="voice direction found wrong")
+
     def _emit_expectation(self, verdict: Verdict):
         """A judged expectation as a timeline event and a sink observation (a surprise, or a satisfied one)."""
         kind = "surprise" if not verdict.met else "expectation_met"
-        data = {
-            "kind": verdict.expectation.kind,
-            "action": verdict.expectation.action,
-            "reason": verdict.reason,
-        }
+        exp = verdict.expectation
+        # "expect", not "kind": the session recorder's record_event(kind, **data) would get it twice and fail, and
+        # the sink swallows that, so no judged expectation reached events.jsonl until 2026-11-19
+        data = {"expect": exp.kind, "action": exp.action, "reason": verdict.reason}
+        if exp.data.get("aimed_at"):
+            data["aimed_at"] = exp.data["aimed_at"]
+        if not verdict.met and exp.data.get("aimed_at") == "voice":
+            self._forget_heard(exp.data.get("track_id"))
         self.timeline.add(kind, verdict.at, **data)
         obs = Observation(EXPECT, "surprise" if not verdict.met else "met", verdict.at, data)
         for sink in self._sinks:

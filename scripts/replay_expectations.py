@@ -5,8 +5,13 @@ Replay recorded sessions through a WorldModel with expectations on, and report h
     python scripts/replay_expectations.py results/sessions/2026-10-08_185850
 
 Feeds the session's inputs back exactly as replay_world.py does, in time order with the session's own clock:
-- people events and the motion/pose observation lines from events.jsonl (plus logged moves from host.log when no
-  motion lines were recorded), then advances the clock past the end so every open expectation is judged.
+- people events and the motion, pose, sound and identity observation lines (a recognised face places a person) from events.jsonl (sounds also move the clock, as
+  they did live, so an expectation expires when it did rather than being cancelled by the next move) (plus logged moves from host.log when no
+  motion lines were recorded), then advances the clock past the end so every open expectation is judged;
+- the voice direction each turn recorded in turns.jsonl (``voice.bearing``), attached at the turn's ``heard`` time as
+  the host does, so turns towards a voice are planned as they were live. The direction is taken as recorded, not
+  recomputed from the sounds: the host's window depends on how long the person spoke, which is not recorded.
+Face expectations are also counted by what they were aimed at: someone seen, or a voice.
 
 Session folders hold people's words, so this prints nothing they said: only times, counts and reasons, and the output
 stays on this machine.
@@ -38,18 +43,25 @@ def replay(folder: str) -> Tuple[str, STATS]:
     for e in events:
         if e.get("kind") == "people":
             inputs.append((wall(e["at"]), "people", e))
-        elif e.get("kind") == "observation" and e.get("source") in ("pose", "motion"):
+        elif e.get("kind") == "observation" and e.get("source") in ("pose", "motion", "sound", "identity"):
             recorded_moves = recorded_moves or e.get("source") == "motion"
             inputs.append((wall(e["at"]), e["source"], e))
     if not recorded_moves:
         inputs += [(t, "logged_move", {"kind": k, **d}) for t, k, d in moves_from_log(os.path.join(folder, "host.log"))]
+    for turn in load_jsonl(os.path.join(folder, "turns.jsonl")):
+        voice = turn.get("voice") or {}
+        if turn.get("heard") and voice.get("bearing") is not None:
+            inputs.append((wall(turn["heard"]), "voice", {"bearing": float(voice["bearing"])}))
     inputs.sort(key=lambda item: item[0])
 
     clock = [inputs[0][0] if inputs else 0.0]
     world = WorldModel(clock=lambda: clock[0], expectations=True)
     surprises: List[Tuple[float, str]] = []
+    aimed: STATS = {k: {"met": 0, "surprised": 0} for k in ("seen", "voice")}
 
     def collect(obs):
+        if obs.source == EXPECT and obs.data.get("aimed_at"):
+            aimed[obs.data["aimed_at"]]["met" if obs.kind == "met" else "surprised"] += 1
         if obs.source == EXPECT and obs.kind == "surprise":
             surprises.append((obs.at, obs.data["reason"]))
 
@@ -62,7 +74,9 @@ def replay(folder: str) -> Tuple[str, STATS]:
         elif kind == "logged_move":
             data = {k: v for k, v in row.items() if k != "kind"}
             world.note(MOTION, row["kind"], **data)
-        elif kind in ("pose", "motion"):
+        elif kind == "voice":
+            world.attach_voice(world.pose.heading_of(row["bearing"]), at)
+        elif kind in ("pose", "motion", "sound", "identity"):
             data = {k: v for k, v in row.items() if k not in ("at", "kind", "source", "obs")}
             world.note(kind, row.get("obs", kind), **data)
         last_at = at
@@ -76,6 +90,12 @@ def replay(folder: str) -> Tuple[str, STATS]:
         out.append(
             f"  {kind}: made {s['made']}, met {s['met']}, surprised {s['surprised']}, cancelled {s['cancelled']}"
         )
+    for target in ("seen", "voice"):
+        a = aimed[target]
+        if a["met"] or a["surprised"]:
+            out.append(
+                f"    face aimed at {'someone seen' if target == 'seen' else 'a voice'}: met {a['met']}, surprised {a['surprised']}"
+            )
     for at, reason in surprises:
         stamp = datetime.fromtimestamp(at).strftime("%H:%M:%S")
         out.append(f"  {stamp}  surprise: {reason}")
