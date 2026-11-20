@@ -395,6 +395,15 @@ class WorldModel:
         verdicts = []
         if obs.source == PEOPLE:
             verdicts += self.watch.on_people(self._people_dicts(), obs.at)
+        elif obs.source == IDENTITY and obs.data.get("via") == "face" and obs.data.get("bearing") is not None:
+            # the people detector often misses someone the face recogniser sees (2026-11-19: twice in three turns,
+            # the tester was recognised straight ahead 2-4 s after the turn while the detector reported nobody).
+            # A face only says someone is there, so it can meet a face expectation, never a closer one (no distance).
+            # Not while moving (the dead-reckoned pose lags the base, as in _apply_identity); a new move cancels open
+            # expectations anyway, so this only guards against that changing.
+            if not self._moving:
+                face = {"yaw": float(obs.data["bearing"]), "distance": None, "via": "face"}
+                verdicts += self.watch.on_people([face], obs.at)
         verdicts += self.watch.tick(obs.at, self._people_dicts())
         for verdict in verdicts:
             self._emit_expectation(verdict)

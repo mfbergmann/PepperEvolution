@@ -12,7 +12,9 @@ This first slice covers two expectations:
 - **face**: Pepper turns in place by about the bearing of a person it knew about; afterwards someone should be
   nearly straight ahead. The person may be known only by where their voice came from (a heard-only track): the
   expectation then says it was aimed at a voice, so a surprise can be told apart from a person who moved. Sound
-  directions are often wrong (#31), and a surprise here is how Pepper finds out.
+  directions are often wrong (#31), and a surprise here is how Pepper finds out. Someone counts as in front when the
+  people detector reports them there, or when the face recogniser sees a face there (it finds people the detector
+  misses; only the enrolled are reported, so a visitor is still seen only by the detector).
 - **closer**: Pepper drives forward with a person nearly straight ahead at a known distance; afterwards their
   distance should have dropped by about what was driven.
 """
@@ -121,7 +123,8 @@ def check(exp: Expectation, people: Sequence[Dict[str, Any]], at: float) -> Opti
     """Judge an expectation against people-detector reports. None while there is no verdict yet.
 
     ``people`` are reports that may hold ``yaw`` (degrees, body frame, left positive) and ``distance`` (metres);
-    either can be missing. A face is met as soon as anyone is nearly straight ahead; anything else keeps waiting.
+    either can be missing. A report may also say ``via``: "face" when it is a recognised face rather than the people
+    detector; it has no distance, so only a face expectation can be met by it. A face is met as soon as anyone is nearly straight ahead; anything else keeps waiting.
     A closer is met when the nearest straight-ahead person is within tolerance of where the drive should have put
     them, and a surprise when they are plainly further away.
     """
@@ -129,7 +132,9 @@ def check(exp: Expectation, people: Sequence[Dict[str, Any]], at: float) -> Opti
         for p in people:
             yaw = p.get("yaw")
             if yaw is not None and abs(yaw) <= FACE_WITHIN:
-                return Verdict(exp, True, at, "someone was in front of you", {"yaw": yaw, "person": p.get("id")})
+                via = p.get("via") or "people"
+                reason = "you saw a face in front of you" if via == "face" else "someone was in front of you"
+                return Verdict(exp, True, at, reason, {"yaw": yaw, "person": p.get("id"), "via": via})
         return None
     closer = [
         p

@@ -20,7 +20,7 @@ from src.world.expectations import (
     plan_closer,
     plan_face,
 )
-from src.world.observations import EXPECT, MIND, MOTION, POSE
+from src.world.observations import EXPECT, IDENTITY, MIND, MOTION, POSE
 from src.world.views import describe_event
 
 
@@ -444,3 +444,48 @@ def test_replay_uses_the_voice_direction_each_turn_recorded(tmp_path):
     text, stats = module.replay(str(tmp_path))
     assert stats["face"] == {"made": 1, "met": 0, "surprised": 1, "cancelled": 0}
     assert "face aimed at a voice: met 0, surprised 1" in text
+
+
+# -- a recognised face meets a face expectation (2026-11-19) ----------------------------------------------------------
+
+
+def _face(world, bearing):
+    world.note(IDENTITY, "recognised", via="face", person_id=1, name="Test Person", score=0.5, bearing=bearing)
+
+
+def test_a_recognised_face_in_front_meets_a_face_expectation():
+    clock = [1000.0]
+    world = started_at(clock)[0]
+    received = []
+    world.add_sink(received.append)
+    world.handle_people(1, [{"id": 1, "yaw": -74.0, "distance": 1.2}])
+    world.handle_people(0, [])  # the detector loses them, as it often does
+    world.note(MOTION, "turn_started", angle=-74)
+    clock[0] += 3
+    world.note(MOTION, "turn", angle=-74, completed=True)
+    clock[0] += 3
+    _face(world, 3.5)
+    assert world.watch.stats["face"] == {"made": 1, "met": 1, "surprised": 0, "cancelled": 0}
+    met = [o for o in received if o.source == EXPECT and o.kind == "met"][-1]
+    assert met.data["reason"] == "you saw a face in front of you"
+    clock[0] += FACE_DUE + 1
+    world.note(MIND, "note")
+    assert "A surprise" not in world.summary()
+
+
+def test_a_face_off_to_the_side_does_not_meet_it():
+    clock = [1000.0]
+    world = started_at(clock)[0]
+    world.handle_people(1, [{"id": 1, "yaw": 90.0, "distance": 1.5}])
+    world.handle_people(0, [])
+    world.note(MOTION, "turn_started", angle=90)
+    world.note(MOTION, "turn", angle=90, completed=True)
+    _face(world, 40.0)
+    clock[0] += FACE_DUE + 1
+    world.note(MIND, "note")
+    assert world.watch.stats["face"]["surprised"] == 1
+
+
+def test_a_face_never_meets_a_closer_expectation():
+    exp = plan_closer(0.5, [Target(0.0, 1.8)], at=100.0, next_id=1)
+    assert check(exp, [{"yaw": 0.0, "distance": None, "via": "face"}], at=101.0) is None
