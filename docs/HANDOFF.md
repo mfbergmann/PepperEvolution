@@ -197,6 +197,18 @@ Solo, in the tester's office (small, with glass walls and a monitor). Five host 
 - New: #31 (voice direction) and #32 (things seen as people).
 - Face identity across encounters (#14) is now wanted. Pepper re-greeted the tester twice as a newcomer, and asked their name again after a short absence.
 
+## Robot session 2026-11-19: results (short, solo)
+
+About 9 minutes, the tester alone, in the office and from just outside it (`results/sessions/2026-11-19_192111`, local). Plain `deploy.py` first; `VOICE_ID`, `SECOND_VOICE`, `FACE_ID`, `LOOK_AROUND` and `EXPECTATIONS` on.
+- **Orchestrator ledger (#37):** all 19 turns carry `turn_id`, `path` and `mind` (engine, model, effort, hashes, per-call timings). These are the first turns with records the evaluation set can use.
+- **Voice identification:** 19 of 19 named, no second voice signalled while alone, read remotely on Alien3 in 0.08-0.14 s, none late. Scores 0.50-0.77.
+- **Faces:** 484 frames read, none dropped, median 15 ms; a face in 148, the tester in 84. **A photo of the tester on a phone** (held up while the tester was out of view, about 19:28:30-19:29:10) gave no held match: one single-vote reading at 0.46, below the hold. Not the expected result; probably too small in the frame. Try again closer.
+- **Camera rate fix (bridge):** when someone came into view the stream reopened at 1 fps and the old loop ended 2 s later, once; at the end it ended once. Works.
+- **Glances:** two, at about 60 degrees, when the tester spoke from outside the office.
+- **Expect, then check (#30): no `expect` lines.** Both "turn to me" turns happened with nobody in the detector's view, and `plan_face` only expects something when the turn aims at a person Pepper already knew about. The first turn (+15 degrees) missed; the tester asked Pepper to look first, and the head-then-body search worked. A turn aimed at the voice's direction is not covered yet: that is the case to add.
+- Median first word 2.16 s; one at 4.5 s. Five replies of four or more sentences.
+- **Not yet run:** the second person and `LOOK_AROUND`, distances 1/2/4 m, the map.
+
 ## Robot session 2026-10-22: results
 
 The tester ran one host run (`results/sessions/2026-10-22_164938`, 37 turns) in the office and then the open space. A second person joined for a few minutes of conversation. Pepper had been off since 2026-10-20 and was powered on cold.
