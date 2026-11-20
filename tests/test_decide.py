@@ -112,6 +112,71 @@ class TestClient:
         assert models == ["nimble", "clef-flash"] and ready == {"nimble": True, "clef-flash": True}
 
 
+class TestServedModels:
+    """2026-11-19: the full-size models no longer fit on Alien3 together; smaller-context copies are served instead."""
+
+    async def test_asked_names_map_to_served_ones(self):
+        seen = []
+
+        def handler(request):
+            if request.url.path == "/api/ps":
+                return httpx.Response(
+                    200, json={"models": [{"name": "nimble-2k:latest"}, {"name": "clef-flash-4k:latest"}]}
+                )
+            seen.append(json.loads(request.content)["model"])
+            return noul(0.9)(request)
+
+        client = DecisionClient(
+            "http://alien3:11435",
+            transport=httpx.MockTransport(handler),
+            models={"nimble": "nimble-2k", "clef-flash": "clef-flash-4k"},
+        )
+        await client.ask("nimble", "s", {})
+        await client.ask("clef-flash", "s", {}, images=["x"])
+        await client.ask("other", "s", {})
+        assert seen == ["nimble-2k", "clef-flash-4k", "other"]
+
+    async def test_warns_when_warmed_models_do_not_fit_together(self):
+        from loguru import logger
+
+        warnings = []
+        sink = logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+
+        def handler(request):
+            if request.url.path == "/api/ps":  # the second load evicted the first
+                return httpx.Response(200, json={"models": [{"name": "clef-flash:latest"}]})
+            return noul(0.9)(request)
+
+        try:
+            client = DecisionClient("http://alien3:11435", transport=httpx.MockTransport(handler))
+            assert await client.warm(["nimble", "clef-flash"]) == {"nimble": True, "clef-flash": True}
+            assert any("do not fit on the GPU together (nimble" in w for w in warnings)
+            warnings.clear()
+
+            def fits(request):
+                if request.url.path == "/api/ps":
+                    return httpx.Response(
+                        200, json={"models": [{"name": "nimble:latest"}, {"name": "clef-flash:latest"}]}
+                    )
+                return noul(0.9)(request)
+
+            client = DecisionClient("http://alien3:11435", transport=httpx.MockTransport(fits))
+            await client.warm(["nimble", "clef-flash"])
+            assert not any("do not fit" in w for w in warnings)
+        finally:
+            logger.remove(sink)
+
+
+def test_decide_models_setting_parses():
+    from main import parse_models
+
+    assert parse_models("nimble=nimble-2k, clef-flash=clef-flash-4k") == {
+        "nimble": "nimble-2k",
+        "clef-flash": "clef-flash-4k",
+    }
+    assert parse_models("") == {} and parse_models("junk,=x,a=") == {}
+
+
 class TestAddressee:
     def test_state_is_the_benchmarked_wording(self):
         state = build_state(["a", "b", "c", "d"], "Turn left")

@@ -78,6 +78,22 @@ What it adds (measured on our data, 2026-10-03; see `docs/ARCHITECTURE.md`, "Sit
 
 If the GPU machine is down or slow, each judgement gives up after 0.8 s and Pepper behaves as in profile 1. Keep the models warm (the host pings them every 10 minutes; the first call after Ollama unloads a model takes about 30 s).
 
+**When the models don't fit together.** Nimble and Clef Flash must stay loaded side by side. If the card also runs something else (on Alien3, the speech server takes about 8 GB), Ollama evicts one whenever the other is called; every load outlasts the 0.8 s, the client counts the models as down, and the gate and router silently stop for the whole session (2026-11-19). The host warns at start-up: "Decision models do not fit on the GPU together". The fix is copies with smaller contexts, which share the same weights (the largest prompt is about 650 tokens, and the answers were identical), and a CPU-only copy of the scene model:
+
+```bash
+curl http://your-gpu-machine:11434/api/create -d '{"model":"nimble-2k","from":"nimble","parameters":{"num_ctx":2048}}'
+curl http://your-gpu-machine:11434/api/create -d '{"model":"clef-flash-4k","from":"clef-flash","parameters":{"num_ctx":4096}}'
+curl http://your-gpu-machine:11434/api/create -d '{"model":"qwen3.5-4b-cpu","from":"qwen3.5:4b","parameters":{"num_gpu":0}}'
+```
+
+```bash
+# .env
+DECIDE_MODELS=nimble=nimble-2k,clef-flash=clef-flash-4k   # 8.2 + 9.2 GB instead of 9.9 + 11.3
+SCENE_MODEL=qwen3.5-4b-cpu                                 # about 6 s a note on the CPU, no GPU memory
+```
+
+With these, a gate call made while an image call runs takes 0.06 s on Alien3 (2.5-6 s before).
+
 ## Privacy
 
 In both profiles Claude receives what Pepper hears (as text) and the photos it takes when asked. With profile 2, camera frames for the judgements and the text of every utterance (including side talk that is never answered) go to your GPU machine and stay there; nothing from the judgements goes to a cloud service. Session records (`SESSION_DIR`) keep voices, photos and transcripts on the host for review; keep them out of git (see `CLAUDE.md`, "Session records"). A printable notice for people near Pepper, in Pepper's own words, is in `docs/signs/recording-notice.pdf`.

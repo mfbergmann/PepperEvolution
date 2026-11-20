@@ -22,6 +22,13 @@ DEFAULT_TIMEOUT = 0.8  # seconds; a judgement later than this is no longer fast 
 WARM_TIMEOUT = 120.0  # the first call after the model unloaded loads it into the GPU (about 28 s for Clef Flash)
 KEEP_WARM_EVERY = 600.0  # seconds; Ollama unloads a model after its keep-alive (30 min on Alien3)
 RETRY_AFTER = 30.0  # seconds to treat the models as down after the server could not be reached
+
+# 2026-11-19: on Alien3 (32 GB, about 8 GB taken by the speech server) Nimble (9.9 GB at its 8k context) and Clef Flash
+# (11.3 GB at 16k) no longer fit side by side, and Ollama keeps a margin: each call to the other model evicted the one
+# loaded, every load outlasted the 0.8 s timeout, and the client counted the models down for the whole session, so the
+# addressee gate and the router never ran. Copies with smaller contexts (``nimble-2k``, ``clef-flash-4k``: 8.2 and
+# 9.2 GB; the largest prompt is about 650 tokens, and the answers were identical) fit together. ``models`` maps the
+# names the callers use to the names served (``DECIDE_MODELS``), so the callers keep one name each.
 DOWN_AFTER_FAILURES = 3  # consecutive failures of any kind (timeouts, errors) that also count as down
 
 
@@ -32,8 +39,10 @@ class DecisionClient:
         timeout: float = DEFAULT_TIMEOUT,
         transport: Optional[Any] = None,
         clock: Callable[[], float] = time.monotonic,
+        models: Optional[Dict[str, str]] = None,
     ):
         self.base_url = base_url.rstrip("/")
+        self.models = dict(models or {})  # the name a caller asks for -> the name the server has
         self.timeout = timeout
         self._http = httpx.AsyncClient(timeout=timeout, transport=transport)
         self._clock = clock
@@ -62,6 +71,7 @@ class DecisionClient:
         if self.down:
             self.skipped += 1
             return None
+        model = self.models.get(model, model)
         body: Dict[str, Any] = {"model": model, "state": state, "questions": questions}
         if images:
             body["images"] = images
@@ -107,7 +117,27 @@ class DecisionClient:
             )
             ready[model] = answers is not None
         self.logger.info(f"Decision models ready: {ready}")
+        await self._check_fit([m for m, ok in ready.items() if ok])
         return ready
+
+    async def _check_fit(self, models: List[str]):
+        """Warn when the warmed models are not all loaded at once (Ollama's ``/api/ps``): they then evict each other
+        and every judgement times out. Silent when the server has no such endpoint."""
+        if len(models) < 2:
+            return
+        try:
+            response = await self._http.get(f"{self.base_url}/api/ps", timeout=5.0)
+            response.raise_for_status()
+            loaded = {m.get("name", "").split(":")[0] for m in response.json().get("models", [])}
+        except Exception:  # noqa: BLE001 - only a diagnostic
+            return
+        served = [self.models.get(m, m) for m in models]
+        missing = [m for m in served if m.split(":")[0] not in loaded]
+        if missing:
+            self.logger.warning(
+                f"Decision models do not fit on the GPU together ({', '.join(missing)} unloaded after the others "
+                f"loaded): judgements will time out. Use smaller-context copies (DECIDE_MODELS, docs/SETUP_PROFILES.md)"
+            )
 
     def keep_warm(self, models: List[str], every: float = KEEP_WARM_EVERY):
         """Warm now and then every ``every`` seconds in the background, while the host runs."""

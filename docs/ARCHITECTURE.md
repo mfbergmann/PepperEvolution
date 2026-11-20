@@ -95,7 +95,7 @@ It never speaks or moves the robot: execution stays in `AIManager`, under the br
 | Control phrases, safety, state signals | host and bridge | milliseconds | none |
 | People and face detection, tracking | on the robot (NAOqi) | continuous | NAOqi's own |
 | Speech to text | host CPU | about 0.3 s of compute per audio second, final about 0.2 s after you stop | NVIDIA Nemotron speech streaming via sherpa-onnx (chosen 2026-09-22: 6 % word errors in the open room vs 37 % for the older zipformer) |
-| Scene notes for the world model | Creative AI Hub (Alien3), over the tailnet | every 20 s while someone is in view, about 0.5 s | who is where: Clef Flash (typed questions); the place: qwen3.5:4b (benchmarked 2026-10-08, `docs/MEMORY.md`) |
+| Scene notes for the world model | Creative AI Hub (Alien3), over the tailnet | every 20 s while someone is in view, about 0.15 s for who is where and about 6 s for the place | who is where: Clef Flash (typed questions); the place: qwen3.5:4b (benchmarked 2026-10-08, `docs/MEMORY.md`), on Alien3's CPU since 2026-11-19 so it never evicts the decision models (`docs/SETUP_PROFILES.md`) |
 | Conversation, decisions, tool use | cloud | 2-4 s to the first word | one Claude model: Sonnet 5.5 at medium effort (chosen by comparison on 2026-09-29; Sonnet 5 before) |
 | Situation judgements (addressed to Pepper? waving? photo usable?) | Creative AI Hub (Alien3, RTX 5090), over the tailnet | 0.05-0.25 s per judgement | local decision models: Nimble (text), Clef Flash (text and images), tested 2026-10-03 |
 | Reflection (should I act?) | cloud | every tens of seconds | a small, cheap model, or the mind at low effort |

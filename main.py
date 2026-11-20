@@ -64,6 +64,16 @@ from src.world import Observation, WorldModel  # noqa: E402
 from src.world.observations import EXPECT, IDENTITY, MAP, MIND, MOTION, POSE, SCENE, SOUND  # noqa: E402
 
 
+def parse_models(text: str) -> Dict[str, str]:
+    """``"nimble=nimble-2k, clef-flash=clef-flash-4k"`` as a mapping; malformed parts are skipped."""
+    out = {}
+    for part in text.split(","):
+        name, _, served = part.partition("=")
+        if name.strip() and served.strip():
+            out[name.strip()] = served.strip()
+    return out
+
+
 def env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None or value == "":
@@ -110,6 +120,7 @@ class Settings:
     photo_record_dir: Optional[str]
     session_dir: Optional[str]
     decide_url: Optional[str]
+    decide_models: Dict[str, str]  # DECIDE_MODELS: "nimble=nimble-2k,clef-flash=clef-flash-4k" (src/decide/client.py)
     addressee_gate: bool
     addressee_threshold: float
     router: bool
@@ -189,6 +200,7 @@ class Settings:
             photo_record_dir=os.getenv("PHOTO_RECORD_DIR") or None,
             session_dir=os.getenv("SESSION_DIR") or None,
             decide_url=os.getenv("DECIDE_URL") or None,
+            decide_models=parse_models(os.getenv("DECIDE_MODELS", "")),
             addressee_gate=env_bool("ADDRESSEE_GATE", True),
             addressee_threshold=float(os.getenv("ADDRESSEE_THRESHOLD") or "0.6"),
             router=env_bool("ROUTER", True),
@@ -297,7 +309,9 @@ class PepperEvolution:
             self.memory = Memory(store, world=self.world, session=session)
         # Situation judgements on the Creative AI Hub (src/decide); off without DECIDE_URL
         self.decider: Optional[DecisionClient] = (
-            DecisionClient(self.settings.decide_url) if self.settings.decide_url else None
+            DecisionClient(self.settings.decide_url, models=self.settings.decide_models)
+            if self.settings.decide_url
+            else None
         )
 
     async def initialize(self):
