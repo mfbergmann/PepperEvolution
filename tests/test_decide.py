@@ -339,3 +339,79 @@ class TestCrowds:
         assert world.most_in_view(60) == 2
         now[0] = 140.0
         assert world.most_in_view(60) == 0
+
+
+class TestUpgradeSafety:
+    """After an Ollama upgrade (2026-11-16) the stored models were refused and the log said only "400 Bad Request"."""
+
+    async def test_the_servers_reason_is_kept(self):
+        def refused(request):
+            return httpx.Response(400, json={"error": "'nimble:latest' was downloaded in a format that is no longer"})
+
+        client = DecisionClient("http://alien3:11435", transport=httpx.MockTransport(refused))
+        assert await client.ask("nimble", "s", {"q": {"type": "noul", "instructions": "?"}}) is None
+        assert "no longer" in client.last_error and "400" in client.last_error
+
+    async def test_first_warm_up_names_the_builds_and_says_loudly_when_they_fail(self):
+        from loguru import logger
+
+        errors, identified = [], []
+        sink = logger.add(lambda m: errors.append(str(m)), level="ERROR")
+
+        def handler(request):
+            if request.url.path == "/api/version":
+                return httpx.Response(200, json={"version": "0.40.16"})
+            if request.url.path == "/api/tags":
+                return httpx.Response(200, json={"models": [{"name": "nimble:latest", "digest": "abcdef0123456789"}]})
+            return httpx.Response(400, json={"error": "format no longer supported"})
+
+        try:
+            client = DecisionClient("http://alien3:11435", transport=httpx.MockTransport(handler))
+            client.on_identified = identified.append
+            assert await client.warm(["nimble"]) == {"nimble": False}
+            assert client.identity == {
+                "server": "0.40.16",
+                "models": {"nimble": {"served": "nimble", "digest": "abcdef012345"}},
+            }
+            assert identified[0]["ready"] == {"nimble": False}
+            assert any("not working at start-up" in e and "no longer supported" in e for e in errors)
+            await client.warm(["nimble"])  # later warm-ups do not repeat it
+            assert len(identified) == 1
+        finally:
+            logger.remove(sink)
+
+
+def test_manifest_note_keeps_presence(tmp_path):
+    from src.orchestra import manifest
+
+    manifest.mark(str(tmp_path), "solo")
+    manifest.note(str(tmp_path), decide={"server": "0.40.16"}, presence="others")
+    data = manifest.read(str(tmp_path))
+    assert data["presence"] == "solo" and data["decide"] == {"server": "0.40.16"}
+
+
+async def test_each_model_can_have_its_own_server():
+    # DECIDE_SERVERS: one Ollama per model, so neither scheduler can evict the other's model (2026-11-19)
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.host, request.url.port, request.url.path))
+        if request.url.path == "/api/ps":
+            name = "clef-flash-4k:latest" if request.url.port == 11439 else "nimble-2k:latest"
+            return httpx.Response(200, json={"models": [{"name": name}]})
+        if request.url.path in ("/api/version", "/api/tags"):
+            return httpx.Response(200, json={"version": "0.40.16", "models": []})
+        return noul(0.9)(request)
+
+    client = DecisionClient(
+        "http://alien3:11438",
+        transport=httpx.MockTransport(handler),
+        models={"nimble": "nimble-2k", "clef-flash": "clef-flash-4k"},
+        servers={"clef-flash": "http://alien3:11439/"},
+    )
+    assert client.url_for("clef-flash") == "http://alien3:11439" and client.url_for("nimble") == "http://alien3:11438"
+    assert await client.warm(["nimble", "clef-flash"]) == {"nimble": True, "clef-flash": True}
+    posts = [(port, path) for _, port, path in seen if path == "/v1/systemone"]
+    assert posts == [(11438, "/v1/systemone"), (11439, "/v1/systemone")]
+    assert client.identity["models"]["clef-flash"]["url"] == "http://alien3:11439"
+    assert "url" not in client.identity["models"]["nimble"]

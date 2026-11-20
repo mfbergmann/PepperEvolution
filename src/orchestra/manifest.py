@@ -41,6 +41,14 @@ def start(folder: str, **data: Any):
     _write(folder, {"presence": UNKNOWN, "started": datetime.now().isoformat(timespec="seconds"), **data})
 
 
+def note(folder: str, **data: Any):
+    """Add facts about the run (e.g. which decision-model builds answered); presence is left as it is."""
+    current = read(folder)
+    for key in ("presence", "marked", "marked_by", "history"):
+        data.pop(key, None)
+    _write(folder, {**current, **data})
+
+
 def mark(folder: str, value: str, note: str = "", by: str = "tester") -> Dict[str, Any]:
     if value not in PRESENCE:
         raise ValueError(f"presence must be one of {PRESENCE}")

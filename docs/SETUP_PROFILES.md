@@ -94,6 +94,20 @@ SCENE_MODEL=qwen3.5-4b-cpu                                 # about 6 s a note on
 
 With these, a gate call made while an image call runs takes 0.06 s on Alien3 (2.5-6 s before).
 
+### Upgrading the decision models
+
+An Ollama upgrade can break Pepper's fast judgements in two ways, both seen on Alien3:
+- **The stored models are refused.** On 2026-11-16, Ollama 0.40.16 rejected the October downloads of Nimble and Clef Flash: "downloaded in a format that is no longer supported". The new weights carry their decision format inside the model file (`qwen35.decision.type`, a `systemone` template), and the October files don't. So they can't simply be imported into the new version.
+- **A fresh download is a different model.** Re-pulling `nimble` and `clef-flash` on 2026-11-19 brought new weights under the same names (other checksums and sizes, and Nimble no longer ships its own system prompt). Its judgements differ: on the recorded sessions, 7 of 271 addressee verdicts and 8 of 268 router starts changed. The new version also needs more GPU memory for the same copies.
+
+So an upgrade is a change of model, and goes through a check before anything live changes.
+1. **Leave the live server as it is.** Start the new Ollama next to it on a spare port, with its own model folder: `OLLAMA_HOST=127.0.0.1:11438 OLLAMA_MODELS=~/.ollama-test/models ollama serve`. Pull the models there and make the smaller copies (above).
+2. **Compare it with the live server on every recorded judgement:** `.venv/bin/python scripts/compare_decide.py --old http://alien3:11435 --new http://alien3:11438`. It replays the recorded gated and routed turns through both servers. It prints counts and session/line references only, and exits 1 when more than 2% of the gate's verdicts flip or the new server fails. Read the flipped lines in solo sessions to judge which side is right. Also run the October benchmarks with the new address (`results/system-one/replay_addressee.py`, `replay_router.py`, `bench_images.py`; local only).
+3. **Check that the models fit together** beside the speech server: warm both, and look for the client's "do not fit on the GPU together" warning. With 0.40.16 they don't fit in one Ollama process, because its scheduler evicts Nimble to load Clef Flash. Two processes do fit, one per model, at 9.5 GB and 9.8 GB of the 32 GB card, with the speech server's 8 GB. `DECIDE_SERVERS=clef-flash=http://alien3:11439` sends each model's calls to its own server.
+4. **Switch, keeping the old one for rollback.** Point the start script at the new version and model folder, restart, and keep the old binary and models until a robot session has gone well. The host logs and records in `session.json` which server version and model digests judged each session (`decide`). So records from before and after the switch can be told apart, and the evaluation set can compare them.
+
+If the decision models fail at start-up, the host now logs an error with the server's own reason, rather than only "400 Bad Request".
+
 ## Privacy
 
 In both profiles Claude receives what Pepper hears (as text) and the photos it takes when asked. With profile 2, camera frames for the judgements and the text of every utterance (including side talk that is never answered) go to your GPU machine and stay there; nothing from the judgements goes to a cloud service. Session records (`SESSION_DIR`) keep voices, photos and transcripts on the host for review; keep them out of git (see `CLAUDE.md`, "Session records"). A printable notice for people near Pepper, in Pepper's own words, is in `docs/signs/recording-notice.pdf`.

@@ -10,6 +10,12 @@ Built offline after the 2026-10-22 robot session; nothing below has run on the r
 so the next deploy needs `python robot_bridge/deploy.py --install-autostart`. All the new switches are off by
 default.
 
+- **Safer upgrades of the decision models.** After an Ollama upgrade refused the stored models (2026-11-16):
+  - The client keeps the server's own reason for a failure.
+  - The first warm-up records the server version and model digests in `session.json` (`decide`), and says loudly when the models don't work.
+  - `DECIDE_SERVERS` gives a model its own server, so two Ollama processes can't evict each other's models.
+  - `scripts/compare_decide.py` replays every recorded judgement through the live server and a candidate, and fails when too many verdicts flip.
+  - Procedure: `docs/SETUP_PROFILES.md`, "Upgrading the decision models".
 - **Expect, then check, first slice (#30, `EXPECTATIONS`, off by default).**
   - Before a turn towards someone it knew about, or a drive towards someone ahead, working memory notes what should change (`src/world/expectations.py`). Afterwards it compares that with the people detector.
   - A mismatch becomes a timeline "surprise", is recorded in `events.jsonl`, and reaches the mind's "Around you" line for a minute.

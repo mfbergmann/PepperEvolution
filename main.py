@@ -121,6 +121,7 @@ class Settings:
     session_dir: Optional[str]
     decide_url: Optional[str]
     decide_models: Dict[str, str]  # DECIDE_MODELS: "nimble=nimble-2k,clef-flash=clef-flash-4k" (src/decide/client.py)
+    decide_servers: Dict[str, str]  # DECIDE_SERVERS: "clef-flash=http://alien3:11439": one Ollama per model
     addressee_gate: bool
     addressee_threshold: float
     router: bool
@@ -201,6 +202,7 @@ class Settings:
             session_dir=os.getenv("SESSION_DIR") or None,
             decide_url=os.getenv("DECIDE_URL") or None,
             decide_models=parse_models(os.getenv("DECIDE_MODELS", "")),
+            decide_servers=parse_models(os.getenv("DECIDE_SERVERS", "")),
             addressee_gate=env_bool("ADDRESSEE_GATE", True),
             addressee_threshold=float(os.getenv("ADDRESSEE_THRESHOLD") or "0.6"),
             router=env_bool("ROUTER", True),
@@ -309,7 +311,9 @@ class PepperEvolution:
             self.memory = Memory(store, world=self.world, session=session)
         # Situation judgements on the Creative AI Hub (src/decide); off without DECIDE_URL
         self.decider: Optional[DecisionClient] = (
-            DecisionClient(self.settings.decide_url, models=self.settings.decide_models)
+            DecisionClient(
+                self.settings.decide_url, models=self.settings.decide_models, servers=self.settings.decide_servers
+            )
             if self.settings.decide_url
             else None
         )
@@ -438,6 +442,9 @@ class PepperEvolution:
             self.ai_manager.faces_seen = self.faces.faces_since
         if self.decider is not None:
             models = [ADDRESSEE_MODEL] + ([VISION_MODEL] if self.vision is not None else [])
+            if self.recorder is not None:  # which server and model builds judged this session
+                folder = self.recorder.folder
+                self.decider.on_identified = lambda identity: manifest.note(folder, decide=identity)
             self.decider.keep_warm(models)  # the first call after an unload takes ~30 s
             self.logger.info(
                 f"Decision models at {self.decider.base_url} (addressee gate: {s.addressee_gate}, router: {s.router}, "
