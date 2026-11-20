@@ -202,6 +202,19 @@ def review(folder: str) -> str:
             flags.append(f"voice reading failed: {t['identity']['error']}")
     for t in gated_out:
         flags.append(f"not answered (check it was side talk): {t.get('text')!r} p={t['addressee'].get('p')}")
+    # the decision models on the GPU machine fail open, so a whole session can run without them unnoticed
+    # (2026-11-19: they kept evicting each other on Alien3; the gate and router gave no answer on any turn)
+    gated = [t for t in voice if t.get("addressee")]
+    judged = [t for t in gated if t["addressee"].get("p") is not None]
+    if gated and len(judged) < len(gated) / 2:
+        flags.append(
+            f"addressee gate answered on {len(judged)} of {len(gated)} voice turns: were the decision models down? "
+            "(host.log: 'not answering' / 'do not fit on the GPU together')"
+        )
+    routes = [t for t in turns if t.get("router") is not None]
+    chosen = [t for t in routes if (t.get("router") or {}).get("choice")]
+    if len(routes) >= 3 and not chosen:
+        flags.append(f"router chose nothing on {len(routes)} turns: were the decision models down?")
 
     out += [
         "",

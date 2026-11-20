@@ -68,7 +68,7 @@ PLACE_PROMPT = (
 )
 EVERY = 20.0  # seconds between looks while someone stays in view
 CHANGE_GAP = 5.0  # seconds: a changed view (WATCH_ROOM, #33) brings the next look forward, but not more often
-PLACE_TIMEOUT = 3.0
+PLACE_TIMEOUT = 20.0  # seconds; on Alien3 the place model runs on the CPU (2026-11-19): about 6 s, 12 s when cold
 COUNTS = {"none": 0, "one": 1, "two_or_more": 2}
 
 

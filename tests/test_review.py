@@ -118,3 +118,29 @@ def test_kept_camera_frames_are_counted(tmp_path):
     (tmp_path / "camera" / "frames.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     text = load_review().review(str(tmp_path))
     assert "- camera frames kept: 2 in camera/, 14:00:01 to 14:20:05" in text
+
+
+def test_a_session_without_decision_models_is_flagged(tmp_path):
+    # 2026-11-19: the decision models were down from the first turn, and nothing in the review said so
+    turns = [
+        {
+            "at": f"2026-11-19T19:2{i}:00.000",
+            "heard": f"2026-11-19T19:2{i}:00.000",
+            "source": "voice",
+            "text": "hello",
+            "addressee": {"p": None, "addressed": True, "alone": True, "seconds": 0.0},
+            "router": {"seconds": 0.0},
+        }
+        for i in range(4)
+    ]
+    (tmp_path / "turns.jsonl").write_text("\n".join(json.dumps(t) for t in turns) + "\n")
+    text = load_review().review(str(tmp_path))
+    assert "addressee gate answered on 0 of 4 voice turns" in text
+    assert "router chose nothing on 4 turns" in text
+
+    for t in turns:
+        t["addressee"]["p"] = 0.9
+        t["router"]["choice"] = "talk"
+    (tmp_path / "turns.jsonl").write_text("\n".join(json.dumps(t) for t in turns) + "\n")
+    text = load_review().review(str(tmp_path))
+    assert "gate answered on" not in text and "router chose nothing" not in text
