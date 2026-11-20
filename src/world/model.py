@@ -479,9 +479,10 @@ class WorldModel:
             "spread": round(spread, 1),
         }
 
-    def attach_voice(self, heading: float, at: Optional[float] = None) -> Any:
-        """The person a voice came from: an existing track in that direction, or a new one known by voice."""
-        track = self.tracker.voice(heading, self.pose, self._clock() if at is None else at)
+    def attach_voice(self, heading: float, at: Optional[float] = None, rough: bool = False) -> Any:
+        """The person a voice came from: an existing track in that direction, or a new one known by voice. ``rough``:
+        the direction is too unsure to place anyone (``Tracker.voice``)."""
+        track = self.tracker.voice(heading, self.pose, self._clock() if at is None else at, rough=rough)
         self.timeline.add("voice", track.spoke_at or self._clock(), track=track.id, heard_only=track.heard_only)
         return track
 

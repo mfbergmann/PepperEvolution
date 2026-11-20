@@ -275,6 +275,40 @@ class TestVoiceDirection:
         track = world.attach_voice(world.voice_direction(start, clock.t)["heading"])
         assert not track.heard_only and track.spoke_at is not None and len(world.tracker.tracks) == 1
 
+    def test_a_rough_voice_places_nobody(self):
+        # 2026-11-19: a two-sound reading said "turn 15" in the Around-you line while the voice line said not to turn
+        world, clock = world_at()
+        see(world)  # nobody in view
+        track = world.attach_voice(world.pose.heading_of(15.0), rough=True)
+        assert track.heard_only and not track.placed and track.spoke_at is not None
+        assert "you heard someone" not in world.summary()
+        again = world.attach_voice(world.pose.heading_of(-40.0), rough=True)
+        assert again is track and len(world.tracker.tracks) == 1  # one carrier for a whole rough conversation
+
+    def test_a_rough_voice_keeps_a_good_direction_and_names_its_track(self):
+        world, clock = world_at()
+        see(world)
+        good = world.attach_voice(world.pose.heading_of(-70.0))
+        rough = world.attach_voice(world.pose.heading_of(20.0), rough=True)
+        assert rough is good and good.bearing(world.pose) == pytest.approx(-70.0, abs=0.5)
+        assert world.tracker.identify(7, clock.t) is good and good.person_id == 7
+
+    def test_a_rough_voice_is_not_put_on_someone_seen_nearby(self):
+        world, clock = world_at()
+        see(world, person(-35.0, 1.4))  # a colleague in view
+        track = world.attach_voice(world.pose.heading_of(-40.0), rough=True)
+        seen = [t for t in world.tracker.tracks if not t.heard_only]
+        assert track.heard_only and seen and seen[0].spoke_at is None
+
+    def test_a_rough_voice_is_no_target_for_an_expectation(self):
+        clock = [1000.0]
+        world = WorldModel(clock=lambda: clock[0], expectations=True)
+        world.handle_people(0, [])
+        world.attach_voice(world.pose.heading_of(15.0), rough=True)
+        world.note(MOTION, "turn_started", angle=15)
+        world.note(MOTION, "turn", angle=15, completed=True)
+        assert world.watch.stats["face"]["made"] == 0
+
     async def test_the_mind_hears_where_the_voice_came_from(self, mock_robot, mock_ai_provider):
         from src.ai.manager import AIManager
         from src.ai.models import AIResponse

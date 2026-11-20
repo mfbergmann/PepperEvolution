@@ -146,10 +146,29 @@ class Tracker:
         out = [t for t in self.tracks if not t.present and t.placed and now - t.last_seen <= REMEMBER_FOR]
         return sorted(out, key=lambda t: -t.last_seen)
 
-    def voice(self, heading: float, pose: Pose, now: float, within: float = VOICE_MATCH_DEGREES) -> PersonTrack:
+    def voice(
+        self, heading: float, pose: Pose, now: float, within: float = VOICE_MATCH_DEGREES, rough: bool = False
+    ) -> PersonTrack:
         """A voice came from ``heading`` (absolute, radians): mark the person there as the speaker, or start a
-        track known only by that voice (so "come to me" has a direction when the detector saw nobody)."""
+        track known only by that voice (so "come to me" has a direction when the detector saw nobody).
+
+        ``rough``: the direction rests on too few sounds, or ones that disagree (``glance.voice_bearing`` is None), and
+        such a direction is often 40-56 degrees off (#31). It then places nobody and moves nobody, and is not matched
+        to anyone seen by direction either: 25 degrees would put a tester's sentence on a colleague beside them, and
+        the name with it. The speaker is still marked, so an enrolled voice can be named: on the latest heard-only
+        track, or on a new one with no direction. On 2026-11-19 a rough reading put "you heard someone about 15
+        degrees to your left (turn 15 ...)" into the state while the voice line said not to turn on it; the mind
+        turned, and the tester was at -74."""
         self._expire(now)
+        if rough:
+            heard = [t for t in self.tracks if t.heard_only and now - t.last_seen <= REMEMBER_FOR]
+            track = max(heard, key=lambda t: t.spoke_at or t.last_seen, default=None)
+            if track is None:
+                track = PersonTrack(id=self._next_id, first_seen=now, last_seen=now, present=False, sources=["sound"])
+                self._next_id += 1
+                self.tracks.append(track)
+            track.spoke_at = now
+            return track
         best, best_gap = None, None
         for track in self.tracks:
             if now - track.last_seen > REMEMBER_FOR or not track.placed:

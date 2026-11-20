@@ -30,6 +30,7 @@ from .glance import (
     look_around_yaws,
     others_found,
     people_yaws,
+    voice_bearing,
 )
 from .intents import INTENTS, Intent, IntentExecutor, match_intent
 from ..world.observations import CAMERA, HEARD, IDENTITY, MIND, SAID
@@ -823,7 +824,7 @@ class AIManager:
         voice = self.world.voice_direction(start, heard_at - self.VOICE_END_SILENCE)
         if voice is None:
             return ""
-        self.world.attach_voice(voice["heading"])
+        self.world.attach_voice(voice["heading"], rough=voice_bearing(voice) is None)
         rec["voice"] = {k: voice[k] for k in ("bearing", "sounds", "spread")}
         bearing = voice["bearing"]
         degrees = int(round(abs(bearing) / 5.0) * 5)

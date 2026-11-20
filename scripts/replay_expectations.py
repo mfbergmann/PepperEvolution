@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+from src.ai.glance import voice_bearing  # noqa: E402
 from src.world import WorldModel  # noqa: E402
 from src.world.observations import EXPECT, MOTION  # noqa: E402
 from scripts.replay_world import load_jsonl, moves_from_log, wall  # noqa: E402
@@ -51,7 +52,8 @@ def replay(folder: str) -> Tuple[str, STATS]:
     for turn in load_jsonl(os.path.join(folder, "turns.jsonl")):
         voice = turn.get("voice") or {}
         if turn.get("heard") and voice.get("bearing") is not None:
-            inputs.append((wall(turn["heard"]), "voice", {"bearing": float(voice["bearing"])}))
+            rough = voice_bearing(voice) is None  # as the host decides it
+            inputs.append((wall(turn["heard"]), "voice", {"bearing": float(voice["bearing"]), "rough": rough}))
     inputs.sort(key=lambda item: item[0])
 
     clock = [inputs[0][0] if inputs else 0.0]
@@ -75,7 +77,7 @@ def replay(folder: str) -> Tuple[str, STATS]:
             data = {k: v for k, v in row.items() if k != "kind"}
             world.note(MOTION, row["kind"], **data)
         elif kind == "voice":
-            world.attach_voice(world.pose.heading_of(row["bearing"]), at)
+            world.attach_voice(world.pose.heading_of(row["bearing"]), at, rough=row.get("rough", False))
         elif kind in ("pose", "motion", "sound", "identity"):
             data = {k: v for k, v in row.items() if k not in ("at", "kind", "source", "obs")}
             world.note(kind, row.get("obs", kind), **data)

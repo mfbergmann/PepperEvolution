@@ -438,12 +438,18 @@ def test_replay_uses_the_voice_direction_each_turn_recorded(tmp_path):
         obs(12, source="sound", obs="sound", azimuth=0.0, confidence=0.5),  # moves the clock past the due time
     ]
     (tmp_path / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
-    turn = {"heard": _iso(t + timedelta(seconds=1)), "voice": {"bearing": 14.8, "sounds": 2, "spread": 22.9}}
+    turn = {"heard": _iso(t + timedelta(seconds=1)), "voice": {"bearing": 14.8, "sounds": 6, "spread": 8.0}}
     (tmp_path / "turns.jsonl").write_text(json.dumps(turn) + "\n")
 
     text, stats = module.replay(str(tmp_path))
     assert stats["face"] == {"made": 1, "met": 0, "surprised": 1, "cancelled": 0}
     assert "face aimed at a voice: met 0, surprised 1" in text
+
+    # the same turn on a rough reading (2 sounds that disagree, as on 2026-11-19): it places nobody, expects nothing
+    turn["voice"] = {"bearing": 14.8, "sounds": 2, "spread": 22.9}
+    (tmp_path / "turns.jsonl").write_text(json.dumps(turn) + "\n")
+    text, stats = module.replay(str(tmp_path))
+    assert stats["face"]["made"] == 0
 
 
 # -- a recognised face meets a face expectation (2026-11-19) ----------------------------------------------------------
